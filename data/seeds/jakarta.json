@@ -1,0 +1,12 @@
+{
+  "world_notes": [
+    "[Seed: jakarta] Angin panas menempel, suara klakson ramai, dan lampu jalan memantul di aspal."
+  ],
+  "world": {
+    "nearby_items": [
+      { "id": "angkot_card", "name": "angkot_card" },
+      { "id": "jakarta_mask", "name": "jakarta_mask" }
+    ]
+  }
+}
+

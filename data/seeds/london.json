@@ -1,0 +1,12 @@
+{
+  "world_notes": [
+    "[Seed: london] Udara lembap, lampu jalan berkedip, dan suara bus datang dari kejauhan."
+  ],
+  "world": {
+    "nearby_items": [
+      { "id": "umbrella", "name": "umbrella" },
+      { "id": "tube_ticket", "name": "tube_ticket" }
+    ]
+  }
+}
+

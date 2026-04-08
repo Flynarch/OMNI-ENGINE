@@ -1,0 +1,32 @@
+### Secrets
+.env
+
+### Local saves / runtime state
+save/current.json
+save/previous.json
+save/*.json
+
+### Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+ENV/
+env/
+
+### Tools / editors
+.vscode/
+.idea/
+
+### OS
+Thumbs.db
+Desktop.ini
+.env
+save/
+__pycache__/
+*.pyc
+.python-version
+debug-*.log

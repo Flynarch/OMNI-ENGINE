@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "base_thresholds": {
+    "social": { "trained": 60, "unskilled": 25 },
+    "combat": { "trained": 55, "unskilled": 20 },
+    "hacking": { "trained": 55, "unskilled": 15 },
+    "medical": { "trained": 55, "unskilled": 20 },
+    "driving": { "trained": 65, "unskilled": 30 },
+    "stealth": { "trained": 55, "unskilled": 30 },
+    "evasion": { "trained": 50, "unskilled": 50 }
+  }
+}

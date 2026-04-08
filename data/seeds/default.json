@@ -1,0 +1,23 @@
+{
+  "world_notes": [
+    "[Seed: default] Sandbox aktif — tambah NPC/event di data/seeds/<nama>.json."
+  ],
+  "npcs": {
+    "Operator_Link": {
+      "disposition_label": "Neutral",
+      "disposition_score": 55,
+      "role": "narrative_anchor",
+      "affiliation": "corporate",
+      "is_contact": true
+    }
+  },
+  "pending_events": [],
+  "active_ripples": [],
+  "world": {
+    "nearby_items": [
+      { "id": "phone", "name": "phone" },
+      { "id": "keys", "name": "keys" },
+      { "id": "laptop1", "name": "laptop1" }
+    ]
+  }
+}

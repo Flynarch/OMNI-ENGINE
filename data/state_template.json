@@ -1,0 +1,119 @@
+{
+  "meta": {
+    "turn": 0,
+    "day": 1,
+    "time_min": 480,
+    "memory_hash_raw": "",
+    "schema_version": 1,
+    "world_seed": ""
+  },
+  "player": {
+    "cc": 50,
+    "location": "",
+    "year": 2025,
+    "language": "id",
+    "disguise": { "active": false, "persona": "", "until_day": 0, "until_time": 0, "risk": 0 },
+    "social_stats": {
+      "looks": 0,
+      "outfit": 0,
+      "hygiene": 0,
+      "speaking": 0
+    }
+  },
+  "bio": {
+    "blood_volume": 5.0,
+    "blood_max": 5.0,
+    "sleep_debt": 0.0,
+    "infection_pct": 0.0,
+    "burnout": 0,
+    "sanity_debt": 0,
+    "hours_since_shower": 0,
+    "hygiene_tax_active": false,
+    "acute_stress": false,
+    "hallucination_type": "none",
+    "narrator_drift_state": "stable"
+  },
+  "economy": {
+    "cash": 0,
+    "bank": 0,
+    "debt": 0,
+    "daily_burn": 0,
+    "fico": 620,
+    "aml_status": "CLEAR",
+    "aml_threshold": 10000,
+    "last_economic_cycle_day": 0,
+    "deposit_log": [],
+    "market": {
+      "electronics": { "price_idx": 100, "scarcity": 0 },
+      "medical": { "price_idx": 100, "scarcity": 0 },
+      "weapons": { "price_idx": 100, "scarcity": 0 },
+      "food": { "price_idx": 100, "scarcity": 0 },
+      "transport": { "price_idx": 100, "scarcity": 0 }
+    }
+  },
+  "trace": {
+    "trace_pct": 0,
+    "trace_status": "Ghost",
+    "sources": []
+  },
+  "inventory": {
+    "r_hand": "-",
+    "l_hand": "-",
+    "worn": "-",
+    "pocket_capacity": 4,
+    "pocket_contents": [],
+    "bag_capacity": 12,
+    "bag_contents": [],
+    "item_sizes": {},
+    "weapon_details": [],
+    "weapons": {},
+    "active_weapon_id": ""
+  },
+  "reputation": {
+    "police_label": "Neutral",
+    "criminal_label": "Neutral",
+    "civilian_label": "Neutral"
+  },
+  "active_ripples": [],
+  "resolved_ripples": [],
+  "resolved_events": [],
+  "pending_events": [],
+  "quests": { "active": [], "completed": [], "failed": [], "last_id": 0 },
+  "world_notes": [],
+  "flags": {
+    "stop_sequence_active": false,
+    "hand_slot_issue": false,
+    "weapon_jammed": false,
+    "equip_cost_active": false,
+    "hallucination_active": false,
+    "npc_sim_enabled": true,
+    "npc_sim_verbose_notes": false
+  },
+  "memory_hash": {},
+  "skills": {},
+  "npcs": {},
+  "world": {
+    "nearby_items": [],
+    "locations": {},
+    "contacts": {},
+    "atlas": { "countries": {}, "version": 1 },
+    "safehouses": {},
+    "news_feed": [],
+    "last_news_day": 0,
+    "hacking_heat": {},
+    "last_hacking_heat_decay_day": 0,
+    "social_graph": { "__player__": {} },
+    "npc_economy": { "offers": {}, "last_refresh_day": 0 },
+    "conflict_model": "corporate_vs_police_with_black_market",
+    "factions": {
+      "corporate": { "stability": 50, "power": 50 },
+      "police": { "stability": 50, "power": 50 },
+      "black_market": { "stability": 50, "power": 50 }
+    },
+    "faction_statuses": {
+      "corporate": "idle",
+      "police": "idle",
+      "black_market": "idle"
+    }
+  }
+}
