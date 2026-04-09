@@ -4,10 +4,7 @@ import json
 import os
 from typing import Any, Dict, Optional
 
-import requests
-from dotenv import load_dotenv
-
-from ai.client import GROQ_URL, OPENROUTER_URL
+from ai.llm_http import chat_completion_json
 
 
 INTENT_SYSTEM_PROMPT = """OMNI-ENGINE v6.8 — INTENT RESOLVER.
@@ -69,43 +66,20 @@ Return ONLY the JSON, no explanation, no markdown.
 
 
 def _invoke_llm_for_intent(payload: Dict[str, Any]) -> str:
-    load_dotenv()
-    provider = os.getenv("LLM_PROVIDER", "openrouter").strip().lower()
-    if provider in ("groq", "grok"):
-        api_key = os.getenv("GROQ_API_KEY", "").strip()
-        if not api_key:
-            raise RuntimeError("GROQ_API_KEY missing in .env (set LLM_PROVIDER=groq)")
-        url = GROQ_URL
-        model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip() or "llama-3.3-70b-versatile"
-    else:
-        api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
-        if not api_key:
-            raise RuntimeError("OPENROUTER_API_KEY missing in .env")
-        url = OPENROUTER_URL
-        model = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-chat").strip() or "deepseek/deepseek-chat"
-
     _mt = os.getenv("LLM_INTENT_MAX_TOKENS", "").strip()
     if _mt.isdigit():
         max_tokens = int(_mt)
     else:
         max_tokens = 512
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    body = {
-        "model": model,
-        "max_tokens": max_tokens,
-        "stream": False,
-        "messages": [
+    data = chat_completion_json(
+        messages=[
             {"role": "system", "content": INTENT_SYSTEM_PROMPT},
             {"role": "user", "content": payload["user"]},
         ],
-    }
-    resp = requests.post(url, headers=headers, json=body, timeout=60)
-    resp.raise_for_status()
-    data = resp.json()
+        max_tokens=max_tokens,
+        timeout=60.0,
+    )
     content = data["choices"][0]["message"]["content"]
     return str(content)
 
