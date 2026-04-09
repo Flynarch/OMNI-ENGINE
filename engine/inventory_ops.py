@@ -199,4 +199,6 @@ def apply_inventory_ops(state: dict[str, Any], action_ctx: dict[str, Any]) -> No
     if applied:
         action_ctx.setdefault("auto_micro_actions", []).extend(applied)
         action_ctx["instant_minutes"] = int(action_ctx.get("instant_minutes", 2) or 2) + int(extra_minutes)
+        if extra_minutes > 0:
+            action_ctx.setdefault("time_breakdown", []).append({"label": "inventory_ops", "minutes": int(extra_minutes)})
 

@@ -1,0 +1,9 @@
+{
+  "notes": ["Harbor shine with strict edges; logistics and compliance culture shape the streets."],
+  "nearby_items": ["burner_phone", "keys", "laptop_basic"],
+  "npcs": {
+    "Fixer_Harbor_Jade": { "role": "fixer", "affiliation": "black_market", "disposition_score": 55, "disposition_label": "Neutral", "is_contact": true },
+    "Officer_Collins": { "role": "cop", "affiliation": "police", "disposition_score": 48, "disposition_label": "Cold" }
+  }
+}
+

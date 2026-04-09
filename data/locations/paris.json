@@ -1,0 +1,11 @@
+{
+  "tags": ["old_money", "quiet_networks", "reputation_doors"],
+  "notes": ["Old money, new tech, and quiet networks moving under the surface; reputation buys doors."],
+  "nearby_items": ["burner_phone", "keys"],
+  "npcs": {
+    "Journalist_Claire": { "role": "journalist", "affiliation": "civilian", "disposition_score": 59, "disposition_label": "Neutral", "is_contact": true },
+    "Gendarme_Roux": { "role": "cop", "affiliation": "police", "disposition_score": 47, "disposition_label": "Cold", "is_contact": true },
+    "Corp_Procurement_Dupont": { "role": "corporate_rep", "affiliation": "corporate", "disposition_score": 51, "disposition_label": "Neutral", "is_contact": true }
+  }
+}
+

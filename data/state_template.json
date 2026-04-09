@@ -12,6 +12,7 @@
     "location": "",
     "year": 2025,
     "language": "id",
+    "languages": { "id": 70 },
     "disguise": { "active": false, "persona": "", "until_day": 0, "until_time": 0, "risk": 0 },
     "social_stats": {
       "looks": 0,
@@ -98,6 +99,7 @@
     "contacts": {},
     "atlas": { "countries": {}, "version": 1 },
     "safehouses": {},
+    "tech_progress": 0.0,
     "news_feed": [],
     "last_news_day": 0,
     "hacking_heat": {},

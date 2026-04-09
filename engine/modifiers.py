@@ -58,11 +58,90 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
     act_type = str(action_ctx.get("action_type", "") or "")
 
     bio = state.get("bio", {})
+    # Hacking tiers + gating (soft gate + selective hard gate).
+    if str(domain).lower() == "hacking":
+        try:
+            inv = state.get("inventory", {}) or {}
+            toks: list[str] = []
+            for key in ("r_hand", "l_hand", "worn"):
+                v = inv.get(key)
+                if isinstance(v, str) and v.strip() and v.strip() != "-":
+                    toks.append(v.strip().lower())
+            for key in ("pocket_contents", "bag_contents"):
+                arr = inv.get(key) or []
+                if isinstance(arr, list):
+                    for x in arr[:50]:
+                        if isinstance(x, str):
+                            toks.append(x.lower())
+                        elif isinstance(x, dict):
+                            toks.append(str(x.get("id", x.get("name", "")) or "").lower())
+            norm = str(action_ctx.get("normalized_input", "") or "").lower()
+
+            has_device = any(k in t for t in toks for k in ("laptop", "phone", "terminal", "burner", "burner_phone", "laptop_basic"))
+            has_stealth_tool = any(k in t for t in toks for k in ("vpn", "proxy", "tor", "spoof", "scrambler"))
+            has_exploit = any(k in t for t in toks for k in ("exploit", "kit", "zero_day", "0day", "payload"))
+
+            tier = "recon"
+            if any(k in norm for k in ("phish", "phishing", "email", "social engineering", "credential")):
+                tier = "phish"
+            elif any(k in norm for k in ("usb", "local", "wifi", "router", "access point")):
+                tier = "local"
+            elif any(k in norm for k in ("corp", "corporate", "bank", "server", "database", "firewall", "remote", "breach", "intrude", "infiltrate", "intrusion", "exploit")):
+                tier = "intrusion"
+            action_ctx["hack_tier"] = tier
+
+            if not has_device:
+                mods.append(("No device", -25))
+            if has_stealth_tool:
+                mods.append(("Stealth tooling", +4))
+
+            if tier == "intrusion" and (not has_device or not has_exploit):
+                action_ctx["gate_reason"] = "missing_device_or_exploit"
+                return {
+                    "base": base,
+                    "mods": mods + [("Missing tools (intrusion)", -999)],
+                    "net_threshold": max(0, min(100, base + sum(v for _, v in mods))),
+                    "roll": None,
+                    "outcome": "No Roll (Missing Tools)",
+                    "net_threshold_locked": True,
+                }
+        except Exception:
+            pass
     # Ordered modifier stack (v6.8 deterministic order).
     # 1. Skill decay
     decay_pen = int(action_ctx.get("skill_decay_penalty", 0))
     if decay_pen != 0:
         mods.append(("Skill decay", decay_pen))
+    # 1b. Skill level (domain) — tuned via BAL_SKILL_MOD_* env / meta.balance
+    try:
+        from engine.balance import get_balance_snapshot
+
+        snap0 = get_balance_snapshot(state)
+        per = int(snap0.get("skill_mod_per_level", 2) or 2)
+        cap = int(snap0.get("skill_mod_max_cap", 24) or 24)
+        sk_map = {
+            "hacking": "hacking",
+            "social": "social",
+            "social_engineering": "social_engineering",
+            "combat": "combat",
+            "stealth": "stealth",
+            "evasion": "evasion",
+            "driving": "driving",
+            "medical": "medical",
+            "streetwise": "streetwise",
+            "languages": "languages",
+        }
+        sk_key = sk_map.get(str(domain).lower())
+        if sk_key:
+            skills = state.get("skills", {}) or {}
+            row = skills.get(sk_key) if isinstance(skills, dict) else None
+            if isinstance(row, dict):
+                lvl = int(row.get("level", 1) or 1)
+                bonus = min(cap, max(0, (lvl - 1) * per))
+                if bonus:
+                    mods.append(("Skill level", bonus))
+    except Exception:
+        pass
     # 2. Trauma debuff
     if bool(action_ctx.get("trauma_debuff", False)):
         mods.append(("Trauma debuff", -10))
@@ -124,6 +203,28 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
                     # Only apply when player is targeting corporate-ish systems.
                     if any(t in norm for t in ("corp", "corporate", "perusahaan", "kantor pusat", "hq")):
                         mods.append(("Corporate lockdown", -10))
+            # Abstract censorship/war pressure: hacking is harder in high censorship or war eras.
+            try:
+                from engine.atlas import ensure_country_history_idx, ensure_location_profile
+
+                if cur_loc:
+                    prof = ensure_location_profile(state, cur_loc)
+                    c = str((prof.get("country") if isinstance(prof, dict) else "") or "").strip().lower()
+                    sy = int((state.get("meta", {}) or {}).get("sim_year", 0) or 0)
+                    if c:
+                        hi = ensure_country_history_idx(state, c, sim_year=sy)
+                        ci = int((hi.get("censorship_idx", 0) if isinstance(hi, dict) else 0) or 0)
+                        war = str((hi.get("war_status") if isinstance(hi, dict) else "none") or "none").lower()
+                        if war == "world":
+                            mods.append(("War-time security", -12))
+                        elif war == "regional":
+                            mods.append(("War-time security", -6))
+                        if ci >= 80:
+                            mods.append(("Censorship/security", -10))
+                        elif ci >= 60:
+                            mods.append(("Censorship/security", -5))
+            except Exception:
+                pass
 
         # Area-level restrictions (simple districts): add a small penalty if player targets restricted districts by text.
         try:
@@ -158,21 +259,112 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
     # Weather modifier (stealth/evasion mostly).
     try:
         from engine.weather import ensure_weather, stealth_bonus
+        from engine.balance import BALANCE, get_balance_snapshot
 
         if domain in ("stealth", "evasion"):
+            snap = get_balance_snapshot(state)
             meta2 = state.get("meta", {}) or {}
             day2 = int(meta2.get("day", 1) or 1)
             cur_loc = str(state.get("player", {}).get("location", "") or "").strip().lower()
             if cur_loc:
                 w = ensure_weather(state, cur_loc, day2)
-                b = stealth_bonus(str((w or {}).get("kind", "") or ""))
+                kind = str((w or {}).get("kind", "") or "")
+                b = stealth_bonus(kind)
+                # Apply per-save override if configured.
+                k = kind.lower()
+                if k in ("rain", "fog") and "weather_stealth_bonus_rain_fog" in snap:
+                    b = int(snap.get("weather_stealth_bonus_rain_fog", BALANCE.weather_stealth_bonus_rain_fog) or BALANCE.weather_stealth_bonus_rain_fog)
+                elif k == "storm" and "weather_stealth_bonus_storm" in snap:
+                    b = int(snap.get("weather_stealth_bonus_storm", BALANCE.weather_stealth_bonus_storm) or BALANCE.weather_stealth_bonus_storm)
                 if b:
-                    mods.append(("Weather", b))
+                    scw = int(snap.get("weather_roll_mod_scale_pct", 100) or 100)
+                    b2 = int(b * max(0, scw) / 100)
+                    if b2:
+                        mods.append(("Weather", b2))
     except Exception:
         pass
+
+    # Disguise: small roll bonus for social / stealth / evasion when persona active.
+    try:
+        from engine.balance import get_balance_snapshot
+        from engine.disguise import ensure_disguise
+
+        snapd = get_balance_snapshot(state)
+        d = ensure_disguise(state)
+        if bool(d.get("active")):
+            dom = str(domain).lower()
+            if dom in ("stealth", "evasion"):
+                bdis = int(snapd.get("disguise_stealth_roll_bonus", 6) or 6)
+                if bdis:
+                    mods.append(("Disguise", bdis))
+            elif dom == "social":
+                bdis = int(snapd.get("disguise_social_roll_bonus", 4) or 4)
+                if bdis:
+                    mods.append(("Disguise", bdis))
+    except Exception:
+        pass
+
     # 9. Hygiene tax
     if bio.get("hygiene_tax_active") and domain == "social":
         mods.append(("Hygiene tax", -30))
+
+    # Language barrier (year-aware, hybrid): affects social checks.
+    if domain == "social":
+        try:
+            from engine.language import communication_quality, is_high_stakes_social
+
+            lc = communication_quality(state, action_ctx)
+            action_ctx["language_ctx"] = {
+                "sim_year": lc.sim_year,
+                "tech_epoch": lc.tech_epoch,
+                "local_lang": lc.local_lang,
+                "shared": lc.shared,
+                "translator_level": lc.translator_level,
+                "quality": lc.quality,
+                "reason": lc.reason,
+            }
+            # Apply penalties if not shared (scale via BAL_LANG_BARRIER_SCALE_PCT).
+            if not lc.shared:
+                from engine.balance import get_balance_snapshot
+
+                lscale = int(get_balance_snapshot(state).get("lang_barrier_scale_pct", 100) or 100)
+                pen = int(int(lc.penalty) * max(0, lscale) / 100)
+                if pen:
+                    mods.append(("Language barrier", pen))
+
+            # Abstract discrimination: when you're an outsider (no shared language), social can be harder by era/country.
+            try:
+                from engine.atlas import ensure_country_history_idx, ensure_location_profile
+
+                loc = str((state.get("player", {}) or {}).get("location", "") or "").strip().lower()
+                if loc and not lc.shared:
+                    prof = ensure_location_profile(state, loc)
+                    c = str((prof.get("country") if isinstance(prof, dict) else "") or "").strip().lower()
+                    sy = int((state.get("meta", {}) or {}).get("sim_year", 0) or 0)
+                    if c:
+                        hi = ensure_country_history_idx(state, c, sim_year=sy)
+                        di = int((hi.get("discrimination_idx", 0) if isinstance(hi, dict) else 0) or 0)
+                        if di >= 75:
+                            mods.append(("Discrimination pressure", -10))
+                        elif di >= 55:
+                            mods.append(("Discrimination pressure", -5))
+            except Exception:
+                pass
+
+            # Hybrid gate: high-stakes social needs adequate communication.
+            if is_high_stakes_social(action_ctx):
+                # Threshold: either shared language or translator quality high enough.
+                if not lc.shared and lc.quality < 60:
+                    return {
+                        "base": base,
+                        "mods": mods + [("Language gate", -999)],
+                        "net_threshold": max(0, min(100, base + sum(v for _, v in mods))),
+                        "roll": None,
+                        "outcome": "No Roll (Language Barrier)",
+                        "net_threshold_locked": True,
+                    }
+        except Exception:
+            pass
 
     # Social non-conflict: tidak perlu roll, tapi tetap terjadi (AI harus buat dialog/beat).
     if domain == "social" and action_ctx.get("social_mode") == "non_conflict":

@@ -1,0 +1,9 @@
+{
+  "notes": ["Heat, density, and informal rules; everyone knows someone who knows."],
+  "nearby_items": ["burner_phone", "keys", "lockpick_set"],
+  "npcs": {
+    "Fixer_Sukhumvit_Pim": { "role": "fixer", "affiliation": "black_market", "disposition_score": 58, "disposition_label": "Neutral", "is_contact": true },
+    "Doc_Somchai": { "role": "doc", "affiliation": "civilian", "disposition_score": 56, "disposition_label": "Neutral", "is_contact": true }
+  }
+}
+

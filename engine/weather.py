@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from engine.rng import det_roll_1_100
+from engine.balance import BALANCE, get_balance_snapshot
 
 
 def _norm(loc: str) -> str:
@@ -47,23 +48,27 @@ def ensure_weather(state: dict[str, Any], loc: str, day: int) -> dict[str, Any]:
 
 
 def travel_minutes_modifier(weather_kind: str) -> int:
+    # Note: state-aware overrides are applied in timers (time breakdown),
+    # so keep this function pure for now.
     k = str(weather_kind or "").lower()
     if k == "storm":
-        return 25
+        return BALANCE.weather_travel_storm_min
     if k == "rain":
-        return 12
+        return BALANCE.weather_travel_rain_min
     if k == "fog":
-        return 10
+        return BALANCE.weather_travel_fog_min
     if k == "windy":
-        return 6
+        return BALANCE.weather_travel_windy_min
     return 0
 
 
 def stealth_bonus(weather_kind: str) -> int:
+    # Note: state-aware overrides are applied in modifiers (weather bonuses),
+    # so keep this function pure for now.
     k = str(weather_kind or "").lower()
     if k in ("rain", "fog"):
-        return +6
+        return +BALANCE.weather_stealth_bonus_rain_fog
     if k == "storm":
-        return +4
+        return +BALANCE.weather_stealth_bonus_storm
     return 0
 

@@ -32,7 +32,22 @@ def _defaults() -> dict[str, Any]:
                 "speaking": 0,
             }
         },
-        "bio": {"blood_volume": 5.0, "blood_max": 5.0, "bp_state": "Stable", "sleep_debt": 0.0, "infection_pct": 0.0, "burnout": 0, "sanity_debt": 0, "hygiene_tax_active": False, "acute_stress": False, "hallucination_type": "none", "narrator_drift_state": "stable"},
+        "bio": {
+            "blood_volume": 5.0,
+            "blood_max": 5.0,
+            "bp_state": "Stable",
+            "sleep_debt": 0.0,
+            "infection_pct": 0.0,
+            "burnout": 0,
+            "sanity_debt": 0,
+            "hours_since_shower": 0.0,
+            "blood_recovery_modifier_pct": 0,
+            "blood_recovery_blocked": False,
+            "hygiene_tax_active": False,
+            "acute_stress": False,
+            "hallucination_type": "none",
+            "narrator_drift_state": "stable",
+        },
         "economy": {
             "cash": 0,
             "bank": 0,
@@ -73,6 +88,7 @@ def _defaults() -> dict[str, Any]:
             "contacts": {},
             "atlas": {"countries": {}, "version": 1},
             "safehouses": {},
+            "tech_progress": 0.0,
             "news_feed": [],
             "last_news_day": 0,
             "hacking_heat": {},
@@ -120,6 +136,24 @@ def _ensure_required_state_fields(state: dict[str, Any]) -> dict[str, Any]:
             for sk, sv in v.items():
                 state[k].setdefault(sk, sv)
     state["meta"]["schema_version"] = SCHEMA_VERSION
+    # Backfill player languages (0..100 proficiency).
+    try:
+        p = state.setdefault("player", {})
+        if isinstance(p, dict):
+            langs = p.setdefault("languages", {})
+            if not isinstance(langs, dict):
+                langs = {}
+                p["languages"] = langs
+            base = str(p.get("language", "en") or "en").strip().lower()
+            if base and base not in langs:
+                langs[base] = 70
+    except Exception:
+        pass
+    # Backfill world tech progress (future hook).
+    try:
+        state.setdefault("world", {}).setdefault("tech_progress", 0.0)
+    except Exception:
+        pass
     return state
 
 
@@ -182,6 +216,22 @@ def _migrate_state(state: dict[str, Any]) -> dict[str, Any]:
         state.setdefault("player", {}).setdefault("disguise", {"active": False, "persona": "", "until_day": 0, "until_time": 0, "risk": 0})
     except Exception:
         pass
+    try:
+        state.setdefault("world", {}).setdefault("accommodation", {})
+    except Exception:
+        pass
+    try:
+        bio = state.setdefault("bio", {})
+        if isinstance(bio, dict):
+            bio.setdefault("hours_since_shower", 0.0)
+            bio.setdefault("blood_recovery_modifier_pct", 0)
+            bio.setdefault("blood_recovery_blocked", False)
+    except Exception:
+        pass
+    try:
+        state.setdefault("meta", {}).setdefault("balance", {})
+    except Exception:
+        pass
     return state
 
 
@@ -199,10 +249,39 @@ def backup_state() -> None:
 def load_state(path: Path = CURRENT) -> dict[str, Any]:
     try:
         if path.exists():
-            return _migrate_state(_read(path))
+            st = _migrate_state(_read(path))
+            try:
+                from engine.balance import freeze_balance_into_state
+
+                freeze_balance_into_state(st)
+            except Exception:
+                pass
+            # Freeze content packs + apply their effects (sizes/index).
+            try:
+                from engine.content_packs import apply_pack_effects, freeze_packs_into_state
+
+                freeze_packs_into_state(st)
+                apply_pack_effects(st)
+            except Exception:
+                pass
+            return st
     except Exception:
         if PREVIOUS.exists():
-            return _migrate_state(_read(PREVIOUS))
+            st = _migrate_state(_read(PREVIOUS))
+            try:
+                from engine.balance import freeze_balance_into_state
+
+                freeze_balance_into_state(st)
+            except Exception:
+                pass
+            try:
+                from engine.content_packs import apply_pack_effects, freeze_packs_into_state
+
+                freeze_packs_into_state(st)
+                apply_pack_effects(st)
+            except Exception:
+                pass
+            return st
         raise
     return initialize_state({})
 
@@ -238,6 +317,35 @@ def initialize_state(character_data: dict[str, Any], seed_pack: str | None = Non
         meta = state.setdefault("meta", {})
         if isinstance(meta, dict) and not str(meta.get("world_seed", "") or "").strip():
             meta["world_seed"] = str(sp or meta.get("seed_pack", "") or "")
+    except Exception:
+        pass
+    # Freeze balance knobs (determinism for this save).
+    try:
+        from engine.balance import freeze_balance_into_state
+
+        freeze_balance_into_state(state)
+    except Exception:
+        pass
+    # Freeze content packs (determinism for this save) + apply their effects.
+    try:
+        from engine.content_packs import apply_pack_effects, freeze_packs_into_state
+
+        freeze_packs_into_state(state)
+        apply_pack_effects(state)
+    except Exception:
+        pass
+    # Occupation template (deterministic, content-driven). Apply once at boot.
+    try:
+        from engine.occupation import apply_occupation_template, pick_occupation_template_id
+
+        p = state.get("player", {}) or {}
+        if isinstance(p, dict) and not bool(p.get("occupation_template_applied", False)):
+            # Prefer explicit template id if provided.
+            tid = str(p.get("occupation_template_id", "") or "").strip().lower()
+            if not tid:
+                tid = pick_occupation_template_id(state, str(p.get("occupation", "") or ""), str(p.get("background", "") or "")) or ""
+            if tid:
+                apply_occupation_template(state, tid)
     except Exception:
         pass
     return state

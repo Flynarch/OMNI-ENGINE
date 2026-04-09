@@ -32,6 +32,12 @@ def update_economy(state: dict, action_ctx: dict) -> None:
             process_daily_rent(state)
         except Exception:
             pass
+        try:
+            from engine.accommodation import process_accommodation_daily
+
+            process_accommodation_daily(state)
+        except Exception:
+            pass
 
     # FICO checks (event-driven from action context)
     fico = int(econ.get("fico", 600))

@@ -5,7 +5,10 @@ Smoke + compile check. Run from repo root: python scripts/verify.py
 from __future__ import annotations
 
 import compileall
+import hashlib
+import json
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +22,8 @@ def _compile() -> bool:
     ok = compileall.compile_dir(ROOT / "display", quiet=1) and ok
     ok = bool(compileall.compile_file(ROOT / "main.py", quiet=1)) and ok
     ok = bool(compileall.compile_file(ROOT / "scripts" / "verify.py", quiet=1)) and ok
+    ok = bool(compileall.compile_file(ROOT / "scripts" / "migrate_save.py", quiet=1)) and ok
+    ok = bool(compileall.compile_file(ROOT / "scripts" / "validate_all.py", quiet=1)) and ok
     return ok
 
 
@@ -43,6 +48,25 @@ def _smoke() -> None:
     from engine.hacking import apply_hacking_after_roll, ensure_location_factions
     from engine.npc_emotions import apply_npc_emotion_after_roll
     from engine.npc_targeting import apply_npc_targeting
+
+    def _stable_json(obj: object) -> str:
+        return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    def _determinism_fingerprint(state: dict[str, object]) -> str:
+        # Focus on simulation-relevant state; excludes UI-only/transient fields.
+        core = {
+            "meta": state.get("meta", {}),
+            "player": state.get("player", {}),
+            "trace": state.get("trace", {}),
+            "economy": state.get("economy", {}),
+            "skills": state.get("skills", {}),
+            "inventory": state.get("inventory", {}),
+            "world": state.get("world", {}),
+            "npcs": state.get("npcs", {}),
+            "pending_events": state.get("pending_events", []),
+            "active_ripples": state.get("active_ripples", []),
+        }
+        return hashlib.sha256(_stable_json(core).encode("utf-8", errors="ignore")).hexdigest()
     from engine.npcs import update_npcs
 
     st = initialize_state(
@@ -76,9 +100,10 @@ def _smoke() -> None:
     assert ctx_travel.get("action_type") == "travel"
     assert ctx_travel.get("travel_destination") in (None, "london", "london".strip())
     world_tick(st_travel, ctx_travel)
-    assert st_travel.get("player", {}).get("location") in ("london", "London")
+    assert str(st_travel.get("player", {}).get("location") or "").strip().lower() == "london"
+    # Location preset should seed a few recognizable items (Earth-only travel uses presets, not seed packs).
     assert any(
-        isinstance(x, dict) and str(x.get("id", "")).lower() in ("umbrella", "tube_ticket")
+        isinstance(x, dict) and str(x.get("id", "")).lower() in ("burner_phone", "laptop_basic", "keys")
         for x in (st_travel.get("world", {}).get("nearby_items") or [])
     )
 
@@ -197,6 +222,64 @@ def _smoke() -> None:
     arc = st_hack_critical.get("active_ripples", []) or []
     assert any(isinstance(r, dict) and str(r.get("text", "")).startswith("[Hack]") and r.get("propagation") == "broadcast" for r in arc)
 
+    # Cross-domain ripple chain: one public cybercrime should impact trace -> faction attention -> market -> NPC beliefs/disposition.
+    st_chain = initialize_state({"name": "ChainVerify", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_chain.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60})
+    st_chain.setdefault("trace", {})["trace_pct"] = 55
+    # Keep one deterministic contact as recipient of surfaced rumor/broadcast.
+    st_chain.setdefault("npcs", {})["Analyst_Z"] = {
+        "name": "Analyst_Z",
+        "affiliation": "civilian",
+        "home_location": "london",
+        "current_location": "london",
+        "is_contact": True,
+        "trust": 55,
+        "disposition_score": 60,
+        "disposition_label": "Warm",
+        "belief_summary": {"suspicion": 0, "respect": 55},
+    }
+    st_chain.setdefault("world", {}).setdefault("contacts", {})["Analyst_Z"] = dict(st_chain["npcs"]["Analyst_Z"])
+    # Day-1 baseline market snapshot.
+    st_chain.setdefault("economy", {})["last_economic_cycle_day"] = 0
+    update_economy(st_chain, {})
+    pre_weap_px = int((((st_chain.get("economy", {}) or {}).get("market", {}) or {}).get("weapons", {}) or {}).get("price_idx", 100) or 100)
+    pre_el_px = int((((st_chain.get("economy", {}) or {}).get("market", {}) or {}).get("electronics", {}) or {}).get("price_idx", 100) or 100)
+
+    ctx_chain = {
+        "domain": "hacking",
+        "normalized_input": "hack server pusat data penting perusahaan",
+        "action_type": "instant",
+        "visibility": "public",
+    }
+    rp_chain = {"outcome": "Success", "roll": 20, "net_threshold": 50, "mods": [], "net_threshold_locked": True}
+    apply_hacking_after_roll(st_chain, ctx_chain, rp_chain)
+    assert int((st_chain.get("trace", {}) or {}).get("trace_pct", 0) or 0) >= 55
+    assert st_chain.get("world", {}).get("faction_statuses", {}).get("police") in ("investigated", "manhunt")
+    assert any(
+        isinstance(rp, dict) and str(rp.get("text", "")).startswith("[Hack]")
+        for rp in (st_chain.get("active_ripples", []) or [])
+    )
+
+    # Next day economy update should reflect heightened attention.
+    st_chain["meta"]["day"] = 2
+    st_chain["meta"]["time_min"] = 8 * 60
+    st_chain.setdefault("economy", {})["last_economic_cycle_day"] = 1
+    update_economy(st_chain, {})
+    post_weap_px = int((((st_chain.get("economy", {}) or {}).get("market", {}) or {}).get("weapons", {}) or {}).get("price_idx", 100) or 100)
+    post_el_px = int((((st_chain.get("economy", {}) or {}).get("market", {}) or {}).get("electronics", {}) or {}).get("price_idx", 100) or 100)
+    assert post_weap_px >= pre_weap_px
+    assert post_el_px >= pre_el_px
+
+    # Surface ripple and ensure NPC receives belief update (suspicion/disposition consequence).
+    disp_before = int((st_chain.get("npcs", {}).get("Analyst_Z", {}) or {}).get("disposition_score", 50) or 50)
+    update_timers(st_chain, {"action_type": "instant", "instant_minutes": 0})
+    az = (st_chain.get("npcs", {}) or {}).get("Analyst_Z", {}) or {}
+    bsum = az.get("belief_summary", {}) if isinstance(az, dict) else {}
+    assert isinstance(az.get("belief_snippets", []), list) and len(az.get("belief_snippets", [])) >= 1
+    assert int((bsum.get("suspicion", 0) if isinstance(bsum, dict) else 0) or 0) > 0
+    # Disposition should be updated as belief/suspicion effects are applied.
+    assert int(az.get("disposition_score", 50) or 50) != disp_before
+
     # Partial success: near-miss should still grant reduced cash (vs full failure).
     st_p = initialize_state({"name": "PartialHack", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_p.setdefault("economy", {})["cash"] = 0
@@ -306,9 +389,10 @@ def _smoke() -> None:
 
     # Social conflict should roll and incorporate social_stats (non-zero)
     st2 = initialize_state(
-        {"name": "Verify2", "occupation": "operator", "background": "smoke2", "location": "Test", "year": "2025"},
+        {"name": "Verify2", "occupation": "operator", "background": "smoke2", "location": "london", "year": "2025", "language": "en"},
         seed_pack="minimal",
     )
+    st2.setdefault("player", {}).setdefault("languages", {}).update({"en": 90})
     st2.setdefault("player", {}).setdefault("social_stats", {}).update({"looks": 10, "outfit": 10, "hygiene": 5, "speaking": 5})
     conflict = parse_action_intent("aku memaksa orang itu untuk ngomong sekarang")
     assert conflict.get("domain") == "social" and conflict.get("social_mode") == "conflict"
@@ -561,7 +645,8 @@ def _smoke() -> None:
     qs = (st_ev.get("quests", {}) or {}).get("active") or []
     assert isinstance(qs, list) and len(qs) >= 1
     # Lockdown should make corporate hacking harder via modifiers.
-    pkg = compute_roll_package(st_ev, {"domain": "hacking", "trained": True, "normalized_input": "hack corporate server"})
+    st_ev.setdefault("inventory", {}).setdefault("bag_contents", []).extend(["laptop_basic", "exploit_kit"])
+    pkg = compute_roll_package(st_ev, {"domain": "hacking", "trained": True, "normalized_input": "hack corporate server intrusion"})
     assert any("lockdown" in str(k).lower() for k, _v in (pkg.get("mods") or []))
 
     # QUEST command state shape + branching: spotted requires cover tracks; overdue reduces reward.
@@ -796,6 +881,13 @@ def _smoke() -> None:
     w2 = ensure_weather(st_w, "london", 5).get("kind")
     assert w1 == w2
 
+    # Earth-only travel gate: unknown city should be rejected (no travel tick).
+    st_tr = initialize_state({"name": "TravelGate", "location": "london", "year": "2025"}, seed_pack="minimal")
+    ctx_bad = {"action_type": "travel", "travel_destination": "gotham"}
+    world_tick(st_tr, ctx_bad)
+    assert str((st_tr.get("player", {}) or {}).get("location", "") or "").strip().lower() == "london"
+    assert ctx_bad.get("action_type") == "instant"
+
     # Skills progression: XP increases after roll.
     from engine.skills import apply_skill_xp_after_roll, _ensure_skill
 
@@ -806,6 +898,101 @@ def _smoke() -> None:
     apply_skill_xp_after_roll(st_skp, {"domain": "hacking", "stakes": "high"}, {"roll": 10, "outcome": "Success"})
     after_xp = int((st_skp["skills"]["hacking"].get("xp", 0) or 0))
     assert after_xp > before_xp
+
+    # Content packs: core pack loads and applies item_sizes.
+    from engine.content_packs import freeze_packs_into_state, apply_pack_effects
+
+    st_p = initialize_state({"name": "Pack", "location": "london", "year": "2025"}, seed_pack="minimal")
+    freeze_packs_into_state(st_p, pack_ids=["core"])
+    apply_pack_effects(st_p)
+    sizes = (st_p.get("inventory", {}) or {}).get("item_sizes", {}) or {}
+    assert isinstance(sizes, dict)
+    assert int(sizes.get("laptop_basic", 0) or 0) == 3
+    # Strict extras mode should still pass for valid packs.
+    st_ps = initialize_state({"name": "PackStrict", "location": "london", "year": "2025"}, seed_pack="minimal")
+    freeze_packs_into_state(st_ps, pack_ids=["core"], strict_extras=True)
+    assert isinstance(((st_ps.get("meta", {}) or {}).get("content_packs", {}) or {}).get("extras", {}), dict)
+
+    # Occupation templates: content-driven starter kits (items/skills/languages).
+    st_occ = initialize_state(
+        {"name": "OccVerify", "location": "london", "year": "2025", "occupation": "hacker", "background": "ops", "language": "en"},
+        seed_pack="minimal",
+    )
+    assert str((st_occ.get("player", {}) or {}).get("occupation_template_id", "") or "").strip().lower() in ("hacker", "")
+    bag_occ = (st_occ.get("inventory", {}) or {}).get("bag_contents", []) or []
+    assert isinstance(bag_occ, list) and any(str(x).lower() == "laptop_basic" for x in bag_occ)
+    sk_occ = (st_occ.get("skills", {}) or {}).get("hacking") or {}
+    assert isinstance(sk_occ, dict) and int(sk_occ.get("level", 1) or 1) >= 3
+    langs_occ = (st_occ.get("player", {}) or {}).get("languages", {}) or {}
+    assert isinstance(langs_occ, dict) and int(langs_occ.get("en", 0) or 0) >= 60
+
+    # Language learning MVP: class/book/immersion updates player.languages with time/cost.
+    from engine.language_learning import learn_language
+
+    st_ll = initialize_state({"name": "LearnLang", "location": "tokyo", "year": "2025", "language": "en"}, seed_pack="minimal")
+    st_ll.setdefault("economy", {})["cash"] = 1000
+    st_ll.setdefault("player", {})["languages"] = {"en": 80}
+    st_ll.setdefault("inventory", {}).setdefault("bag_contents", []).append("phrasebook")
+    res_book = learn_language(st_ll, "ja", method="book")
+    assert bool(res_book.get("ok")) and int(res_book.get("minutes", 0) or 0) > 0
+    assert int(((st_ll.get("player", {}) or {}).get("languages", {}) or {}).get("ja", 0) or 0) > 0
+    res_imm = learn_language(st_ll, "ja", method="immersion")
+    assert bool(res_imm.get("ok")) and int(res_imm.get("delta", 0) or 0) > 0
+
+    # History indices determinism (seed/year/country): cached and stable.
+    from engine.atlas import ensure_country_history_idx
+
+    st_hist = initialize_state({"name": "Hist", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_hist.setdefault("meta", {})["sim_year"] = 1942
+    h1 = dict(ensure_country_history_idx(st_hist, "united kingdom", sim_year=1942))
+    h2 = dict(ensure_country_history_idx(st_hist, "united kingdom", sim_year=1942))
+    assert h1 == h2 and int(h1.get("border_controls", 0) or 0) >= 0
+    h3 = dict(ensure_country_history_idx(st_hist, "united kingdom", sim_year=2025))
+    assert h3.get("last_year") != h1.get("last_year") or h3 != h1
+
+    # Border controls travel friction: should add time when strict.
+    from engine.timers import update_timers
+
+    st_bt = initialize_state({"name": "BorderTravel", "location": "nyc", "year": "1942"}, seed_pack="minimal")
+    st_bt.setdefault("meta", {})["sim_year"] = 1942
+    # Force strict border controls for deterministic test.
+    uk = st_bt.setdefault("world", {}).setdefault("atlas", {}).setdefault("countries", {}).setdefault("united kingdom", {})
+    uk.setdefault("history_idx", {})["last_year"] = 1942
+    uk["history_idx"]["border_controls"] = 90
+    act_bt = {"action_type": "travel", "travel_destination": "london", "travel_minutes": 30}
+    update_timers(st_bt, act_bt)
+    tb = act_bt.get("time_breakdown", []) or []
+    assert any(isinstance(x, dict) and x.get("label") == "border_controls" for x in tb)
+
+    # Hacking tier gate: intrusion without exploit should return No Roll (Missing Tools).
+    from engine.modifiers import compute_roll_package
+
+    st_hg = initialize_state({"name": "HackGate", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_hg.setdefault("inventory", {}).setdefault("bag_contents", []).append("laptop_basic")
+    ctx_hg = {"domain": "hacking", "action_type": "instant", "normalized_input": "hack corporate server intrusion", "trained": True}
+    rp = compute_roll_package(st_hg, ctx_hg)
+    assert str(rp.get("outcome", "")).startswith("No Roll (Missing Tools)")
+
+    # Language barrier (year-aware): early year + no translator blocks high-stakes social in foreign language.
+    from engine.language import communication_quality
+
+    st_lb = initialize_state({"name": "Lang", "location": "tokyo", "year": 1995, "language": "en"}, seed_pack="minimal")
+    # Force local language to be non-English for test determinism.
+    st_lb.setdefault("world", {}).setdefault("locations", {}).setdefault("tokyo", {}).setdefault("profile", {})["language"] = "ja"
+    st_lb.setdefault("player", {})["languages"] = {"en": 80}
+    # No translator items.
+    pkg = compute_roll_package(st_lb, {"domain": "social", "social_mode": "conflict", "trained": True, "normalized_input": "negosiasi kontrak"})
+    assert str(pkg.get("outcome", "")).startswith("No Roll (Language Barrier)")
+
+    # Modern year + translator item allows with penalty (not blocked).
+    st_lb2 = initialize_state({"name": "Lang2", "location": "tokyo", "year": 2025, "language": "en"}, seed_pack="minimal")
+    st_lb2.setdefault("world", {}).setdefault("locations", {}).setdefault("tokyo", {}).setdefault("profile", {})["language"] = "ja"
+    st_lb2.setdefault("player", {})["languages"] = {"en": 80}
+    st_lb2.setdefault("inventory", {}).setdefault("bag_contents", []).append("smartphone")
+    pkg2 = compute_roll_package(st_lb2, {"domain": "social", "social_mode": "conflict", "trained": True, "normalized_input": "negosiasi kontrak"})
+    assert str(pkg2.get("outcome", "")).startswith("No Roll") is False
+    # Still should include a language modifier when not shared.
+    assert any("language" in str(k).lower() for k, _v in (pkg2.get("mods") or []))
 
     # NPC sim: LOD cap respected (<=80 evaluated) and planner can schedule events/ripples.
     from engine.npc_sim import tick_npc_sim
@@ -874,7 +1061,8 @@ def _smoke() -> None:
     assert str(st_mv["npcs"]["M"].get("current_location", "") or "").strip().lower() == "jakarta"
 
     # Social graph edge types should affect social conflict mods.
-    st_rel = initialize_state({"name": "RelVerify", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_rel = initialize_state({"name": "RelVerify", "location": "london", "year": "2025", "language": "en"}, seed_pack="minimal")
+    st_rel.setdefault("player", {}).setdefault("languages", {}).update({"en": 90})
     st_rel.setdefault("npcs", {})["X"] = {"name": "X", "affiliation": "civilian", "belief_summary": {"suspicion": 0, "respect": 50}}
     st_rel.setdefault("world", {}).setdefault("social_graph", {}).setdefault("__player__", {})["X"] = {"type": "debt", "strength": 80, "since_day": 1, "last_interaction_day": 1}
     from engine.modifiers import compute_roll_package as _crp2
@@ -882,7 +1070,8 @@ def _smoke() -> None:
     assert any(k == "Relationship" for k, _ in (rp_rel.get("mods") or []))
 
     # Social graph edge creation/update via NPCSim: seek_help should set handler/lover; last_interaction_day updates.
-    st_edge = initialize_state({"name": "EdgeCreate", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_edge = initialize_state({"name": "EdgeCreate", "location": "london", "year": "2025", "language": "en"}, seed_pack="minimal")
+    st_edge.setdefault("player", {}).setdefault("languages", {}).update({"en": 90})
     st_edge.setdefault("meta", {}).update({"day": 3, "time_min": 8 * 60, "turn": 10})
     st_edge.setdefault("npcs", {})["C"] = {
         "name": "C",
@@ -1037,7 +1226,8 @@ def _smoke() -> None:
     assert any("Police intel leak" in str(rp.get("text", "")) for rp in (st_c2.get("surfacing_ripples_this_turn") or []))
 
     # NPC belief snippets: surfaced ripple should create belief in relevant contact and affect social mods.
-    st_b = initialize_state({"name": "BeliefVerify", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_b = initialize_state({"name": "BeliefVerify", "location": "london", "year": "2025", "language": "en"}, seed_pack="minimal")
+    st_b.setdefault("player", {}).setdefault("languages", {}).update({"en": 90})
     st_b.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60, "turn": 5})
     st_b.setdefault("world", {}).setdefault("contacts", {})["C1"] = {"name": "C1", "affiliation": "corporate", "trust": 70, "is_contact": True}
     st_b.setdefault("npcs", {})["C1"] = {"name": "C1", "affiliation": "corporate", "trust": 70, "disposition_score": 60, "ambient": False}
@@ -1111,6 +1301,267 @@ def _smoke() -> None:
     assert debt_st["economy"]["cash"] == 0
     assert debt_st["economy"]["bank"] == 0
     assert debt_st["economy"]["debt"] == 85
+
+    # SHOP MVP: deterministic pricing + buy/sell affects cash & inventory.
+    from engine.shop import buy_item, list_shop_quotes, quote_item, sell_item, sell_item_all, sell_item_n, get_capacity_status
+
+    st_shop = initialize_state({"name": "ShopVerify", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_shop.setdefault("economy", {})["cash"] = 5000
+    # ensure packs frozen/applied in init; quote should exist for core item
+    q1 = quote_item(st_shop, "burner_phone")
+    assert q1 is not None and int(q1.buy_price) > 0 and int(q1.sell_price) > 0
+    q2 = quote_item(st_shop, "burner_phone")
+    assert q2 is not None and q1.buy_price == q2.buy_price and q1.sell_price == q2.sell_price
+    cash0 = int((st_shop.get("economy", {}) or {}).get("cash", 0) or 0)
+    rbuy = buy_item(st_shop, "burner_phone", prefer="bag")
+    assert bool(rbuy.get("ok"))
+    inv_bag = (st_shop.get("inventory", {}) or {}).get("bag_contents", []) or []
+    assert any(str(x).lower() == "burner_phone" for x in inv_bag)
+    cash1 = int((st_shop.get("economy", {}) or {}).get("cash", 0) or 0)
+    assert cash1 < cash0
+    rsell = sell_item(st_shop, "burner_phone")
+    assert bool(rsell.get("ok"))
+    inv_bag2 = (st_shop.get("inventory", {}) or {}).get("bag_contents", []) or []
+    assert not any(str(x).lower() == "burner_phone" for x in inv_bag2)
+    cash2 = int((st_shop.get("economy", {}) or {}).get("cash", 0) or 0)
+    assert cash2 > cash1
+    cap0 = get_capacity_status(st_shop)
+    assert cap0.bag_cap >= 1 and cap0.pocket_cap >= 1
+
+    # SELL ALL should sell multiple occurrences deterministically.
+    st_shop["economy"]["cash"] = 0
+    st_shop.setdefault("inventory", {}).setdefault("bag_contents", []).extend(["burner_phone", "burner_phone"])
+    r_all = sell_item_all(st_shop, "burner_phone")
+    assert bool(r_all.get("ok")) and int(r_all.get("count", 0) or 0) >= 2
+    assert int((st_shop.get("economy", {}) or {}).get("cash", 0) or 0) == int(r_all.get("gain", 0) or 0)
+    # SELL xN
+    st_shop["economy"]["cash"] = 0
+    st_shop.setdefault("inventory", {})["bag_contents"] = ["burner_phone", "burner_phone", "burner_phone"]
+    r_n = sell_item_n(st_shop, "burner_phone", n=2)
+    assert bool(r_n.get("ok")) and int(r_n.get("count", 0) or 0) == 2
+    assert len((st_shop.get("inventory", {}) or {}).get("bag_contents", []) or []) == 1
+
+    # SHOP paging/offset: should return deterministic, non-empty page 1.
+    q_p1 = list_shop_quotes(st_shop, limit=5, role="fixer", offset=0)
+    assert isinstance(q_p1, list) and len(q_p1) >= 1
+    # Tag filtering should produce a deterministic subset.
+    q_tag = list_shop_quotes(st_shop, limit=10, tag="translator")
+    assert isinstance(q_tag, list) and len(q_tag) >= 1
+
+    # SHOP polish: sold out is deterministic under high scarcity.
+    st_so = initialize_state({"name": "SoldOutVerify", "location": "tokyo", "year": "2025"}, seed_pack="minimal")
+    st_so.setdefault("meta", {}).update({"day": 7, "time_min": 8 * 60})
+    # Ensure location slot exists with tags/npcs (simulate first visit preset applied).
+    st_so.setdefault("world", {}).setdefault("locations", {}).setdefault("tokyo", {}).setdefault("tags", ["surveillance_high"])
+    st_so["world"]["locations"]["tokyo"].setdefault("npcs", {"Fixer_Suzume": {"role": "fixer"}})
+    st_so.setdefault("world", {}).setdefault("nearby_items", [])
+    # Force local market scarcity high to trigger sold-out behavior for electronics.
+    st_so["economy"].setdefault("market", {}).setdefault("electronics", {})["scarcity"] = 95
+    st_so["economy"]["market"]["electronics"]["price_idx"] = 120
+    qs = list_shop_quotes(st_so, limit=12, role="fixer")
+    assert isinstance(qs, list) and len(qs) >= 1
+    assert any(q.available is False for q in qs)
+    sold = next((q for q in qs if q.available is False), None)
+    if sold is not None:
+        st_so["economy"]["cash"] = 5000
+        r = buy_item(st_so, sold.item_id, prefer="bag")
+        assert bool(r.get("ok")) is False and r.get("reason") == "sold_out"
+
+    # SHOP per-role: ordering should differ between roles for same context.
+    st_role = initialize_state({"name": "RoleShop", "location": "tokyo", "year": "2025"}, seed_pack="minimal")
+    st_role.setdefault("meta", {}).update({"day": 3, "time_min": 8 * 60})
+    st_role.setdefault("world", {}).setdefault("locations", {}).setdefault("tokyo", {}).setdefault("tags", ["surveillance_high", "corporate_dense"])
+    st_role["world"]["locations"]["tokyo"].setdefault("npcs", {"Fixer_Suzume": {"role": "fixer"}, "Doc_Yuna": {"role": "doc"}})
+    q_fix = list_shop_quotes(st_role, limit=6, role="fixer")
+    q_doc = list_shop_quotes(st_role, limit=6, role="doc")
+    assert q_fix and q_doc
+    assert q_fix[0].item_id != q_doc[0].item_id or q_fix[0].buy_price != q_doc[0].buy_price
+
+    # BANK: deposit feeds AML via update_economy(cash_deposit).
+    from engine.banking import bank_deposit
+
+    st_bank = initialize_state({"name": "BankVerify", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_bank.setdefault("economy", {}).update({"cash": 20000, "bank": 0, "aml_threshold": 10000})
+    st_bank.setdefault("meta", {}).update({"day": 1, "time_min": 600})
+    d_small = bank_deposit(st_bank, 3000)
+    assert d_small["ok"]
+    update_economy(st_bank, {"cash_deposit": d_small["cash_deposit"]})
+    assert str((st_bank.get("economy", {}) or {}).get("aml_status", "")) == "CLEAR"
+    st_aml = initialize_state({"name": "BankAML", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_aml.setdefault("economy", {}).update({"cash": 20000, "bank": 0, "aml_threshold": 10000})
+    st_aml.setdefault("meta", {}).update({"day": 1, "time_min": 600})
+    d_big = bank_deposit(st_aml, 15000)
+    assert d_big["ok"]
+    update_economy(st_aml, {"cash_deposit": d_big["cash_deposit"]})
+    assert str((st_aml.get("economy", {}) or {}).get("aml_status", "")).startswith("ACTIVE")
+
+    # ACCOMMODATION: prepaid hotel nights tick down per game day (not on check-in day).
+    from engine.accommodation import normalize_stay_kind, process_accommodation_daily, stay_checkin
+
+    # NL accommodation intent: narrator hint only; engine charges via STAY command.
+    ctx_stay_nl = parse_action_intent("kamu stay satu malam di hotel")
+    assert ctx_stay_nl.get("intent_note") == "accommodation_stay"
+    assert int((ctx_stay_nl.get("accommodation_intent") or {}).get("nights", 0) or 0) == 1
+    assert (ctx_stay_nl.get("accommodation_intent") or {}).get("kind") == "hotel"
+    ctx_br = parse_action_intent("menginap semalam di hostel murah")
+    assert ctx_br.get("intent_note") == "accommodation_stay"
+    assert (ctx_br.get("accommodation_intent") or {}).get("kind") == "kos"
+
+    import os
+
+    from engine.accommodation import try_auto_stay_from_intent
+
+    assert try_auto_stay_from_intent(st, {"intent_note": "accommodation_stay", "accommodation_intent": {"nights": 1}}).get("reason") == "disabled"
+    _prev_auto = os.environ.get("OMNI_AUTO_STAY_INTENT")
+    os.environ["OMNI_AUTO_STAY_INTENT"] = "1"
+    try:
+        st_auto = initialize_state({"name": "AutoStay", "location": "paris", "year": "2025"}, seed_pack="minimal")
+        st_auto.setdefault("economy", {})["cash"] = 100000
+        st_auto.setdefault("meta", {}).update({"day": 2, "time_min": 480})
+        ctx_auto = parse_action_intent("stay satu malam di hotel")
+        r_auto = try_auto_stay_from_intent(st_auto, ctx_auto)
+        assert r_auto.get("applied") is True
+        assert int(((st_auto.get("world", {}) or {}).get("accommodation", {}) or {}).get("paris", {}).get("nights_remaining", 0) or 0) >= 1
+    finally:
+        if _prev_auto is None:
+            os.environ.pop("OMNI_AUTO_STAY_INTENT", None)
+        else:
+            os.environ["OMNI_AUTO_STAY_INTENT"] = _prev_auto
+
+    assert normalize_stay_kind("boarding") == "kos"
+    assert normalize_stay_kind("dorm") == "kos"
+    assert normalize_stay_kind("kos") == "kos"
+
+    st_board = initialize_state({"name": "StayBoard", "location": "berlin", "year": "2025"}, seed_pack="minimal")
+    st_board.setdefault("economy", {})["cash"] = 50000
+    st_board.setdefault("meta", {}).update({"day": 1, "time_min": 480})
+    r_board = stay_checkin(st_board, "boarding", 1)
+    assert r_board["ok"] and r_board.get("kind") == "kos"
+
+    st_acc = initialize_state({"name": "StayVerify", "location": "paris", "year": "2025"}, seed_pack="minimal")
+    st_acc.setdefault("economy", {})["cash"] = 50000
+    st_acc.setdefault("meta", {}).update({"day": 5, "time_min": 480})
+    r_stay = stay_checkin(st_acc, "hotel", 2)
+    assert r_stay["ok"]
+    paris = (st_acc.get("world", {}).get("accommodation", {}) or {}).get("paris") or {}
+    assert int(paris.get("nights_remaining", 0) or 0) == 2
+    process_accommodation_daily(st_acc)
+    assert int(((st_acc.get("world", {}) or {}).get("accommodation", {}) or {}).get("paris", {}).get("nights_remaining", 0) or 0) == 2
+    st_acc.setdefault("meta", {})["day"] = 6
+    process_accommodation_daily(st_acc)
+    assert int(((st_acc.get("world", {}) or {}).get("accommodation", {}) or {}).get("paris", {}).get("nights_remaining", 0) or 0) == 1
+
+    # Skill level → meaningful roll modifier (BAL_SKILL_MOD_PER_LEVEL).
+    from engine.modifiers import compute_roll_package
+
+    st_skill = initialize_state({"name": "SkillMod", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_skill.setdefault("skills", {})["evasion"] = {
+        "level": 6,
+        "xp": 0,
+        "base": 10,
+        "current": 40,
+        "last_used_day": 1,
+        "mastery_streak": 0,
+    }
+    pkg_sk = compute_roll_package(
+        st_skill,
+        {
+            "domain": "evasion",
+            "trained": True,
+            "stakes": "high",
+            "normalized_input": "evade pursuit",
+            "has_stakes": True,
+            "uncertain": True,
+        },
+    )
+    mod_labels = [str(m[0]) for m in (pkg_sk.get("mods") or []) if isinstance(m, (list, tuple)) and len(m) >= 2]
+    assert any("Skill level" in x for x in mod_labels)
+
+    # STRICT_PACK_VALIDATION: fail-fast on invalid extras (same path as OMNI_STRICT_PACK_EXTRAS).
+    from engine.content_packs import freeze_packs_into_state
+
+    _prev_sp = os.environ.get("STRICT_PACK_VALIDATION")
+    os.environ["STRICT_PACK_VALIDATION"] = "1"
+    try:
+        st_pk = initialize_state({"name": "PackStrict", "location": "london", "year": "2025"}, seed_pack="minimal")
+        freeze_packs_into_state(st_pk, pack_ids=["core"])
+        assert isinstance((st_pk.get("meta", {}) or {}).get("content_packs"), dict)
+    finally:
+        if _prev_sp is None:
+            os.environ.pop("STRICT_PACK_VALIDATION", None)
+        else:
+            os.environ["STRICT_PACK_VALIDATION"] = _prev_sp
+
+    # NPC combat AI: pursuit (player fails) vs surrender (opponent breaks).
+    from engine.npc_combat_ai import apply_npc_combat_followup
+
+    st_nc = initialize_state({"name": "NpcCombat", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_nc.setdefault("npcs", {})["Guard_A"] = {"name": "Guard_A", "affiliation": "police", "combat_morale": 60}
+    apply_npc_combat_followup(
+        st_nc,
+        {"domain": "combat", "targets": ["Guard_A"], "combat_style": "melee"},
+        {"outcome": "Failure", "roll": 12, "mods": [], "net_threshold": 50},
+    )
+    assert (st_nc.get("npcs", {}).get("Guard_A") or {}).get("pursuit_until_day")
+    st_nc2 = initialize_state({"name": "NpcCombat2", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_nc2.setdefault("npcs", {})["Thug_B"] = {
+        "name": "Thug_B",
+        "affiliation": "black_market",
+        "combat_morale": 20,
+        "disposition_score": 40,
+    }
+    apply_npc_combat_followup(
+        st_nc2,
+        {"domain": "combat", "targets": ["Thug_B"], "combat_style": "melee"},
+        {"outcome": "Critical Success", "roll": 3, "mods": [], "net_threshold": 50},
+    )
+    assert (st_nc2.get("npcs", {}).get("Thug_B") or {}).get("combat_posture") == "surrender"
+
+    # turn_prompt: package builds with extended ENGINE lines (import smoke).
+    from ai.turn_prompt import build_turn_package
+
+    _tp = build_turn_package(st_nc2, "test", {"outcome": "Success", "roll": 10, "mods": [], "net_threshold": 50}, {})
+    assert "Skills (engine):" in _tp or "Skill (engine):" in _tp
+    assert "Weather (engine)" in _tp or "Cuaca (engine)" in _tp
+
+    # Bio: worst infection controls recovery block; shower intent resets hygiene clock; BAL-driven thresholds.
+    from engine.bio import update_bio
+
+    st_bio = initialize_state({"name": "BioVerify", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_bio.setdefault("bio", {})["hours_since_shower"] = 10.0
+    st_bio["injuries"] = [{"id": "leg", "infection_pct": 55}]
+    update_bio(
+        st_bio,
+        {
+            "action_type": "instant",
+            "instant_minutes": 120,
+            "time_breakdown": [{"label": "instant", "minutes": 120}],
+            "normalized_input": "walk",
+        },
+    )
+    assert (st_bio.get("bio", {}) or {}).get("blood_recovery_blocked") is True
+    st_bio["injuries"] = [{"id": "leg", "infection_pct": 15}]
+    update_bio(
+        st_bio,
+        {
+            "action_type": "instant",
+            "instant_minutes": 1,
+            "time_breakdown": [{"label": "instant", "minutes": 1}],
+            "normalized_input": "walk",
+        },
+    )
+    assert (st_bio.get("bio", {}) or {}).get("blood_recovery_blocked") is False
+    st_bio.setdefault("bio", {})["hours_since_shower"] = 5.0
+    update_bio(
+        st_bio,
+        {
+            "action_type": "instant",
+            "instant_minutes": 60,
+            "normalized_input": "aku mandi shower sekarang",
+            "time_breakdown": [{"label": "instant", "minutes": 60}],
+        },
+    )
+    assert float((st_bio.get("bio", {}) or {}).get("hours_since_shower", 99)) == 0.0
 
     # Inventory micro-ops: stow from hand should not waste a turn, only adds time.
     inv_st = initialize_state({"name": "InvVerify", "location": "Test", "year": "2025"}, seed_pack="minimal")
@@ -1267,6 +1718,115 @@ def _smoke() -> None:
             assert int(c.get("evaluated", 0) or 0) <= 80
             assert int(c.get("coarse", 0) or 0) <= 80
 
+    # Determinism regression harness:
+    # replay the exact same turn sequence twice and compare per-turn fingerprints.
+    def _run_replay(seed_name: str) -> tuple[list[str], str]:
+        st_r = initialize_state(
+            {"name": "Determinism", "location": "jakarta", "year": "2025", "occupation": "operator", "background": "replay"},
+            seed_pack=seed_name,
+        )
+        st_r.setdefault("player", {}).setdefault("languages", {"en": 80})
+        st_r.setdefault("inventory", {}).setdefault("bag_contents", []).append("smartphone")
+        seq = [
+            {"domain": "social", "action_type": "talk", "social_mode": "non_conflict", "intent_note": "social_dialogue", "normalized_input": "ngobrol sebentar"},
+            {"domain": "social", "action_type": "talk", "social_mode": "conflict", "intent_note": "social_conflict", "normalized_input": "negosiasi kontrak keras"},
+            {"domain": "hacking", "action_type": "instant", "normalized_input": "hack server pusat data penting perusahaan", "visibility": "public"},
+            {"domain": "hacking", "action_type": "instant", "normalized_input": "hapus jejak dan hapus log", "visibility": "low"},
+            {"action_type": "travel", "domain": "other", "travel_destination": "london", "normalized_input": "pergi ke london"},
+            {"domain": "social", "action_type": "talk", "social_mode": "non_conflict", "intent_note": "social_inquiry", "normalized_input": "tanya kondisi pasar"},
+            {"action_type": "travel", "domain": "other", "travel_destination": "jakarta", "normalized_input": "kembali ke jakarta"},
+            {"domain": "combat", "action_type": "combat", "combat_style": "ranged", "normalized_input": "tembak", "visibility": "public"},
+        ]
+        trail: list[str] = []
+        for i in range(24):
+            ctx = dict(seq[i % len(seq)])
+            world_tick(st_r, ctx)
+            apply_inventory_ops(st_r, ctx)
+            update_timers(st_r, ctx)
+            update_bio(st_r, ctx)
+            update_skills(st_r, ctx)
+            update_npcs(st_r, ctx)
+            update_economy(st_r, ctx)
+            update_trace(st_r, ctx)
+            update_inventory(st_r, ctx)
+            apply_combat_gates(st_r, ctx)
+            rp = compute_roll_package(st_r, ctx)
+            apply_hacking_after_roll(st_r, ctx, rp)
+            apply_npc_emotion_after_roll(st_r, ctx, rp)
+            apply_npc_targeting(st_r, ctx, rp)
+            resolve_combat_after_roll(st_r, ctx, rp)
+            trail.append(_determinism_fingerprint(st_r))
+        return (trail, _determinism_fingerprint(st_r))
+
+    t1, f1 = _run_replay("minimal")
+    t2, f2 = _run_replay("minimal")
+    assert t1 == t2
+    assert f1 == f2
+
+    # Long-run autonomy sim (no explicit player goals):
+    # world should progress for many days without runaway queues/ranges.
+    def _run_autonomy(seed_name: str) -> tuple[dict[str, object], str]:
+        st_a = initialize_state(
+            {"name": "Autonomy", "location": "london", "year": "2025", "occupation": "operator", "background": "autonomy"},
+            seed_pack=seed_name,
+        )
+        st_a.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60})
+        # 30 days * 12 turns/day * 120 minutes/turn = 360 turns.
+        for _ in range(360):
+            ctx = {
+                "action_type": "instant",
+                "domain": "other",
+                "normalized_input": "wait",
+                "instant_minutes": 120,
+            }
+            world_tick(st_a, ctx)
+            update_timers(st_a, ctx)
+            update_bio(st_a, ctx)
+            update_skills(st_a, ctx)
+            update_npcs(st_a, ctx)
+            update_economy(st_a, ctx)
+            update_trace(st_a, ctx)
+            update_inventory(st_a, ctx)
+            apply_combat_gates(st_a, ctx)
+            rp = compute_roll_package(st_a, ctx)
+            apply_hacking_after_roll(st_a, ctx, rp)
+            apply_npc_emotion_after_roll(st_a, ctx, rp)
+            apply_npc_targeting(st_a, ctx, rp)
+            resolve_combat_after_roll(st_a, ctx, rp)
+
+            # Stability invariants during autonomous progression.
+            trv = int((st_a.get("trace", {}) or {}).get("trace_pct", 0) or 0)
+            assert 0 <= trv <= 100
+            pe = st_a.get("pending_events", []) or []
+            ar = st_a.get("active_ripples", []) or []
+            assert isinstance(pe, list) and len(pe) < 180
+            assert isinstance(ar, list) and len(ar) < 180
+            mkt = (st_a.get("economy", {}) or {}).get("market", {}) or {}
+            if isinstance(mkt, dict):
+                for k in ("electronics", "medical", "weapons", "food", "transport"):
+                    row = mkt.get(k, {}) or {}
+                    if isinstance(row, dict):
+                        assert 0 <= int(row.get("scarcity", 0) or 0) <= 100
+                        assert 50 <= int(row.get("price_idx", 100) or 100) <= 300
+
+        meta_a = st_a.get("meta", {}) or {}
+        day_a = int(meta_a.get("day", 1) or 1)
+        assert day_a >= 30
+
+        summary: dict[str, object] = {
+            "day": day_a,
+            "news_count": len(((st_a.get("world", {}) or {}).get("news_feed", []) or [])),
+            "pending_events": len((st_a.get("pending_events", []) or [])),
+            "active_ripples": len((st_a.get("active_ripples", []) or [])),
+            "trace_pct": int((st_a.get("trace", {}) or {}).get("trace_pct", 0) or 0),
+        }
+        return (summary, _determinism_fingerprint(st_a))
+
+    a1, af1 = _run_autonomy("minimal")
+    a2, af2 = _run_autonomy("minimal")
+    assert a1 == a2
+    assert af1 == af2
+
     # Stress test: ironman vs normal + UNDO restore (state-level).
     from engine.state import CURRENT, PREVIOUS, save_state, backup_state, load_state
     st_mode = initialize_state({"name": "ModeTest", "location": "london", "year": "2025"}, seed_pack="minimal")
@@ -1285,6 +1845,39 @@ def _smoke() -> None:
     restored = load_state(PREVIOUS)
     # previous should have the earlier cash value (10) or at least not equal to 99 in normal flow
     assert int((restored.get("economy", {}) or {}).get("cash", 0) or 0) != 99
+
+    # Save round-trip: deterministic fingerprint after save/load (same migration path as runtime).
+    from ai.turn_prompt import build_turn_package
+
+    with tempfile.TemporaryDirectory() as tdir:
+        p_rt = Path(tdir) / "roundtrip.json"
+        st_rt = initialize_state({"name": "RoundTrip", "location": "test", "year": "2025"}, seed_pack="minimal")
+        save_state(st_rt, p_rt)
+        st_ld = load_state(p_rt)
+        save_state(st_ld, p_rt)
+        st_ld2 = load_state(p_rt)
+        # Second pass must match first: load/migrate/save is idempotent for the fingerprint slice.
+        assert _determinism_fingerprint(st_ld) == _determinism_fingerprint(st_ld2)
+
+    st_facts = initialize_state({"name": "FactsLine", "location": "test", "year": "2025"}, seed_pack="minimal")
+    st_facts.setdefault("meta", {})["last_turn_diff"] = {
+        "cash": -10,
+        "bank": 0,
+        "debt": 0,
+        "trace": 0,
+        "time_elapsed_min": 5,
+        "xp_delta": {"hacking": 2, "social": 0, "combat": 0, "stealth": 0, "evasion": 0},
+        "notes_added_count": 1,
+    }
+    st_facts.setdefault("meta", {})["last_turn_audit"] = {"commerce_notes": ["[Shop] BUY knife price=10"]}
+    pkg = build_turn_package(
+        st_facts,
+        "beli sesuatu",
+        {"mods": [], "net_threshold": 50, "roll": 50, "outcome": "No Roll"},
+        {"action_type": "instant", "domain": "evasion"},
+    )
+    assert "commerce:" in pkg and "[Shop]" in pkg
+    assert "cash-10" in pkg
 
 
 def main() -> int:

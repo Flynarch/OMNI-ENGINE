@@ -1,0 +1,9 @@
+{
+  "notes": ["Bright glass, strict access points, and money that moves without being seen."],
+  "nearby_items": ["smartphone", "keys", "burner_phone"],
+  "npcs": {
+    "Fixer_Souk_Nadir": { "role": "fixer", "affiliation": "black_market", "disposition_score": 56, "disposition_label": "Neutral", "is_contact": true },
+    "Corp_Procurement_Salim": { "role": "corporate_rep", "affiliation": "corporate", "disposition_score": 52, "disposition_label": "Neutral", "is_contact": true }
+  }
+}
+

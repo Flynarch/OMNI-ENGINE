@@ -1,0 +1,14 @@
+{
+  "world_notes": ["[Seed: mumbai] Dense markets, layered jurisdictions, and contacts that know everyone."],
+  "npcs": {
+    "Fixer_Rahul": { "disposition_score": 60, "disposition_label": "Neutral", "role": "fixer", "affiliation": "black_market", "is_contact": true },
+    "Officer_Patel": { "disposition_score": 46, "disposition_label": "Cold", "role": "cop", "affiliation": "police", "is_contact": true }
+  },
+  "world": {
+    "nearby_items": [
+      { "id": "burner_phone", "name": "burner_phone" },
+      { "id": "keys", "name": "keys" }
+    ]
+  }
+}
+

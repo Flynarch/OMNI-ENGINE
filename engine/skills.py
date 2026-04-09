@@ -24,7 +24,7 @@ def _ensure_skill(state: dict[str, Any], key: str) -> dict[str, Any]:
 def update_skills(state: dict, action_ctx: dict) -> None:
     """Passive maintenance: decay + compute current (progression is applied after roll)."""
     day = int(state.get("meta", {}).get("day", 1))
-    for key in ("hacking", "social", "combat", "stealth", "evasion"):
+    for key in ("hacking", "social", "social_engineering", "combat", "stealth", "evasion", "driving", "medical", "streetwise", "languages"):
         s = _ensure_skill(state, key)
         base = float(s.get("base", 10))
         last = int(s.get("last_used_day", day))
@@ -41,7 +41,7 @@ def update_skills(state: dict, action_ctx: dict) -> None:
 def apply_skill_xp_after_roll(state: dict[str, Any], action_ctx: dict[str, Any], roll_pkg: dict[str, Any]) -> None:
     """Progression: award XP to domain skill after a resolved action."""
     domain = str(action_ctx.get("domain", "") or "").lower()
-    if domain not in ("hacking", "social", "combat", "stealth", "evasion"):
+    if domain not in ("hacking", "social", "social_engineering", "combat", "stealth", "evasion", "driving", "medical", "streetwise", "languages"):
         return
     meta = state.get("meta", {}) or {}
     day = int(meta.get("day", 1) or 1)

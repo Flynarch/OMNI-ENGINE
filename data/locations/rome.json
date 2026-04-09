@@ -1,0 +1,9 @@
+{
+  "notes": ["Old stone, old favors; bureaucracy moves slow until it doesn’t."],
+  "nearby_items": ["burner_phone", "keys", "phrasebook"],
+  "npcs": {
+    "Fixer_Trastevere_Nico": { "role": "fixer", "affiliation": "black_market", "disposition_score": 56, "disposition_label": "Neutral", "is_contact": true },
+    "Officer_Rossi": { "role": "cop", "affiliation": "police", "disposition_score": 47, "disposition_label": "Cold" }
+  }
+}
+

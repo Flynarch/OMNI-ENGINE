@@ -4,6 +4,7 @@ from typing import Any
 
 from engine.news import push_news
 from engine.ripple_queue import enqueue_ripple
+from engine.balance import BALANCE, get_balance_snapshot
 
 
 def ensure_safehouses(state: dict[str, Any]) -> dict[str, Any]:
@@ -20,13 +21,14 @@ def get_here_key(state: dict[str, Any]) -> str:
 
 
 def ensure_safehouse_here(state: dict[str, Any]) -> dict[str, Any]:
+    snap = get_balance_snapshot(state)
     sh = ensure_safehouses(state)
     here = get_here_key(state)
     sh.setdefault(
         here,
         {
             "status": "none",  # none|rent|own
-            "rent_per_day": 25,
+            "rent_per_day": int(snap.get("safehouse_rent_default_per_day", BALANCE.safehouse_rent_default_per_day) or BALANCE.safehouse_rent_default_per_day),
             "security_level": 1,
             "stash": [],
             "delinquent_days": 0,
@@ -34,38 +36,55 @@ def ensure_safehouse_here(state: dict[str, Any]) -> dict[str, Any]:
     )
     row = sh.get(here)
     if not isinstance(row, dict):
-        row = {"status": "none", "rent_per_day": 25, "security_level": 1, "stash": [], "delinquent_days": 0}
+        row = {
+            "status": "none",
+            "rent_per_day": int(snap.get("safehouse_rent_default_per_day", BALANCE.safehouse_rent_default_per_day) or BALANCE.safehouse_rent_default_per_day),
+            "security_level": 1,
+            "stash": [],
+            "delinquent_days": 0,
+        }
         sh[here] = row
     row.setdefault("status", "none")
-    row.setdefault("rent_per_day", 25)
+    row.setdefault("rent_per_day", int(snap.get("safehouse_rent_default_per_day", BALANCE.safehouse_rent_default_per_day) or BALANCE.safehouse_rent_default_per_day))
     row.setdefault("security_level", 1)
     row.setdefault("stash", [])
     row.setdefault("delinquent_days", 0)
     return row
 
 
-def rent_here(state: dict[str, Any], *, rent_per_day: int = 25) -> bool:
+def rent_here(state: dict[str, Any], *, rent_per_day: int = BALANCE.safehouse_rent_default_per_day) -> bool:
+    snap = get_balance_snapshot(state)
     row = ensure_safehouse_here(state)
     if row.get("status") in ("rent", "own"):
         return True
     econ = state.setdefault("economy", {})
     cash = int(econ.get("cash", 0) or 0)
-    if cash < 50:
+    dep = int(snap.get("safehouse_rent_deposit", BALANCE.safehouse_rent_deposit) or BALANCE.safehouse_rent_deposit)
+    if cash < dep:
         return False
-    econ["cash"] = cash - 50  # deposit
+    econ["cash"] = cash - dep  # deposit
     row["status"] = "rent"
+    if rent_per_day == BALANCE.safehouse_rent_default_per_day:
+        rent_per_day = int(snap.get("safehouse_rent_default_per_day", rent_per_day) or rent_per_day)
     row["rent_per_day"] = int(rent_per_day)
     row["delinquent_days"] = 0
-    push_news(state, text=f"Kamu sewa safehouse di {get_here_key(state)} (deposit 50, rent {rent_per_day}/d).", source="contacts")
+    push_news(
+        state,
+        text=f"Kamu sewa safehouse di {get_here_key(state)} (deposit {dep}, rent {rent_per_day}/d).",
+        source="contacts",
+    )
     return True
 
 
-def buy_here(state: dict[str, Any], *, price: int = 600) -> bool:
+def buy_here(state: dict[str, Any], *, price: int = BALANCE.safehouse_buy_price) -> bool:
+    snap = get_balance_snapshot(state)
     row = ensure_safehouse_here(state)
     if row.get("status") == "own":
         return True
     econ = state.setdefault("economy", {})
     cash = int(econ.get("cash", 0) or 0)
+    if price == BALANCE.safehouse_buy_price:
+        price = int(snap.get("safehouse_buy_price", price) or price)
     if cash < price:
         return False
     econ["cash"] = cash - price
@@ -77,36 +96,42 @@ def buy_here(state: dict[str, Any], *, price: int = 600) -> bool:
 
 
 def upgrade_security(state: dict[str, Any]) -> bool:
+    snap = get_balance_snapshot(state)
     row = ensure_safehouse_here(state)
     if row.get("status") == "none":
         return False
     lvl = int(row.get("security_level", 1) or 1)
-    cost = 120 * lvl
+    base_cost = int(snap.get("safehouse_upgrade_base_cost", BALANCE.safehouse_upgrade_base_cost) or BALANCE.safehouse_upgrade_base_cost)
+    cost = base_cost * lvl
     econ = state.setdefault("economy", {})
     cash = int(econ.get("cash", 0) or 0)
     if cash < cost:
         return False
     econ["cash"] = cash - cost
-    row["security_level"] = min(5, lvl + 1)
+    mx = int(snap.get("safehouse_security_max", BALANCE.safehouse_security_max) or BALANCE.safehouse_security_max)
+    row["security_level"] = min(mx, lvl + 1)
     push_news(state, text=f"Safehouse security naik ke L{row['security_level']} (cost {cost}).", source="contacts")
     return True
 
 
 def apply_lay_low_bonus(state: dict[str, Any]) -> None:
     """Called on rest/sleep: bonus trace decay if at a safehouse."""
+    snap = get_balance_snapshot(state)
     row = ensure_safehouse_here(state)
     if row.get("status") == "none":
         return
     tr = state.setdefault("trace", {})
     tp = int(tr.get("trace_pct", 0) or 0)
     lvl = int(row.get("security_level", 1) or 1)
-    dec = 2 + lvl  # 3..7
+    base = int(snap.get("safehouse_lay_low_base_decay", BALANCE.safehouse_lay_low_base_decay) or BALANCE.safehouse_lay_low_base_decay)
+    dec = base + lvl
     tr["trace_pct"] = max(0, tp - dec)
     state.setdefault("world_notes", []).append(f"[Safehouse] Lay low bonus: trace -{dec}")
 
 
 def process_daily_rent(state: dict[str, Any]) -> None:
     """Daily rent handling. If delinquent, landlord may report."""
+    snap = get_balance_snapshot(state)
     meta = state.get("meta", {}) or {}
     day = int(meta.get("day", 1) or 1)
     sh = ensure_safehouses(state)
@@ -121,7 +146,7 @@ def process_daily_rent(state: dict[str, Any]) -> None:
             continue
         if str(row.get("status", "none")) != "rent":
             continue
-        due = int(row.get("rent_per_day", 25) or 25)
+        due = int(row.get("rent_per_day", int(snap.get("safehouse_rent_default_per_day", BALANCE.safehouse_rent_default_per_day) or BALANCE.safehouse_rent_default_per_day)) or 0)
         total_due += max(0, due)
         any_due = True
 
@@ -156,7 +181,8 @@ def process_daily_rent(state: dict[str, Any]) -> None:
         if isinstance(row, dict) and str(row.get("status", "none")) == "rent":
             dd = int(row.get("delinquent_days", 0) or 0) + 1
             row["delinquent_days"] = dd
-            if dd >= 2:
+            rep_day = int(snap.get("safehouse_delinquent_report_day", BALANCE.safehouse_delinquent_report_day) or BALANCE.safehouse_delinquent_report_day)
+            if dd >= rep_day:
                 # Landlord report event as ripple + news.
                 push_news(state, text=f"Pemilik safehouse di {loc} mulai curiga (tunggakan).", source="contacts")
                 enqueue_ripple(
@@ -174,7 +200,7 @@ def process_daily_rent(state: dict[str, Any]) -> None:
                         "witnesses": [],
                         "surface_attempts": 0,
                         "meta": {"location": loc, "delinquent_days": dd},
-                        "impact": {"trace_delta": +3},
+                        "impact": {"trace_delta": +int(snap.get("safehouse_landlord_report_trace_delta", BALANCE.safehouse_landlord_report_trace_delta) or BALANCE.safehouse_landlord_report_trace_delta)},
                     },
                 )
 

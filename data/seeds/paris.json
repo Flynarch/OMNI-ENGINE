@@ -1,0 +1,14 @@
+{
+  "world_notes": ["[Seed: paris] Old money, new tech, and quiet networks moving under the surface."],
+  "npcs": {
+    "Journalist_Claire": { "disposition_score": 59, "disposition_label": "Neutral", "role": "journalist", "affiliation": "civilian", "is_contact": true },
+    "Gendarme_Roux": { "disposition_score": 47, "disposition_label": "Cold", "role": "cop", "affiliation": "police", "is_contact": true }
+  },
+  "world": {
+    "nearby_items": [
+      { "id": "burner_phone", "name": "burner_phone" },
+      { "id": "keys", "name": "keys" }
+    ]
+  }
+}
+

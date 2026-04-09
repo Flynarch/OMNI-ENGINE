@@ -1,0 +1,14 @@
+{
+  "world_notes": ["[Seed: berlin] Industrial backbone, privacy culture, and a hacker scene with long memory."],
+  "npcs": {
+    "Hacker_Anke": { "disposition_score": 61, "disposition_label": "Neutral", "role": "hacker", "affiliation": "black_market", "is_contact": true },
+    "Corp_Security_Krause": { "disposition_score": 50, "disposition_label": "Neutral", "role": "security", "affiliation": "corporate", "is_contact": true }
+  },
+  "world": {
+    "nearby_items": [
+      { "id": "laptop_basic", "name": "laptop_basic" },
+      { "id": "lockpick_set", "name": "lockpick_set" }
+    ]
+  }
+}
+

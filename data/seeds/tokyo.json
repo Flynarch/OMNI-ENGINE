@@ -1,0 +1,15 @@
+{
+  "world_notes": ["[Seed: tokyo] Neon rain, corporate density, high surveillance baseline."],
+  "npcs": {
+    "Fixer_Suzume": { "disposition_score": 58, "disposition_label": "Neutral", "role": "fixer", "affiliation": "black_market", "is_contact": true },
+    "Corp_Rep_Mizuno": { "disposition_score": 52, "disposition_label": "Neutral", "role": "corporate_rep", "affiliation": "corporate", "is_contact": true }
+  },
+  "world": {
+    "nearby_items": [
+      { "id": "burner_phone", "name": "burner_phone" },
+      { "id": "laptop_basic", "name": "laptop_basic" },
+      { "id": "keys", "name": "keys" }
+    ]
+  }
+}
+

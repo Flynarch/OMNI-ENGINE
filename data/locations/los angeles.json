@@ -1,0 +1,11 @@
+{
+  "notes": [
+    "Car sprawl, fragmented neighborhoods, cameras on main arteries; influence trades hands quietly."
+  ],
+  "nearby_items": ["burner_phone", "keys", "laptop_basic"],
+  "npcs": {
+    "Fixer_Val": { "role": "fixer", "affiliation": "black_market", "disposition_score": 57, "disposition_label": "Neutral", "is_contact": true },
+    "Security_Cruz": { "role": "security", "affiliation": "corporate", "disposition_score": 49, "disposition_label": "Cold" }
+  }
+}
+

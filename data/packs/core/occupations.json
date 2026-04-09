@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "templates": [
+    {
+      "id": "hacker",
+      "name": "Hacker / Operator",
+      "match": ["hacker", "operator", "pentest", "security researcher", "cyber", "programmer", "developer"],
+      "items_bag": ["laptop_basic", "burner_phone"],
+      "items_world": ["keys"],
+      "skills": { "hacking": 4, "social_engineering": 2, "stealth": 1, "languages": 1 },
+      "languages": { "en": 75 }
+    },
+    {
+      "id": "driver",
+      "name": "Driver / Courier",
+      "match": ["driver", "kurir", "courier", "ojek", "taxi", "delivery"],
+      "items_bag": ["burner_phone"],
+      "items_world": ["keys"],
+      "skills": { "driving": 4, "streetwise": 2, "evasion": 1, "languages": 1 },
+      "languages": { "en": 55 }
+    },
+    {
+      "id": "medic",
+      "name": "Medic / Doctor",
+      "match": ["medic", "doctor", "dokter", "nurse", "paramedic"],
+      "items_bag": ["smartphone"],
+      "items_world": ["keys"],
+      "skills": { "medical": 4, "social": 2, "languages": 2 },
+      "languages": { "en": 65 }
+    },
+    {
+      "id": "corporate",
+      "name": "Corporate / Finance",
+      "match": ["corporate", "bank", "banker", "consultant", "manager", "executive", "office"],
+      "items_bag": ["smartphone"],
+      "items_world": ["keys"],
+      "skills": { "social": 3, "languages": 3, "streetwise": 1 },
+      "languages": { "en": 80 }
+    }
+  ]
+}
+

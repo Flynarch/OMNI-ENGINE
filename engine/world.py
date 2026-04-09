@@ -143,6 +143,34 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
     if action_ctx.get("action_type") == "travel":
         dest = action_ctx.get("travel_destination")
         if dest:
+            # Earth-only travel gate: block unknown/imaginary cities (DLC later).
+            try:
+                from engine.atlas import default_city_for_country, is_known_place, resolve_place
+
+                raw_dest = str(dest)
+                if not is_known_place(raw_dest):
+                    notes.append(f"[Travel] Unknown/unsupported location '{dest}'. (Earth-only mode)")
+                    # Cancel travel so timers don't advance as travel.
+                    action_ctx["action_type"] = "instant"
+                    action_ctx.pop("travel_destination", None)
+                    action_ctx["instant_minutes"] = int(action_ctx.get("instant_minutes", 2) or 2)
+                    return
+                # If user typed a COUNTRY, map it to a deterministic default CITY.
+                meta2 = state.get("meta", {}) or {}
+                seed2 = str(meta2.get("world_seed", "") or meta2.get("seed_pack", "") or "")
+                c, kind = resolve_place(raw_dest)
+                if kind == "country":
+                    dc = default_city_for_country(c, seed=seed2)
+                    if not dc:
+                        notes.append(f"[Travel] Country '{c}' has no mapped city yet. (Earth-only mode)")
+                        action_ctx["action_type"] = "instant"
+                        action_ctx.pop("travel_destination", None)
+                        action_ctx["instant_minutes"] = int(action_ctx.get("instant_minutes", 2) or 2)
+                        return
+                    notes.append(f"[Travel] '{raw_dest}' interpreted as country → default city '{dc}'.")
+                    action_ctx["travel_destination"] = dc
+            except Exception:
+                pass
             # Persist current location scene before moving.
             cur_loc = str(state.get("player", {}).get("location", "") or "").strip().lower()
             world = state.setdefault("world", {})
@@ -174,12 +202,13 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                     slot["npcs"] = local_npcs
 
             dest_s = str(dest).strip()
-            state.setdefault("player", {})["location"] = dest_s
+            dest_key_norm = dest_s.strip().lower()
+            state.setdefault("player", {})["location"] = dest_key_norm
             # Ensure deterministic cultural/econ background exists for this location.
             try:
                 from engine.atlas import ensure_location_profile
 
-                ensure_location_profile(state, dest_s)
+                ensure_location_profile(state, dest_key_norm)
             except Exception:
                 pass
             # Preserve any previously persisted per-location factions across seed merges.
@@ -199,41 +228,14 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                 prev_slot = None
                 prev_factions = None
                 prev_fk = None
+            # Location presets (applied once per location on first visit).
             try:
-                from engine.seeds import apply_seed_pack
+                from engine.location_presets import apply_location_preset_if_first_visit
 
-                dest_l = dest_s.lower().strip()
-                primary = dest_l.split()[0] if dest_l else ""
-                candidates = []
-                if dest_l:
-                    candidates.append(dest_l)
-                    candidates.append(dest_l.replace(" ", "_").replace("-", "_"))
-                if primary and primary not in candidates:
-                    candidates.insert(0, primary)
-
-                ok = False
-                for pack in candidates:
-                    if not pack:
-                        continue
-                    if apply_seed_pack(state, pack):
-                        ok = True
-                        notes.append(f"Arrived: {dest_s} (seed='{pack}').")
-                        break
-                if not ok:
-                    notes.append(f"Arrived: {dest_s} (no location seed file found; using fallback).")
-                    # Deterministic fallback scene content so travel anywhere feels alive.
-                    primary = dest_l.split()[0] if dest_l else dest_s.lower().strip()
-                    world = state.setdefault("world", {})
-                    world.setdefault("nearby_items", [])
-                    world["nearby_items"] = [
-                        {"id": f"{primary}_id_card", "name": f"{primary}_id_card"},
-                        {"id": f"{primary}_sim_card", "name": f"{primary}_sim_card"},
-                    ]
-                    state.setdefault("world_notes", []).append(
-                        f"[Fallback Scene] {dest_s}: ritme kota berbeda terasa di udara, namun aturan permainan tetap sama."
-                    )
+                applied = apply_location_preset_if_first_visit(state, dest_key_norm)
+                notes.append(f"Arrived: {dest_key_norm}" + (" (preset applied)." if applied else "."))
             except Exception:
-                notes.append(f"Arrived: {dest_s} (seed merge error).")
+                notes.append(f"Arrived: {dest_key_norm} (preset apply error).")
             # Re-apply persisted factions if seed merge overwrote the destination slot.
             try:
                 if prev_factions is not None:
@@ -254,7 +256,7 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
             seeded_npcs: dict[str, Any] = dict(state.get("npcs", {}) or {}) if isinstance(state.get("npcs", {}), dict) else {}
 
             # Restore persisted destination scene if it exists.
-            dest_key = str(dest_s).strip().lower()
+            dest_key = dest_key_norm
             loc_store = (state.get("world", {}) or {}).get("locations", {})
             snap_npcs: dict[str, Any] = {}
             if isinstance(loc_store, dict):
@@ -307,14 +309,14 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                 home = str(v.get("home_location", "") or "").strip().lower()
                 if not home:
                     v = dict(v)
-                    v["home_location"] = dest_s
+                    v["home_location"] = dest_key_norm
                     locals_from_seed[str(k)] = v
                 elif home == dest_key:
                     locals_from_seed[str(k)] = dict(v)
             for k, v in locals_from_seed.items():
                 vv = dict(v)
                 if str(vv.get("current_location", "") or "").strip() == "":
-                    vv["current_location"] = dest_s
+                    vv["current_location"] = dest_key_norm
                 new_npcs[str(k)] = vv
 
             if isinstance(snap_npcs, dict):
@@ -323,7 +325,7 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                         vv = dict(v)
                         # Ensure locals loaded into a destination are marked as currently there.
                         if str(vv.get("current_location", "") or "").strip() == "":
-                            vv["current_location"] = dest_s
+                            vv["current_location"] = dest_key_norm
                         new_npcs[str(k)] = vv
             state["npcs"] = new_npcs
 

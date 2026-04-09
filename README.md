@@ -93,6 +93,8 @@ On a fresh boot you’ll fill a profile and choose a **seed pack** (`default`, `
 - **`MARKET`**: local market snapshot (falls back to global)
 - **`QUEST`**: active/completed/failed quest chains + steps/deadlines
 - **`ATLAS [country]`**: geopolitics + deterministic country profiles
+- **`COUNTRIES`**: list supported countries (Earth-only allowlist)
+- **`CITIES [country]`**: list supported cities (optionally filtered by country)
 - **`WHO` / `NPC <name>`**: list NPCs / inspect a specific NPC
 - **`HEAT`**: hacking heat/cooldowns
 - **`OFFERS [role]`**: NPC economy offers

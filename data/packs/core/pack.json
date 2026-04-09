@@ -1,0 +1,76 @@
+{
+  "pack_id": "core",
+  "version": 1,
+  "name": "Core Content Pack",
+  "description": "Baseline items/roles/services used by OMNI-ENGINE.",
+  "items": [
+    {
+      "id": "laptop_basic",
+      "name": "Basic Laptop",
+      "size": 3,
+      "tags": ["electronics", "tool"],
+      "base_price": 900,
+      "rarity": "common"
+    },
+    {
+      "id": "burner_phone",
+      "name": "Burner Phone",
+      "size": 1,
+      "tags": ["comms", "translator_basic"],
+      "base_price": 120,
+      "rarity": "common"
+    },
+    {
+      "id": "phrasebook",
+      "name": "Phrasebook",
+      "size": 1,
+      "tags": ["translator_lowtech"],
+      "base_price": 20,
+      "rarity": "common"
+    },
+    {
+      "id": "smartphone",
+      "name": "Smartphone",
+      "size": 1,
+      "tags": ["comms", "translator_good"],
+      "base_price": 600,
+      "rarity": "uncommon"
+    },
+    {
+      "id": "translator_earpiece",
+      "name": "Translator Earpiece",
+      "size": 1,
+      "tags": ["translator_advanced"],
+      "base_price": 1500,
+      "rarity": "rare"
+    },
+    {
+      "id": "lockpick_set",
+      "name": "Lockpick Set",
+      "size": 1,
+      "tags": ["tool", "stealth"],
+      "base_price": 80,
+      "rarity": "uncommon"
+    }
+  ],
+  "roles": [
+    {
+      "id": "fixer",
+      "name": "Fixer",
+      "services": ["sell_info", "launder_cash", "safehouse_broker"]
+    },
+    {
+      "id": "doc",
+      "name": "Street Doc",
+      "services": ["heal", "clean_id"]
+    }
+  ],
+  "services": [
+    { "id": "sell_info", "name": "Sell Intel", "domain": "social" },
+    { "id": "launder_cash", "name": "Launder Cash", "domain": "economy" },
+    { "id": "safehouse_broker", "name": "Broker Safehouse", "domain": "economy" },
+    { "id": "heal", "name": "Medical Treatment", "domain": "bio" },
+    { "id": "clean_id", "name": "Clean Identity", "domain": "stealth" }
+  ]
+}
+

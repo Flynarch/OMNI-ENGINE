@@ -1,0 +1,11 @@
+{
+  "tags": ["hacker_scene", "privacy_culture", "industrial_backbone"],
+  "notes": ["Industrial backbone, privacy culture, and a hacker scene with long memory; favors are tracked, not forgotten."],
+  "nearby_items": ["laptop_basic", "lockpick_set", "keys"],
+  "npcs": {
+    "Hacker_Anke": { "role": "hacker", "affiliation": "black_market", "disposition_score": 61, "disposition_label": "Neutral", "is_contact": true },
+    "Corp_Security_Krause": { "role": "security", "affiliation": "corporate", "disposition_score": 50, "disposition_label": "Neutral", "is_contact": true },
+    "Kripo_Officer_Schmidt": { "role": "cop", "affiliation": "police", "disposition_score": 47, "disposition_label": "Cold" }
+  }
+}
+

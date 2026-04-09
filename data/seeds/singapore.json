@@ -1,0 +1,14 @@
+{
+  "world_notes": ["[Seed: singapore] Clean streets, strict rules, finance hub vibes. Small mistakes echo loudly."],
+  "npcs": {
+    "Broker_Lim": { "disposition_score": 60, "disposition_label": "Neutral", "role": "broker", "affiliation": "corporate", "is_contact": true },
+    "Courier_Aisyah": { "disposition_score": 57, "disposition_label": "Neutral", "role": "courier", "affiliation": "civilian", "is_contact": true }
+  },
+  "world": {
+    "nearby_items": [
+      { "id": "burner_phone", "name": "burner_phone" },
+      { "id": "keys", "name": "keys" }
+    ]
+  }
+}
+

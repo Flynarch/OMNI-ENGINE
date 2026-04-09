@@ -1,0 +1,15 @@
+{
+  "world_notes": ["[Seed: nyc] A crowded grid: cops are stretched, corps are everywhere, intel travels fast."],
+  "npcs": {
+    "Runner_Kai": { "disposition_score": 56, "disposition_label": "Neutral", "role": "runner", "affiliation": "civilian", "is_contact": true },
+    "Detective_Morrow": { "disposition_score": 45, "disposition_label": "Cold", "role": "detective", "affiliation": "police", "is_contact": true }
+  },
+  "world": {
+    "nearby_items": [
+      { "id": "burner_phone", "name": "burner_phone" },
+      { "id": "lockpick_set", "name": "lockpick_set" },
+      { "id": "keys", "name": "keys" }
+    ]
+  }
+}
+

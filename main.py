@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import sys
@@ -30,10 +31,128 @@ from engine.world import world_tick
 from engine.hacking import apply_hacking_after_roll
 from engine.npc_emotions import apply_npc_emotion_after_roll
 from engine.npc_targeting import apply_npc_targeting
+from engine.shop import buy_item, get_capacity_status, list_shop_quotes, sell_item, sell_item_all, sell_item_n, quote_item
 
 
 def _ask(prompt: str) -> str:
     return input(prompt).strip()
+
+
+def _load_occupation_templates() -> list[dict[str, Any]]:
+    """Boot-time helper: read core occupations templates (optional)."""
+    try:
+        path = Path(__file__).resolve().parent / "data" / "packs" / "core" / "occupations.json"
+        if not path.exists():
+            return []
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(doc, dict):
+            return []
+        temps = doc.get("templates", [])
+        if not isinstance(temps, list):
+            return []
+        out: list[dict[str, Any]] = []
+        for t in temps[:30]:
+            if isinstance(t, dict) and isinstance(t.get("id"), str):
+                out.append(t)
+        return out
+    except Exception:
+        return []
+
+
+def _bootstrap_location_input(*, seed_pack: str | None = None) -> str:
+    """Location picker with manual override (deterministic normalization remains in engine)."""
+    try:
+        from engine.atlas import (
+            default_city_for_country,
+            is_known_place,
+            list_known_cities,
+            list_known_countries,
+            resolve_place,
+        )
+    except Exception:
+        return _ask("location: ").strip()
+
+    cities = list_known_cities()
+    countries = list_known_countries()
+    if not cities:
+        return _ask("location: ").strip()
+
+    top_cities = [c for c in ("jakarta", "london", "tokyo", "nyc", "paris", "berlin", "mumbai", "singapore") if c in cities]
+    if not top_cities:
+        top_cities = cities[:8]
+
+    console.print("[dim]Location mode: [1] pick city  [2] search  [3] manual[/dim]")
+    mode = _ask("location_mode [1/2/3, default=1]: ").strip() or "1"
+
+    if mode == "1":
+        console.print("[dim]Popular cities:[/dim] " + ", ".join(top_cities))
+        pick = _ask("pick_city [enter for manual]: ").strip()
+        if pick:
+            return pick
+        return _ask("location(manual): ").strip()
+
+    # Seed used only for deterministic country->city mapping during boot.
+    seed_for_country_city = str(seed_pack or "").strip()
+
+    if mode == "2":
+        for _ in range(2):
+            q = _ask("search keyword(city/country): ").strip().lower()
+            if not q:
+                break
+            city_hits = [x for x in cities if q in x][:8]
+            country_hits = [x for x in countries if q in x][:8]
+            opts: list[str] = []
+            if city_hits:
+                console.print("[dim]City hits:[/dim]")
+                for c in city_hits:
+                    opts.append(c)
+                    console.print(f"[dim]  {len(opts)}. {c}[/dim]")
+            if country_hits:
+                console.print("[dim]Country hits:[/dim]")
+                for c in country_hits:
+                    if c not in opts:
+                        opts.append(c)
+                        console.print(f"[dim]  {len(opts)}. {c}[/dim]")
+            if not opts:
+                pool = sorted(set(cities + countries))
+                near = difflib.get_close_matches(q, pool, n=5, cutoff=0.65)
+                if near:
+                    console.print("[dim]Did you mean:[/dim] " + ", ".join(near))
+                continue
+            picked = _ask("choose [index/name] or Enter to re-search: ").strip()
+            if not picked:
+                continue
+            if picked.isdigit():
+                ix = int(picked)
+                if 1 <= ix <= len(opts):
+                    picked = opts[ix - 1]
+            # If country selected, map deterministically to a default city.
+            if is_known_place(picked):
+                c, kind = resolve_place(picked)
+                if kind == "country":
+                    dc = default_city_for_country(c, seed=seed_for_country_city)
+                    if isinstance(dc, str) and dc.strip():
+                        return dc
+            return picked
+        return _ask("location(manual): ").strip()
+
+    # Manual mode.
+    raw = _ask("location(manual): ").strip()
+    if raw and not is_known_place(raw):
+        pool = sorted(set(cities + countries))
+        near = difflib.get_close_matches(raw.lower(), pool, n=5, cutoff=0.65)
+        if near:
+            console.print("[dim]Unknown place. Suggestions:[/dim]")
+            for i, nm in enumerate(near, start=1):
+                console.print(f"[dim]  {i}. {nm}[/dim]")
+            retry = _ask("pick [index/name] or Enter keep manual: ").strip()
+            if retry:
+                if retry.isdigit():
+                    ix = int(retry)
+                    if 1 <= ix <= len(near):
+                        return near[ix - 1]
+                return retry
+    return raw
 
 
 def _fmt_clock(time_min: int) -> str:
@@ -62,7 +181,7 @@ def _expand_alias(cmd: str) -> str:
 
 def boot_sequence() -> dict[str, Any]:
     console.print("[bold red]OMNI-ENGINE v6.8[/bold red]")
-    fields = ["name", "age", "location", "year", "occupation", "background"]
+    fields = ["name", "age", "year", "occupation", "background"]
     data: dict[str, Any] = {}
     for f in fields:
         raw = _ask(f"{f}: ")
@@ -75,6 +194,21 @@ def boot_sequence() -> dict[str, Any]:
                 data.setdefault("background", "Quick boot profile")
                 break
         data[f] = raw
+
+    # Optional occupation template selection (skip to auto-match).
+    try:
+        temps = _load_occupation_templates()
+        if temps:
+            console.print("[dim]Occupation templates (optional):[/dim]")
+            for t in temps[:10]:
+                console.print(f"- {t.get('id','-')}: {t.get('name','')}")
+            pick = _ask("occupation_template_id [enter to auto]: ").strip().lower()
+            if pick and pick not in ("auto", "none", "-", "skip"):
+                data["occupation_template_id"] = pick
+    except Exception:
+        pass
+
+    # Seed pack selection (do this BEFORE location picker so country->city mapping is seed-based).
     seeds = list_seed_names()
     default_seed = "default" if "default" in seeds else (seeds[0] if seeds else "")
     hint = f"Seed pack [{default_seed or 'none'} / minimal / none]: "
@@ -85,6 +219,9 @@ def boot_sequence() -> dict[str, Any]:
         seed_pack = seed_raw
     if seed_pack and str(seed_pack).lower() in ("none", "-", "no"):
         seed_pack = None
+
+    if "location" not in data:
+        data["location"] = _bootstrap_location_input(seed_pack=seed_pack)
     return initialize_state(data, seed_pack=seed_pack)
 
 
@@ -138,7 +275,63 @@ def _snapshot_metrics(state: dict[str, Any]) -> dict[str, Any]:
     statuses = world.get("faction_statuses", {}) or {}
     pe = state.get("pending_events", []) or []
     ar = state.get("active_ripples", []) or []
+    notes = state.get("world_notes", []) or []
+    player = state.get("player", {}) or {}
+    # Hacking heat aggregate (current location only).
+    hh = world.get("hacking_heat", {}) or {}
+    loc = str(player.get("location", "") or "").strip().lower()
+    heat_sum = 0
+    if isinstance(hh, dict) and loc:
+        for k, v in hh.items():
+            if not isinstance(k, str) or not isinstance(v, dict):
+                continue
+            if not k.startswith(loc + "|"):
+                continue
+            try:
+                heat_sum += int(v.get("heat", 0) or 0)
+            except Exception:
+                pass
+    # Weather kind (if cached on the current location slot).
+    weather_kind = "-"
+    try:
+        slot = (world.get("locations", {}) or {}).get(loc) if loc else None
+        if isinstance(slot, dict):
+            w = slot.get("weather", {}) or {}
+            if isinstance(w, dict) and w.get("kind"):
+                weather_kind = str(w.get("kind"))
+    except Exception:
+        pass
+    # Safehouse status at current location.
+    sh_status = "none"
+    sh_sec = 0
+    sh_delin = 0
+    try:
+        sh = world.get("safehouses", {}) or {}
+        row = sh.get(loc) if isinstance(sh, dict) and loc else None
+        if isinstance(row, dict):
+            sh_status = str(row.get("status", "none") or "none")
+            sh_sec = int(row.get("security_level", 0) or 0)
+            sh_delin = int(row.get("delinquent_days", 0) or 0)
+    except Exception:
+        pass
+    # Disguise status.
+    d = player.get("disguise", {}) or {}
+    dis_active = bool(d.get("active", False)) if isinstance(d, dict) else False
+    dis_persona = str(d.get("persona", "") or "") if isinstance(d, dict) else ""
+    # Skill XP snapshot for deltas.
+    skills = state.get("skills", {}) or {}
+    skill_xp: dict[str, int] = {}
+    if isinstance(skills, dict):
+        for k in ("hacking", "social", "combat", "stealth", "evasion"):
+            row = skills.get(k)
+            if isinstance(row, dict):
+                try:
+                    skill_xp[k] = int(row.get("xp", 0) or 0)
+                except Exception:
+                    skill_xp[k] = 0
     return {
+        "day": int((state.get("meta", {}) or {}).get("day", 1) or 1),
+        "time_min": int((state.get("meta", {}) or {}).get("time_min", 0) or 0),
         "cash": int(eco.get("cash", 0) or 0),
         "bank": int(eco.get("bank", 0) or 0),
         "debt": int(eco.get("debt", 0) or 0),
@@ -148,6 +341,15 @@ def _snapshot_metrics(state: dict[str, Any]) -> dict[str, Any]:
         "att_black_market": str(statuses.get("black_market", "-")),
         "queued_events": len(pe) if isinstance(pe, list) else 0,
         "queued_ripples": len(ar) if isinstance(ar, list) else 0,
+        "world_notes_len": len(notes) if isinstance(notes, list) else 0,
+        "heat_sum": int(heat_sum),
+        "weather_kind": weather_kind,
+        "safehouse_status": sh_status,
+        "safehouse_sec": int(sh_sec),
+        "safehouse_delin": int(sh_delin),
+        "disguise_active": dis_active,
+        "disguise_persona": dis_persona,
+        "skill_xp": skill_xp,
     }
 
 
@@ -158,12 +360,52 @@ def _compute_diff(before: dict[str, Any], after: dict[str, Any]) -> dict[str, An
             out[k] = int(after.get(k, 0) or 0) - int(before.get(k, 0) or 0)
         except Exception:
             out[k] = 0
+    # Turn audit: notes added this turn.
+    try:
+        out["notes_added_count"] = int(after.get("world_notes_len", 0) or 0) - int(before.get("world_notes_len", 0) or 0)
+    except Exception:
+        out["notes_added_count"] = 0
+    # Heat delta (aggregate; not perfect but high-signal).
+    try:
+        out["heat_sum"] = int(after.get("heat_sum", 0) or 0) - int(before.get("heat_sum", 0) or 0)
+    except Exception:
+        out["heat_sum"] = 0
+    # Skill XP deltas per domain.
+    sx_before = before.get("skill_xp") if isinstance(before.get("skill_xp"), dict) else {}
+    sx_after = after.get("skill_xp") if isinstance(after.get("skill_xp"), dict) else {}
+    xp_d: dict[str, int] = {}
+    if isinstance(sx_before, dict) and isinstance(sx_after, dict):
+        for k in ("hacking", "social", "combat", "stealth", "evasion"):
+            try:
+                xp_d[k] = int(sx_after.get(k, 0) or 0) - int(sx_before.get(k, 0) or 0)
+            except Exception:
+                xp_d[k] = 0
+    out["xp_delta"] = xp_d
     for fk in ("att_police", "att_corporate", "att_black_market"):
         if before.get(fk) != after.get(fk):
             out[fk] = {"from": before.get(fk), "to": after.get(fk)}
     # Always include queued counts (not deltas) for UI "What Changed".
     out["queued_events"] = int(after.get("queued_events", 0) or 0)
     out["queued_ripples"] = int(after.get("queued_ripples", 0) or 0)
+    # Always include effect/status snapshots (not deltas) for UI.
+    out["effects"] = {
+        "weather": after.get("weather_kind", "-"),
+        "safehouse": {
+            "status": after.get("safehouse_status", "none"),
+            "sec": after.get("safehouse_sec", 0),
+            "delin": after.get("safehouse_delin", 0),
+        },
+        "disguise": {"active": bool(after.get("disguise_active", False)), "persona": after.get("disguise_persona", "")},
+    }
+    # Time delta (minutes) across day rollover.
+    try:
+        bday = int(before.get("day", 1) or 1)
+        aday = int(after.get("day", 1) or 1)
+        bt = int(before.get("time_min", 0) or 0)
+        at = int(after.get("time_min", 0) or 0)
+        out["time_elapsed_min"] = (aday - bday) * 1440 + (at - bt)
+    except Exception:
+        out["time_elapsed_min"] = 0
     return out
 
 
@@ -175,11 +417,16 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         console.print("- HELP")
         console.print("- QUEST")
         console.print("- ATLAS [country]")
+        console.print("- COUNTRIES")
+        console.print("- CITIES [country]")
+        console.print("- LANGS")
+        console.print("- LEARN_LANG <code> [class|book|immersion]")
         console.print("- LANG id|en")
         console.print("- NARRATION compact|cinematic")
         console.print("- MODE NORMAL|IRONMAN")
         console.print("- UNDO  (Normal only)")
         console.print("- SAVE STATE")
+        console.print("- SHOWER | HYGIENE | MANDI  (reset hygiene clock, ~15m)")
         console.print("- WORLD_BRIEF")
         console.print("- INTENT_DEBUG")
         console.print("")
@@ -189,6 +436,9 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         console.print("- HEAT")
         console.print("- OFFERS [role]   (contoh: OFFERS fixer)")
         console.print("- MARKET")
+        console.print("- BANK status|deposit <n>|withdraw <n>")
+        console.print("- STAY status|hotel|boarding|suite <nights>")
+        console.print("[dim]  boarding = budget/shared room (Indonesian: kost); aliases: kos kost dorm hostel guesthouse[/dim]")
         console.print("- NPCSIM_STATS")
         console.print("- WHEREAMI")
         console.print("")
@@ -196,6 +446,21 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         console.print("- T <dest>  => travel <dest>")
         console.print("- H <text>  => hack <text>")
         console.print("- S <text>  => talk <text>")
+        return True
+    if up in ("SHOWER", "HYGIENE", "MANDI"):
+        try:
+            ctx = {
+                "action_type": "instant",
+                "domain": "social",
+                "social_mode": "non_conflict",
+                "normalized_input": "shower",
+                "instant_minutes": 15,
+                "stakes": "low",
+            }
+            run_pipeline(state, ctx)
+            console.print("[green]Engine: mandi/selesai — jam hygiene direset (~15m).[/green]")
+        except Exception:
+            console.print("[red]SHOWER error.[/red]")
         return True
     if up == "ATLAS" or up.startswith("ATLAS "):
         parts = cmd.split(maxsplit=2)
@@ -237,6 +502,116 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                         console.print("- rivals: " + ", ".join(rivals[:6]) + (" ..." if len(rivals) > 6 else ""))
         except Exception:
             pass
+        return True
+    if up == "COUNTRIES":
+        try:
+            from engine.atlas import list_known_countries
+
+            xs = list_known_countries()
+            console.print("[bold]COUNTRIES[/bold]")
+            console.print(f"- total={len(xs)}")
+            console.print(", ".join(xs[:60]) + (" ..." if len(xs) > 60 else ""))
+        except Exception:
+            console.print("[red]COUNTRIES error.[/red]")
+        return True
+    if up == "CITIES" or up.startswith("CITIES "):
+        parts = cmd.split(maxsplit=2)
+        want = parts[1].strip() if len(parts) >= 2 else ""
+        try:
+            from engine.atlas import default_city_for_country, list_known_cities, normalize_country_name
+
+            if want:
+                c = normalize_country_name(want)
+                xs = list_known_cities(c)
+                console.print("[bold]CITIES[/bold]")
+                console.print(f"- country={c} cities={len(xs)}")
+                seed = str((state.get("meta", {}) or {}).get("world_seed", "") or (state.get("meta", {}) or {}).get("seed_pack", "") or "")
+                dc = default_city_for_country(c, seed=seed)
+                if dc:
+                    console.print(f"- default_city={dc}")
+                if xs:
+                    console.print(", ".join(xs[:80]) + (" ..." if len(xs) > 80 else ""))
+                else:
+                    console.print("(none mapped yet)")
+            else:
+                xs = list_known_cities()
+                console.print("[bold]CITIES[/bold]")
+                console.print(f"- total={len(xs)}")
+                console.print(", ".join(xs[:80]) + (" ..." if len(xs) > 80 else ""))
+        except Exception:
+            console.print("[red]CITIES error.[/red]")
+        return True
+    if up == "LANGS":
+        try:
+            from engine.language import communication_quality, player_language_proficiency
+
+            p = state.get("player", {}) or {}
+            loc = str(p.get("location", "") or "").strip().lower()
+            prof = player_language_proficiency(state)
+            console.print("[bold]LANGS[/bold]")
+            if prof:
+                # Sort by proficiency desc
+                rows = sorted(list(prof.items()), key=lambda kv: int(kv[1]), reverse=True)
+                console.print("- player_languages: " + ", ".join([f"{k}({v})" for k, v in rows[:12]]) + (" ..." if len(rows) > 12 else ""))
+            else:
+                console.print("- player_languages: (none)")
+            if loc:
+                lc = communication_quality(state, {"domain": "social", "normalized_input": "langs"})
+                console.print(f"- local_lang={lc.local_lang} shared={lc.shared} translator={lc.translator_level} quality={lc.quality} year={lc.sim_year} epoch={lc.tech_epoch}")
+            else:
+                console.print("- local_lang: (unknown)")
+        except Exception:
+            console.print("[red]LANGS error.[/red]")
+        return True
+    if up == "LEARN_LANG" or up.startswith("LEARN_LANG "):
+        parts = cmd.split(maxsplit=3)
+        if len(parts) < 2:
+            console.print("[yellow]Usage: LEARN_LANG <code> [class|book|immersion][/yellow]")
+            return True
+        code = parts[1].strip().lower()
+        method = parts[2].strip().lower() if len(parts) >= 3 else "class"
+        try:
+            from engine.language_learning import learn_language
+
+            # Preview first (no mutation) so we can validate cash/items/region safely.
+            res0 = learn_language(state, code, method=method, preview=True)
+            if not bool(res0.get("ok", False)):
+                console.print(f"[red]LEARN_LANG failed: {res0.get('reason','error')}[/red]")
+                return True
+            cost = int(res0.get("cash_cost", 0) or 0)
+            mins = int(res0.get("minutes", 0) or 0)
+
+            # Pay cost (before applying learning).
+            eco = state.setdefault("economy", {})
+            cash = int(eco.get("cash", 0) or 0)
+            if cash < cost:
+                console.print("[red]Not enough cash.[/red]")
+                return True
+            eco["cash"] = cash - cost
+
+            # Apply learning after payment.
+            res = learn_language(state, code, method=method, preview=False)
+
+            # Advance time via pipeline (so world continues).
+            try:
+                ctx = {
+                    "action_type": "instant",
+                    "domain": "social",
+                    "social_mode": "non_conflict",
+                    "normalized_input": f"learn_lang {code} {method}",
+                    "instant_minutes": mins,
+                    "stakes": "low",
+                }
+                run_pipeline(state, ctx)
+            except Exception:
+                # Fallback: no pipeline, but still move time.
+                from engine.timers import update_timers
+
+                update_timers(state, {"action_type": "instant", "instant_minutes": mins})
+
+            console.print(f"[green]LEARN_LANG {code} ({method}) +{res.get('delta',0)} → {res.get('new_prof',0)} (cost {cost}, time {mins}m)[/green]")
+        except Exception:
+            console.print("[red]LEARN_LANG error.[/red]")
         return True
     if up == "DISGUISE" or up.startswith("DISGUISE "):
         parts = cmd.split(maxsplit=2)
@@ -325,6 +700,146 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             console.print("[yellow]Pakai: SAFEHOUSE status|rent|buy|upgrade|stash put <id>|stash take <id>[/yellow]")
         except Exception:
             console.print("[red]SAFEHOUSE error.[/red]")
+        return True
+    if up == "BANK" or up.startswith("BANK "):
+        parts = cmd.split(maxsplit=2)
+        sub = parts[1].strip().lower() if len(parts) >= 2 else "status"
+        try:
+            from engine.banking import bank_aml_snapshot, bank_deposit, bank_withdraw
+
+            econ = state.setdefault("economy", {})
+            cash = int(econ.get("cash", 0) or 0)
+            bank = int(econ.get("bank", 0) or 0)
+            debt = int(econ.get("debt", 0) or 0)
+            fico = int(econ.get("fico", 600) or 600)
+            if sub in ("status", "info"):
+                aml = bank_aml_snapshot(state)
+                console.print("[bold]BANK[/bold]")
+                console.print(f"- cash={cash} bank={bank} debt={debt} fico={fico}")
+                console.print(f"- aml_status={aml.get('aml_status')} threshold={aml.get('aml_threshold')}")
+                console.print(f"- deposits_72h_total={aml.get('deposit_window_72h_total')} over={aml.get('deposit_window_over_threshold')}")
+                return True
+            if sub == "deposit":
+                if len(parts) < 3:
+                    console.print("[yellow]Usage: BANK deposit <amount>[/yellow]")
+                    return True
+                try:
+                    amt = int(parts[2].strip())
+                except Exception:
+                    console.print("[red]BANK deposit: amount tidak valid.[/red]")
+                    return True
+                res = bank_deposit(state, amt)
+                if not bool(res.get("ok")):
+                    console.print(f"[red]BANK deposit gagal: {res.get('reason','error')}[/red]")
+                    return True
+                try:
+                    run_pipeline(
+                        state,
+                        {
+                            "action_type": "instant",
+                            "domain": "other",
+                            "normalized_input": f"bank deposit {amt}",
+                            "instant_minutes": 5,
+                            "stakes": "low",
+                            "cash_deposit": float(res.get("cash_deposit", 0) or 0),
+                        },
+                    )
+                except Exception:
+                    pass
+                console.print(f"[green]BANK deposit OK[/green] {amt} cash→bank (AML log updated)")
+                return True
+            if sub == "withdraw":
+                if len(parts) < 3:
+                    console.print("[yellow]Usage: BANK withdraw <amount>[/yellow]")
+                    return True
+                try:
+                    amt = int(parts[2].strip())
+                except Exception:
+                    console.print("[red]BANK withdraw: amount tidak valid.[/red]")
+                    return True
+                res = bank_withdraw(state, amt)
+                if not bool(res.get("ok")):
+                    console.print(f"[red]BANK withdraw gagal: {res.get('reason','error')}[/red]")
+                    return True
+                try:
+                    run_pipeline(
+                        state,
+                        {
+                            "action_type": "instant",
+                            "domain": "other",
+                            "normalized_input": f"bank withdraw {amt}",
+                            "instant_minutes": 5,
+                            "stakes": "low",
+                        },
+                    )
+                except Exception:
+                    pass
+                console.print(f"[green]BANK withdraw OK[/green] {amt} bank→cash")
+                return True
+            console.print("[yellow]Pakai: BANK status|deposit <n>|withdraw <n>[/yellow]")
+        except Exception:
+            console.print("[red]BANK error.[/red]")
+        return True
+    if up == "STAY" or up.startswith("STAY "):
+        parts = cmd.split(maxsplit=3)
+        sub = parts[1].strip().lower() if len(parts) >= 2 else "status"
+        try:
+            from engine.accommodation import get_stay_here, nightly_rate, stay_checkin, normalize_stay_kind, stay_kind_label, stay_help_aliases
+
+            loc = str((state.get("player", {}) or {}).get("location", "") or "").strip() or "-"
+            if sub in ("status", "info"):
+                row = get_stay_here(state)
+                console.print("[bold]STAY[/bold]")
+                console.print(f"- loc={loc}")
+                if row and str(row.get("kind", "none")) in ("hotel", "kos", "suite"):
+                    lk = str(row.get("kind", "none"))
+                    console.print(
+                        f"- {stay_kind_label(lk)} — nights_left={row.get('nights_remaining',0)} rate/night={row.get('rate_per_night',0)}"
+                    )
+                else:
+                    console.print("- (no prepaid stay — bed only / street; safehouse is separate: SAFEHOUSE)")
+                for tier in ("hotel", "kos", "suite"):
+                    ql = stay_kind_label(tier)
+                    console.print(f"- quote {ql}: {nightly_rate(state, tier)}/night (scaled by food market)")
+                console.print(f"[dim]{stay_help_aliases()}[/dim]")
+                return True
+            nk = normalize_stay_kind(sub)
+            if nk:
+                n_raw = parts[2].strip() if len(parts) >= 3 else "1"
+                try:
+                    nn = int(n_raw)
+                except Exception:
+                    nn = 1
+                res = stay_checkin(state, nk, nn)
+                if not bool(res.get("ok")):
+                    r = str(res.get("reason", "error"))
+                    if r == "not_enough_cash":
+                        console.print(f"[red]STAY gagal: cash kurang (need {res.get('need','?')}, have {res.get('cash',0)}).[/red]")
+                    else:
+                        console.print(f"[red]STAY gagal: {r}[/red]")
+                    return True
+                try:
+                    run_pipeline(
+                        state,
+                        {
+                            "action_type": "instant",
+                            "domain": "other",
+                            "normalized_input": f"stay {nk} {nn}",
+                            "instant_minutes": 15,
+                            "stakes": "low",
+                        },
+                    )
+                except Exception:
+                    pass
+                tier_name = stay_kind_label(str(res.get("kind") or nk), short=True)
+                console.print(
+                    f"[green]STAY OK[/green] {tier_name} +{res.get('nights_added')}n total_nights={res.get('nights_remaining')} paid={res.get('paid')} cash={res.get('cash_after')}"
+                )
+                return True
+            console.print("[yellow]Pakai: STAY status|hotel <n>|boarding <n>|suite <n>[/yellow]")
+            console.print(f"[dim]{stay_help_aliases()}[/dim]")
+        except Exception:
+            console.print("[red]STAY error.[/red]")
         return True
     if up == "WEATHER":
         try:
@@ -623,6 +1138,251 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             tbl.add_row(cat, str(row.get("price_idx", "-")), str(row.get("scarcity", "-")))
         console.print(tbl)
         return True
+    if up == "SHOP" or up.startswith("SHOP "):
+        parts = cmd.split(maxsplit=5)
+        arg1 = parts[1].strip().lower() if len(parts) >= 2 else ""
+        arg2 = parts[2].strip().lower() if len(parts) >= 3 else ""
+        arg3 = parts[3].strip().lower() if len(parts) >= 4 else ""
+        arg4 = parts[4].strip().lower() if len(parts) >= 5 else ""
+        arg5 = parts[5].strip().lower() if len(parts) >= 6 else ""
+        role = ""
+        only_avail = False
+        page = 1
+        tag = ""
+        if arg1 == "roles":
+            try:
+                loc = str((state.get("player", {}) or {}).get("location", "") or "").strip().lower()
+                slot = ((state.get("world", {}) or {}).get("locations", {}) or {}).get(loc)
+                roles_here: list[str] = []
+                if isinstance(slot, dict):
+                    npcs = slot.get("npcs") or {}
+                    if isinstance(npcs, dict):
+                        for _nm, row in list(npcs.items())[:120]:
+                            if not isinstance(row, dict):
+                                continue
+                            rr = str(row.get("role", "") or "").strip().lower()
+                            if rr and rr not in roles_here:
+                                roles_here.append(rr)
+                if roles_here:
+                    console.print("[bold]SHOP roles[/bold]")
+                    console.print("- " + ", ".join(roles_here))
+                else:
+                    console.print("[yellow]SHOP roles: tidak ada role NPC di lokasi ini (preset belum ada atau belum diaplikasikan).[/yellow]")
+            except Exception:
+                console.print("[red]SHOP roles error.[/red]")
+            return True
+        # parse page syntax: "page 2" in arg2/arg3
+        def _parse_page_token(tok: str) -> int | None:
+            t = str(tok or "").strip().lower()
+            if t.startswith("page"):
+                # supports "page2" too
+                try:
+                    n = int(t.replace("page", "").strip() or "0")
+                    return n if n >= 1 else None
+                except Exception:
+                    return None
+            return None
+
+        p2 = _parse_page_token(arg2)
+        p3 = _parse_page_token(arg3)
+        p4 = _parse_page_token(arg4)
+        p5 = _parse_page_token(arg5)
+        if p2 is not None:
+            page = p2
+        if p3 is not None:
+            page = p3
+        if p4 is not None:
+            page = p4
+        if p5 is not None:
+            page = p5
+        # tag filter syntax: "tag <x>"
+        if arg1 == "tag" and arg2:
+            tag = arg2
+            role = ""
+        elif arg2 == "tag" and arg3:
+            tag = arg3
+        elif arg3 == "tag" and arg4:
+            tag = arg4
+        elif arg4 == "tag" and arg5:
+            tag = arg5
+        if arg1 in ("available", "avail", "in_stock"):
+            only_avail = True
+        else:
+            if arg1 and arg1 != "tag":
+                role = arg1
+        if arg2 in ("available", "avail", "in_stock"):
+            only_avail = True
+        if arg3 in ("available", "avail", "in_stock"):
+            only_avail = True
+        if arg4 in ("available", "avail", "in_stock"):
+            only_avail = True
+        if arg5 in ("available", "avail", "in_stock"):
+            only_avail = True
+        offset = max(0, (page - 1) * 12)
+        quotes = list_shop_quotes(state, limit=12, role=(role or None), offset=offset, tag=(tag or None))
+        if not quotes:
+            console.print("[yellow]SHOP: tidak ada item (content pack belum ter-load).[/yellow]")
+            return True
+        # Hint: show available roles at this location (from location preset slot).
+        try:
+            loc = str((state.get("player", {}) or {}).get("location", "") or "").strip().lower()
+            slot = ((state.get("world", {}) or {}).get("locations", {}) or {}).get(loc)
+            roles_here: list[str] = []
+            if isinstance(slot, dict):
+                npcs = slot.get("npcs") or {}
+                if isinstance(npcs, dict):
+                    for _nm, row in list(npcs.items())[:80]:
+                        if not isinstance(row, dict):
+                            continue
+                        rr = str(row.get("role", "") or "").strip().lower()
+                        if rr and rr not in roles_here:
+                            roles_here.append(rr)
+            if roles_here:
+                console.print("[dim]roles here: " + ", ".join(roles_here[:10]) + "[/dim]")
+        except Exception:
+            pass
+        # Show cash + capacity snapshot (helps players understand BUY failures).
+        try:
+            eco = state.get("economy", {}) or {}
+            cash = int((eco.get("cash", 0) if isinstance(eco, dict) else 0) or 0)
+            cap = get_capacity_status(state)
+            console.print(f"[dim]cash={cash} | pocket={cap.pocket_used}/{cap.pocket_cap} | bag={cap.bag_used}/{cap.bag_cap}[/dim]")
+        except Exception:
+            pass
+        if only_avail:
+            quotes = [q for q in quotes if q.available]
+        title = f"SHOP ({role})" if role else "SHOP"
+        if only_avail:
+            title += " [available]"
+        if tag:
+            title += f" [tag={tag}]"
+        if page > 1:
+            title += f" [page {page}]"
+        tbl = Table(title=title)
+        tbl.add_column("#", justify="right", no_wrap=True)
+        tbl.add_column("item_id", no_wrap=True)
+        tbl.add_column("name")
+        tbl.add_column("cat", no_wrap=True)
+        tbl.add_column("stock", no_wrap=True)
+        tbl.add_column("buy", justify="right")
+        tbl.add_column("sell", justify="right")
+        for i, q in enumerate(quotes, start=1):
+            stock = "OK" if q.available else "SOLD OUT"
+            tbl.add_row(str(i), q.item_id, q.name, q.category, stock, str(q.buy_price), str(q.sell_price))
+        console.print(tbl)
+        console.print("[dim]Use: SHOP [role] [tag <x>] [available] [page N] | BUY <item_id> [xN] [bag|pocket] | SELL <item_id> [ALL] | PRICE <item_id>[/dim]")
+        return True
+    if up == "PRICE" or up.startswith("PRICE "):
+        parts = cmd.split(maxsplit=2)
+        if len(parts) < 2:
+            console.print("[yellow]Usage: PRICE <item_id>[/yellow]")
+            return True
+        q = quote_item(state, parts[1].strip())
+        if q is None:
+            console.print("[red]Unknown item_id.[/red]")
+            return True
+        console.print(f"[bold]PRICE[/bold] {q.item_id} ({q.name})")
+        console.print(f"- cat={q.category} base={q.base_price} price_idx={q.price_idx} scarcity={q.scarcity}")
+        console.print(f"- buy={q.buy_price} sell={q.sell_price}")
+        if q.available:
+            console.print("- stock=OK")
+        else:
+            console.print(f"- stock=SOLD OUT ({q.sold_out_reason})")
+        return True
+    if up == "BUY" or up.startswith("BUY "):
+        parts = cmd.split(maxsplit=4)
+        if len(parts) < 2:
+            console.print("[yellow]Usage: BUY <item_id> [xN] [bag|pocket][/yellow]")
+            return True
+        iid = parts[1].strip()
+        qty = 1
+        prefer = "bag"
+        for tok in parts[2:]:
+            t = str(tok).strip().lower()
+            if t.startswith("x") and len(t) >= 2:
+                try:
+                    qty = max(1, min(50, int(t[1:])))
+                except Exception:
+                    qty = 1
+            elif t in ("bag", "pocket"):
+                prefer = t
+
+        bought = 0
+        last_err = None
+        last_res = None
+        for _ in range(qty):
+            res = buy_item(state, iid, prefer=prefer)
+            last_res = res
+            if not bool(res.get("ok")):
+                last_err = res
+                break
+            bought += 1
+        if bought <= 0:
+            res = last_err or last_res or {}
+            reason = res.get("reason", "error")
+            detail = res.get("detail")
+            if reason == "sold_out":
+                console.print(f"[red]BUY failed: SOLD OUT[/red] ({detail})")
+            elif reason == "not_enough_cash":
+                console.print(f"[red]BUY failed: not enough cash[/red] need={res.get('need')} cash={res.get('cash')}")
+            elif reason == "no_capacity":
+                console.print(
+                    "[red]BUY failed: no capacity[/red] "
+                    f"size={res.get('size')} pocket={res.get('pocket_used')}/{res.get('pocket_cap')} bag={res.get('bag_used')}/{res.get('bag_cap')}"
+                )
+            else:
+                console.print(f"[red]BUY failed: {reason}[/red]")
+            return True
+        # success (maybe partial)
+        q = (last_res or {}).get("quote")
+        cash_after = (last_res or {}).get("cash_after")
+        placed = (last_res or {}).get("placed_to", prefer)
+        if bought == 1 and q:
+            console.print(f"[green]BUY OK[/green] {q.item_id} price={q.buy_price} cash={cash_after} to={placed}")
+        elif q:
+            console.print(f"[green]BUY OK[/green] {q.item_id} x{bought} cash={cash_after} (last_to={placed})")
+            if last_err:
+                console.print(f"[yellow]Stopped early: {last_err.get('reason','error')}[/yellow]")
+        else:
+            console.print(f"[green]BUY OK[/green] x{bought}")
+        return True
+    if up == "SELL" or up.startswith("SELL "):
+        parts = cmd.split(maxsplit=3)
+        if len(parts) < 2:
+            console.print("[yellow]Usage: SELL <item_id> [ALL][/yellow]")
+            return True
+        iid = parts[1].strip()
+        tok = parts[2].strip() if len(parts) >= 3 else ""
+        all_mode = tok.upper() == "ALL"
+        qty_mode = tok.lower().startswith("x") and len(tok) >= 2
+        if all_mode:
+            res = sell_item_all(state, iid)
+        elif qty_mode:
+            try:
+                n = int(tok[1:])
+            except Exception:
+                n = 1
+            res = sell_item_n(state, iid, n=n)
+        else:
+            res = sell_item(state, iid)
+        if not bool(res.get("ok")):
+            console.print(f"[red]SELL failed: {res.get('reason','error')}[/red]")
+            return True
+        q = res.get("quote")
+        if q:
+            if all_mode:
+                console.print(
+                    f"[green]SELL ALL OK[/green] {q.item_id} n={res.get('count',0)} unit={q.sell_price} gain={res.get('gain',0)} cash={res.get('cash_after')}"
+                )
+            elif qty_mode:
+                console.print(
+                    f"[green]SELL x OK[/green] {q.item_id} n={res.get('count',0)} unit={q.sell_price} gain={res.get('gain',0)} cash={res.get('cash_after')}"
+                )
+            else:
+                console.print(f"[green]SELL OK[/green] {q.item_id} price={q.sell_price} cash={res.get('cash_after')}")
+        else:
+            console.print("[green]SELL OK[/green]")
+        return True
     if up == "WHO":
         npcs = state.get("npcs", {}) or {}
         if not isinstance(npcs, dict) or not npcs:
@@ -716,6 +1476,7 @@ def main() -> None:
                 "time_cost_min",
                 "travel_destination",
                 "inventory_ops",
+                "accommodation_intent",
             ):
                 if key in intent and intent[key] is not None:
                     action_ctx[key] = intent[key]
@@ -819,10 +1580,61 @@ def main() -> None:
         # NPC targeting enhancement (e.g. "orang itu" → npc_focus).
         apply_npc_targeting(state, action_ctx, cmd)
 
+        # Optional: NL "menginap semalam" / "stay one night" → deterministic prepaid stay (OMNI_AUTO_STAY_INTENT=1).
+        try:
+            from engine.accommodation import stay_kind_label, try_auto_stay_from_intent
+
+            auto_r = try_auto_stay_from_intent(state, action_ctx)
+            if bool(auto_r.get("applied")):
+                action_ctx["accommodation_auto_applied"] = True
+                action_ctx["accommodation_auto_detail"] = {
+                    "kind": auto_r.get("kind"),
+                    "nights": auto_r.get("nights"),
+                }
+                try:
+                    tn = stay_kind_label(str(auto_r.get("kind") or ""), short=True)
+                    console.print(
+                        f"[dim]Engine: prepaid stay applied — {tn} +{int(auto_r.get('nights') or 0)}n (OMNI_AUTO_STAY_INTENT)[/dim]"
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         roll_pkg = run_pipeline(state, action_ctx)
 
         metrics_after = _snapshot_metrics(state)
-        state.setdefault("meta", {})["last_turn_diff"] = _compute_diff(metrics_before, metrics_after)
+        diff = _compute_diff(metrics_before, metrics_after)
+        meta = state.setdefault("meta", {})
+        meta["last_turn_diff"] = diff
+        # What Changed v2: attach "notes added" slice (bounded) for transparent simulation.
+        try:
+            n0 = int(metrics_before.get("world_notes_len", 0) or 0)
+        except Exception:
+            n0 = 0
+        notes = state.get("world_notes", []) or []
+        added: list[str] = []
+        if isinstance(notes, list) and n0 < len(notes):
+            for x in notes[n0:][-6:]:
+                s = str(x)
+                added.append(s if len(s) <= 160 else (s[:157] + "..."))
+        commerce_notes: list[str] = []
+        for s in added:
+            ss = str(s)
+            if ss.startswith("[Shop]") or ss.startswith("[Bank]") or ss.startswith("[Stay]"):
+                commerce_notes.append(ss if len(ss) <= 200 else (ss[:197] + "..."))
+        meta["last_turn_audit"] = {
+            "turn": int(meta.get("turn", 0) or 0),
+            "action_type": str(action_ctx.get("action_type", "instant") or "instant"),
+            "domain": str(action_ctx.get("domain", "") or ""),
+            "time_cost_min": int(action_ctx.get("time_cost_min", 0) or 0),
+            "diff": diff,
+            "notes_added": added,
+            "commerce_notes": commerce_notes,
+            "time_elapsed_min": int(diff.get("time_elapsed_min", 0) or 0),
+            "time_breakdown": action_ctx.get("time_breakdown", []),
+            "language_ctx": action_ctx.get("language_ctx", {}),
+        }
 
         package = build_turn_package(state, cmd, roll_pkg, action_ctx)
         system_prompt = build_system_prompt(state)

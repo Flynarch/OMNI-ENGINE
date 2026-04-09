@@ -1,0 +1,11 @@
+{
+  "tags": ["informal_networks", "traffic_friction", "humidity", "street_bureaucracy"],
+  "notes": ["Humid heat, dense traffic, and informal networks that move faster than paperwork."],
+  "nearby_items": ["burner_phone", "keys", "phrasebook"],
+  "npcs": {
+    "Fixer_Cikini_Rara": { "role": "fixer", "affiliation": "black_market", "disposition_score": 57, "disposition_label": "Neutral", "is_contact": true },
+    "Intel_Clerk_Dimas": { "role": "clerk", "affiliation": "corporate", "disposition_score": 52, "disposition_label": "Neutral", "is_contact": true },
+    "Officer_Sutanto": { "role": "cop", "affiliation": "police", "disposition_score": 46, "disposition_label": "Cold" }
+  }
+}
+

@@ -1,0 +1,9 @@
+{
+  "notes": ["Cold rain, port logistics, and corporate campuses; rumors travel through contractors."],
+  "nearby_items": ["burner_phone", "keys", "lockpick_set"],
+  "npcs": {
+    "Dock_Worker_Eli": { "role": "worker", "affiliation": "civilian", "disposition_score": 54, "disposition_label": "Neutral", "is_contact": true },
+    "Security_Raines": { "role": "security", "affiliation": "corporate", "disposition_score": 47, "disposition_label": "Cold" }
+  }
+}
+

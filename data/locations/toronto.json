@@ -1,0 +1,9 @@
+{
+  "notes": ["Glass towers, quiet banking corridors, and cross-border logistics; clean fronts hide messy pipes."],
+  "nearby_items": ["burner_phone", "keys", "laptop_basic"],
+  "npcs": {
+    "Broker_Lin": { "role": "fixer", "affiliation": "black_market", "disposition_score": 56, "disposition_label": "Neutral", "is_contact": true },
+    "Doc_Gupta": { "role": "doc", "affiliation": "civilian", "disposition_score": 57, "disposition_label": "Neutral", "is_contact": true }
+  }
+}
+

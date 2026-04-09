@@ -1,0 +1,9 @@
+{
+  "notes": ["Cold drizzle, cameras on corners, quiet money behind old walls."],
+  "nearby_items": ["burner_phone", "keys", "laptop_basic"],
+  "npcs": {
+    "Fixer_Harper": { "role": "fixer", "affiliation": "black_market", "disposition_score": 58, "disposition_label": "Neutral", "is_contact": true },
+    "PCSO_Miller": { "role": "cop", "affiliation": "police", "disposition_score": 46, "disposition_label": "Cold" }
+  }
+}
+

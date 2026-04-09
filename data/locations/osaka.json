@@ -1,0 +1,23 @@
+{
+  "tags": ["nightlife_hot", "street_networks", "rumor_fast"],
+  "notes": [
+    "Street-first vibe, loud signage, dense nightlife pockets; less corporate polish than Tokyo but faster rumor spread."
+  ],
+  "nearby_items": ["burner_phone", "keys", "lockpick_set"],
+  "npcs": {
+    "Fixer_Kansai_Jun": {
+      "role": "fixer",
+      "affiliation": "black_market",
+      "disposition_score": 60,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    },
+    "Shop_Owner_Nakano": {
+      "role": "merchant",
+      "affiliation": "civilian",
+      "disposition_score": 55,
+      "disposition_label": "Neutral"
+    }
+  }
+}
+

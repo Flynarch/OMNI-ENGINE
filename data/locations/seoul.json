@@ -1,0 +1,11 @@
+{
+  "notes": [
+    "High bandwidth, dense transit, sharp social cues; mistakes propagate faster than you think."
+  ],
+  "nearby_items": ["smartphone", "keys", "burner_phone"],
+  "npcs": {
+    "Corp_Associate_Han": { "role": "corporate_rep", "affiliation": "corporate", "disposition_score": 53, "disposition_label": "Neutral", "is_contact": true },
+    "Doc_Yuna": { "role": "doc", "affiliation": "civilian", "disposition_score": 56, "disposition_label": "Neutral", "is_contact": true }
+  }
+}
+

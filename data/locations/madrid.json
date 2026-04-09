@@ -1,0 +1,9 @@
+{
+  "notes": ["Late nights, fast talk, and quiet networks; deals form over small favors."],
+  "nearby_items": ["burner_phone", "keys", "phrasebook"],
+  "npcs": {
+    "Fixer_Sol_Lucia": { "role": "fixer", "affiliation": "black_market", "disposition_score": 57, "disposition_label": "Neutral", "is_contact": true },
+    "Courier_Ivan": { "role": "runner", "affiliation": "civilian", "disposition_score": 54, "disposition_label": "Neutral", "is_contact": true }
+  }
+}
+

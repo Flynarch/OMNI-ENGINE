@@ -1,0 +1,11 @@
+{
+  "tags": ["intel_fast", "corp_dense", "police_stretched", "crowded_grid"],
+  "notes": ["A crowded grid: cops are stretched, corps are everywhere, intel travels fast—and gets monetized faster."],
+  "nearby_items": ["burner_phone", "lockpick_set", "keys"],
+  "npcs": {
+    "Runner_Kai": { "role": "runner", "affiliation": "civilian", "disposition_score": 56, "disposition_label": "Neutral", "is_contact": true },
+    "Detective_Morrow": { "role": "detective", "affiliation": "police", "disposition_score": 45, "disposition_label": "Cold", "is_contact": true },
+    "Corp_Legal_Avery": { "role": "corporate_rep", "affiliation": "corporate", "disposition_score": 50, "disposition_label": "Cold", "is_contact": true }
+  }
+}
+

@@ -101,6 +101,78 @@ def _is_social_dialogue(t: str) -> bool:
     return False
 
 
+def _parse_accommodation_intent(t: str) -> dict[str, Any] | None:
+    """Detect prepaid short-stay phrasing (hotel/boarding/suite night).
+
+    Does not mutate state — only hints the narrator / turn package. Actual charges
+    are applied via `STAY <tier> <nights>` (or future engine hooks).
+    """
+    t = (t or "").strip().lower()
+    if not t:
+        return None
+    night_ok = (
+        "semalam" in t
+        or "semaleman" in t
+        or "satu malam" in t
+        or "overnight" in t
+        or "one night" in t
+        or bool(re.search(r"\b1\s*(?:malam|night|nights)\b", t))
+        or bool(re.search(r"\b(\d+)\s*(?:malam|night|nights)\b", t))
+    )
+    if not night_ok:
+        return None
+    lodging_ok = any(
+        k in t
+        for k in (
+            "hotel",
+            "motel",
+            "inn",
+            "hostel",
+            "guesthouse",
+            "kos",
+            "kost",
+            "boarding",
+            "dorm",
+            "suite",
+            "penthouse",
+            "luxury",
+            "nginap",
+            "menginap",
+            "booking",
+            "check in",
+            "check-in",
+            "reservasi",
+            "reservation",
+            "sewa kamar",
+            "book a room",
+            "book room",
+            "kamar",
+        )
+    )
+    if not lodging_ok and ("stay" in t or "menginap" in t):
+        lodging_ok = True
+    if not lodging_ok:
+        return None
+    # Travel-only "pergi ke X" without lodging intent — skip (destination trip, not a room booking).
+    if "pergi ke" in t or "menuju" in t:
+        if not any(k in t for k in ("nginap", "menginap", "stay", "booking", "check in", "check-in", "hotel", "hostel", "kos", "kost", "suite", "kamar")):
+            return None
+    nights = 1
+    m = re.search(r"\b(\d+)\s*(?:malam|night|nights)\b", t)
+    if m:
+        nights = max(1, min(365, int(m.group(1))))
+    if re.search(r"\b(?:satu|1)\s+malam\b", t) or "semalam" in t or "one night" in t or re.search(r"\b1\s+night\b", t):
+        nights = 1
+    kind: str | None = None
+    if any(x in t for x in ("suite", "penthouse")) or ("luxury" in t and "hotel" in t):
+        kind = "suite"
+    elif any(x in t for x in ("hostel", "dorm", "guesthouse", "kos", "kost", "boarding")):
+        kind = "kos"
+    elif any(x in t for x in ("hotel", "motel", "inn")):
+        kind = "hotel"
+    return {"nights": nights, "kind": kind, "parser": "accommodation_nl"}
+
+
 def _is_social_scan(t: str) -> bool:
     if any(p in t for p in _SOCIAL_SCAN_PHRASES):
         return True
@@ -150,6 +222,12 @@ def parse_action_intent(player_input: str) -> dict[str, Any]:
             ctx["combat_style"] = "ranged"
         else:
             ctx["combat_style"] = "melee"
+    elif (_acc := _parse_accommodation_intent(t)) is not None:
+        ctx["domain"] = "economy"
+        ctx["intent_note"] = "accommodation_stay"
+        ctx["action_type"] = "instant"
+        ctx["accommodation_intent"] = _acc
+        ctx["instant_minutes"] = 15
     elif any(k in t for k in ["travel", "pergi ke", "naik", "menuju", "balik ke", "pulang ke", "kembali ke", "balik", "pulang", "kembali"]):
         ctx["action_type"] = "travel"
         # Heuristic distance estimation from text keywords.

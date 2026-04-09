@@ -577,11 +577,15 @@ def _apply_triggered_events(state: dict[str, Any], triggered: list[dict[str, Any
 
 
 def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
+    from engine.balance import BALANCE, get_balance_snapshot
+
     meta = state.setdefault("meta", {"day": 1, "time_min": 480})
     kind = action_ctx.get("action_type", "instant")
     if kind == "combat":
+        action_ctx.setdefault("time_breakdown", []).append({"label": "combat", "minutes": 1})
         _advance(meta, 1)
     elif kind == "travel":
+        snap = get_balance_snapshot(state)
         # Location-specific movement friction (e.g., police sweep).
         try:
             cur_loc = str(state.get("player", {}).get("location", "") or "").strip().lower()
@@ -600,7 +604,7 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                         except Exception:
                             until = 0
                         if until >= day_now:
-                            extra += 12
+                            extra += int(snap.get("travel_friction_police_sweep_min", BALANCE.travel_friction_police_sweep_min) or BALANCE.travel_friction_police_sweep_min)
             if isinstance(locs, dict) and dest_loc:
                 slot2 = locs.get(dest_loc)
                 if isinstance(slot2, dict):
@@ -611,18 +615,20 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                         except Exception:
                             until2 = 0
                         if until2 >= day_now:
-                            extra += 15
+                            extra += int(snap.get("travel_friction_lockdown_min", BALANCE.travel_friction_lockdown_min) or BALANCE.travel_friction_lockdown_min)
             if extra > 0:
                 try:
                     action_ctx["travel_minutes"] = int(action_ctx.get("travel_minutes", 30) or 30) + extra
                 except Exception:
                     action_ctx["travel_minutes"] = 30 + extra
                 state.setdefault("world_notes", []).append(f"[Restriction] Travel friction +{extra}min")
+                action_ctx.setdefault("time_breakdown", []).append({"label": "restrictions", "minutes": int(extra)})
         except Exception:
             pass
         # Weather travel modifier.
         try:
             from engine.weather import ensure_weather, travel_minutes_modifier
+            from engine.balance import BALANCE
 
             world = state.get("world", {}) or {}
             meta2 = state.get("meta", {}) or {}
@@ -631,23 +637,98 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
             dest_loc = str(action_ctx.get("travel_destination", "") or "").strip().lower()
             if cur_loc:
                 w_cur = ensure_weather(state, cur_loc, day2)
-                extra_w = travel_minutes_modifier(str((w_cur or {}).get("kind", "") or ""))
+                kcur = str((w_cur or {}).get("kind", "") or "").lower()
+                extra_w = travel_minutes_modifier(kcur)
+                if kcur == "storm":
+                    extra_w = int(snap.get("weather_travel_storm_min", BALANCE.weather_travel_storm_min) or BALANCE.weather_travel_storm_min)
+                elif kcur == "rain":
+                    extra_w = int(snap.get("weather_travel_rain_min", BALANCE.weather_travel_rain_min) or BALANCE.weather_travel_rain_min)
+                elif kcur == "fog":
+                    extra_w = int(snap.get("weather_travel_fog_min", BALANCE.weather_travel_fog_min) or BALANCE.weather_travel_fog_min)
+                elif kcur == "windy":
+                    extra_w = int(snap.get("weather_travel_windy_min", BALANCE.weather_travel_windy_min) or BALANCE.weather_travel_windy_min)
                 if extra_w:
                     action_ctx["travel_minutes"] = int(action_ctx.get("travel_minutes", 30) or 30) + extra_w
+                    action_ctx.setdefault("time_breakdown", []).append({"label": "weather", "minutes": int(extra_w)})
             if dest_loc:
                 w_dst = ensure_weather(state, dest_loc, day2)
-                extra_w2 = travel_minutes_modifier(str((w_dst or {}).get("kind", "") or ""))
+                kdst = str((w_dst or {}).get("kind", "") or "").lower()
+                extra_w2 = travel_minutes_modifier(kdst)
+                if kdst == "storm":
+                    extra_w2 = int(snap.get("weather_travel_storm_min", BALANCE.weather_travel_storm_min) or BALANCE.weather_travel_storm_min)
+                elif kdst == "rain":
+                    extra_w2 = int(snap.get("weather_travel_rain_min", BALANCE.weather_travel_rain_min) or BALANCE.weather_travel_rain_min)
+                elif kdst == "fog":
+                    extra_w2 = int(snap.get("weather_travel_fog_min", BALANCE.weather_travel_fog_min) or BALANCE.weather_travel_fog_min)
+                elif kdst == "windy":
+                    extra_w2 = int(snap.get("weather_travel_windy_min", BALANCE.weather_travel_windy_min) or BALANCE.weather_travel_windy_min)
                 if extra_w2:
-                    action_ctx["travel_minutes"] = int(action_ctx.get("travel_minutes", 30) or 30) + max(0, extra_w2 - 3)
+                    add2 = max(0, extra_w2 - 3)
+                    action_ctx["travel_minutes"] = int(action_ctx.get("travel_minutes", 30) or 30) + add2
+                    if add2:
+                        action_ctx.setdefault("time_breakdown", []).append({"label": "weather(dest)", "minutes": int(add2)})
         except Exception:
             pass
+        # History border controls (year-aware): crossing into strict borders costs time.
+        try:
+            from engine.atlas import ensure_country_history_idx, ensure_location_profile
+
+            meta2 = state.get("meta", {}) or {}
+            sy = int(meta2.get("sim_year", 0) or 0)
+            dest_loc = str(action_ctx.get("travel_destination", "") or "").strip().lower()
+            if dest_loc:
+                prof = ensure_location_profile(state, dest_loc)
+                c = str((prof.get("country") if isinstance(prof, dict) else "") or "").strip().lower()
+                if c:
+                    hi = ensure_country_history_idx(state, c, sim_year=sy)
+                    bc = int((hi.get("border_controls", 0) if isinstance(hi, dict) else 0) or 0)
+                    extra_b = 0
+                    if bc >= 80:
+                        extra_b = 25
+                    elif bc >= 60:
+                        extra_b = 12
+                    elif bc >= 45:
+                        extra_b = 6
+                    if extra_b:
+                        action_ctx["travel_minutes"] = int(action_ctx.get("travel_minutes", 30) or 30) + extra_b
+                        action_ctx.setdefault("time_breakdown", []).append({"label": "border_controls", "minutes": int(extra_b)})
+        except Exception:
+            pass
+        # Base travel (whatever minutes currently set after modifiers).
+        try:
+            tm = int(action_ctx.get("travel_minutes", 30) or 30)
+        except Exception:
+            tm = 30
+        base_guess = max(0, tm)
+        # If breakdown exists, subtract known extras to approximate base.
+        extras = 0
+        for it in (action_ctx.get("time_breakdown") or []):
+            if not isinstance(it, dict):
+                continue
+            label = str(it.get("label", "") or "")
+            if label in ("restrictions", "weather", "weather(dest)"):
+                try:
+                    extras += int(it.get("minutes", 0) or 0)
+                except Exception:
+                    pass
+        base = max(0, base_guess - extras)
+        action_ctx.setdefault("time_breakdown", []).insert(0, {"label": "travel_base", "minutes": int(base)})
         _advance(meta, int(action_ctx.get("travel_minutes", 30)))
     elif kind in ("rest", "sleep"):
+        action_ctx.setdefault("time_breakdown", []).append({"label": str(kind), "minutes": int(action_ctx.get("rested_minutes", 60) or 60)})
         _advance(meta, int(action_ctx.get("rested_minutes", 60)))
     else:
+        action_ctx.setdefault("time_breakdown", []).append({"label": "instant", "minutes": int(action_ctx.get("instant_minutes", 2) or 2)})
         _advance(meta, int(action_ctx.get("instant_minutes", 2)))
 
     cur_day, cur_min = int(meta["day"]), int(meta["time_min"])
+    # Cache sim year / tech epoch for this turn (UI + language barriers).
+    try:
+        from engine.time_model import cache_sim_time
+
+        cache_sim_time(state)
+    except Exception:
+        pass
 
     # Limit how many scheduled items we process per turn to avoid narrative/UI spam.
     # IMPORTANT: we do NOT change scheduling logic or sim clock; we simply defer overflow to next turn.
@@ -758,6 +839,9 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
             from engine.safehouse import apply_lay_low_bonus
 
             apply_lay_low_bonus(state)
+            from engine.accommodation import apply_accommodation_rest_bonus
+
+            apply_accommodation_rest_bonus(state)
     except Exception:
         pass
 

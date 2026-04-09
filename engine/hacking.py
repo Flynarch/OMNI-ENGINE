@@ -327,8 +327,13 @@ def apply_hacking_after_roll(
         heat = 0
 
     # Skill/gear can widen "partial success" band a bit.
+    hack_skill = 0
     try:
-        hack_skill = int((state.get("skills", {}) or {}).get("hacking", 0) or 0)
+        sk = (state.get("skills", {}) or {}).get("hacking")
+        if isinstance(sk, dict):
+            hack_skill = int(sk.get("current", sk.get("base", 10)) or 0)
+        else:
+            hack_skill = int(sk or 0)
     except Exception:
         hack_skill = 0
     bonus_margin = min(12, max(0, hack_skill // 10) + (3 if exploit_tool else 0))

@@ -203,6 +203,20 @@ def render_monitor(state: dict[str, Any]) -> None:
         style="bold white",
     )
     left.append(f"Loc: {player.get('location', '-')} | Year: {player.get('year', '-')}\n", style="dim")
+    # Sim year / tech epoch (translation tech realism).
+    try:
+        sy = int((meta.get("sim_year", 0) or 0))
+    except Exception:
+        sy = 0
+    te = meta.get("tech_epoch") or {}
+    if sy:
+        if isinstance(te, dict):
+            left.append(
+                f"SimYear: {sy} | Tech: {te.get('name','-')} (translator {te.get('translator_level','-')})\n",
+                style="dim",
+            )
+        else:
+            left.append(f"SimYear: {sy}\n", style="dim")
     # Location profile summary (culture/econ background).
     try:
         from engine.atlas import ensure_location_profile, fmt_profile_short
@@ -231,6 +245,17 @@ def render_monitor(state: dict[str, Any]) -> None:
             ud = d.get("until_day", "?")
             ut = _fmt_clock(int(d.get("until_time", 0) or 0))
             left.append(f"Disguise: {persona} (until D{ud} {ut})\n", style="yellow")
+    except Exception:
+        pass
+
+    # Language barrier status (what the player can communicate locally).
+    try:
+        lc = (meta.get("last_turn_audit") or {}).get("language_ctx") if isinstance(meta.get("last_turn_audit"), dict) else None
+        if isinstance(lc, dict) and lc.get("local_lang"):
+            shared = "yes" if bool(lc.get("shared", False)) else "no"
+            tl = str(lc.get("translator_level", "none") or "none")
+            q = int(lc.get("quality", 0) or 0)
+            left.append(f"LocalLang: {lc.get('local_lang')} | shared={shared} | xlate={tl} q={q}\n", style="dim")
     except Exception:
         pass
     try:
@@ -560,6 +585,64 @@ def render_monitor(state: dict[str, Any]) -> None:
             f"Δ cash={cash_d:+d} bank={bank_d:+d} debt={debt_d:+d} trace={tr_d:+d} | queued ev={qe} rp={qr}{att_s}\n",
             style="bold cyan",
         )
+        # What Changed v2: effects + skill XP + notes added this turn.
+        aud = meta.get("last_turn_audit") or {}
+        if isinstance(aud, dict):
+            try:
+                eff = (diff.get("effects") or {}) if isinstance(diff.get("effects"), dict) else {}
+                w = eff.get("weather", "-") if isinstance(eff, dict) else "-"
+                sh = eff.get("safehouse", {}) if isinstance(eff, dict) else {}
+                dis = eff.get("disguise", {}) if isinstance(eff, dict) else {}
+                sh_s = "-"
+                if isinstance(sh, dict) and str(sh.get("status", "none")) != "none":
+                    sh_s = f"{sh.get('status','rent')} L{sh.get('sec',1)} delin={sh.get('delin',0)}"
+                dis_s = "-"
+                if isinstance(dis, dict) and bool(dis.get("active", False)):
+                    dis_s = str(dis.get("persona", "persona"))
+                right_prefix.append(f"Effects: weather={w} | safehouse={sh_s} | disguise={dis_s}\n", style="dim")
+            except Exception:
+                pass
+            try:
+                xd = diff.get("xp_delta") if isinstance(diff.get("xp_delta"), dict) else {}
+                if isinstance(xd, dict):
+                    bits = []
+                    for k in ("hacking", "social", "combat", "stealth", "evasion"):
+                        v = int(xd.get(k, 0) or 0)
+                        if v:
+                            bits.append(f"{k}+{v}")
+                    if bits:
+                        right_prefix.append("XP: " + ", ".join(bits) + "\n", style="dim")
+            except Exception:
+                pass
+            try:
+                added = aud.get("notes_added", [])
+                if isinstance(added, list) and added:
+                    right_prefix.append("Audit:\n", style="bold")
+                    for s in added[-4:]:
+                        right_prefix.append(f"- {str(s)}\n", style="dim")
+            except Exception:
+                pass
+            # Time breakdown (transparent sim clock).
+            try:
+                tb = aud.get("time_breakdown", [])
+                tel = int(aud.get("time_elapsed_min", 0) or 0)
+                if isinstance(tb, list) and tb:
+                    bits = []
+                    for it in tb[:6]:
+                        if not isinstance(it, dict):
+                            continue
+                        lbl = str(it.get("label", "") or "")
+                        try:
+                            mm = int(it.get("minutes", 0) or 0)
+                        except Exception:
+                            mm = 0
+                        if mm <= 0:
+                            continue
+                        bits.append(f"{lbl}+{mm}m")
+                    if bits:
+                        right_prefix.append(f"Time: +{tel}m (" + ", ".join(bits) + ")\n", style="dim")
+            except Exception:
+                pass
     parse_miss = meta.get("last_ai_missing_sections") or []
     if parse_miss:
         right_prefix.append(f"AI missing: {', '.join(parse_miss[:6])}\n", style="magenta")

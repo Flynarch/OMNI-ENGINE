@@ -203,6 +203,13 @@ def resolve_combat_after_roll(state: dict[str, Any], action_ctx: dict[str, Any],
     except Exception:
         pass
 
+    try:
+        from engine.npc_combat_ai import apply_npc_combat_followup
+
+        apply_npc_combat_followup(state, action_ctx, roll_pkg)
+    except Exception:
+        pass
+
 
 def jam_check(weapon: dict[str, Any], roll: int) -> tuple[bool, bool]:
     # Poor condition (4): jam on 1-15; 1-5 also critical-failure consequences.

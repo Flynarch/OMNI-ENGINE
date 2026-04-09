@@ -1,0 +1,9 @@
+{
+  "notes": ["Dense markets, layered jurisdictions, and contacts that know everyone."],
+  "nearby_items": ["burner_phone", "keys"],
+  "npcs": {
+    "Fixer_Rahul": { "role": "fixer", "affiliation": "black_market", "disposition_score": 60, "disposition_label": "Neutral", "is_contact": true },
+    "Officer_Patel": { "role": "cop", "affiliation": "police", "disposition_score": 46, "disposition_label": "Cold", "is_contact": true }
+  }
+}
+

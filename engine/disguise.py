@@ -5,6 +5,7 @@ from typing import Any
 from engine.news import push_news
 from engine.ripple_queue import enqueue_ripple
 from engine.rng import roll_for_action
+from engine.balance import BALANCE, get_balance_snapshot
 
 
 def ensure_disguise(state: dict[str, Any]) -> dict[str, Any]:
@@ -21,7 +22,14 @@ def ensure_disguise(state: dict[str, Any]) -> dict[str, Any]:
     return d
 
 
-def activate_disguise(state: dict[str, Any], persona: str, *, duration_minutes: int = 8 * 60, cost_cash: int = 40) -> bool:
+def activate_disguise(
+    state: dict[str, Any],
+    persona: str,
+    *,
+    duration_minutes: int = BALANCE.disguise_default_duration_min,
+    cost_cash: int = BALANCE.disguise_cost_cash,
+) -> bool:
+    snap = get_balance_snapshot(state)
     d = ensure_disguise(state)
     meta = state.get("meta", {}) or {}
     day = int(meta.get("day", 1) or 1)
@@ -34,6 +42,12 @@ def activate_disguise(state: dict[str, Any], persona: str, *, duration_minutes: 
 
     econ = state.setdefault("economy", {})
     cash = int(econ.get("cash", 0) or 0)
+    # Allow per-save override via snapshot when caller uses defaults.
+    if duration_minutes == BALANCE.disguise_default_duration_min:
+        duration_minutes = int(snap.get("disguise_default_duration_min", duration_minutes) or duration_minutes)
+    if cost_cash == BALANCE.disguise_cost_cash:
+        cost_cash = int(snap.get("disguise_cost_cash", cost_cash) or cost_cash)
+
     if cash < cost_cash:
         return False
     econ["cash"] = cash - cost_cash
@@ -47,7 +61,7 @@ def activate_disguise(state: dict[str, Any], persona: str, *, duration_minutes: 
     # Small immediate trace relief (cover identity).
     tr = state.setdefault("trace", {})
     tp = int(tr.get("trace_pct", 0) or 0)
-    tr["trace_pct"] = max(0, tp - 4)
+    tr["trace_pct"] = max(0, tp - int(snap.get("disguise_trace_relief", BALANCE.disguise_trace_relief) or BALANCE.disguise_trace_relief))
 
     push_news(state, text=f"Persona baru aktif: {d['persona']} (biaya {cost_cash}).", source="contacts")
     enqueue_ripple(
@@ -95,6 +109,7 @@ def tick_disguise_expiry(state: dict[str, Any]) -> None:
 
 def maybe_caught(state: dict[str, Any], action_ctx: dict[str, Any]) -> bool:
     """Deterministic chance to get caught while disguised under police pressure."""
+    snap = get_balance_snapshot(state)
     d = ensure_disguise(state)
     if not bool(d.get("active", False)):
         return False
@@ -113,7 +128,9 @@ def maybe_caught(state: dict[str, Any], action_ctx: dict[str, Any]) -> bool:
 
     # Risk grows with repeated public actions under sweep.
     risk = int(d.get("risk", 0) or 0)
-    risk = min(90, risk + 12)
+    risk_cap = int(snap.get("disguise_risk_cap", BALANCE.disguise_risk_cap) or BALANCE.disguise_risk_cap)
+    risk_add = int(snap.get("disguise_public_risk_add", BALANCE.disguise_public_risk_add) or BALANCE.disguise_public_risk_add)
+    risk = min(risk_cap, risk + risk_add)
     d["risk"] = risk
 
     roll = int(roll_for_action(state, action_ctx, salt="caught"))
@@ -122,7 +139,8 @@ def maybe_caught(state: dict[str, Any], action_ctx: dict[str, Any]) -> bool:
         # Heavy consequence: trace spike + broadcast ripple.
         tr = state.setdefault("trace", {})
         tp = int(tr.get("trace_pct", 0) or 0)
-        tr["trace_pct"] = max(0, min(100, tp + 18))
+        spike = int(snap.get("disguise_caught_trace_spike", BALANCE.disguise_caught_trace_spike) or BALANCE.disguise_caught_trace_spike)
+        tr["trace_pct"] = max(0, min(100, tp + spike))
         persona = str(d.get("persona", "") or "")
         deactivate_disguise(state, reason="caught")
         push_news(state, text=f"Identitas palsu terbongkar di {loc}.", source="broadcast")
@@ -141,7 +159,7 @@ def maybe_caught(state: dict[str, Any], action_ctx: dict[str, Any]) -> bool:
                 "witnesses": [],
                 "surface_attempts": 0,
                 "meta": {"location": loc, "persona": persona},
-                "impact": {"trace_delta": +18},
+                "impact": {"trace_delta": +spike},
             },
         )
         return True
