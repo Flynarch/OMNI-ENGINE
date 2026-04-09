@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 from ai.llm_http import chat_completion_json
 
 
-INTENT_SYSTEM_PROMPT = """OMNI-ENGINE v6.8 — INTENT RESOLVER.
+INTENT_SYSTEM_PROMPT = """OMNI-ENGINE v6.9 — INTENT RESOLVER.
 You are a STRICT json-serializer for player intent in a simulation.
 
 You do NOT narrate. You do NOT describe feelings. You ONLY return a single JSON object.

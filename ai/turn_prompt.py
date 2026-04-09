@@ -29,7 +29,7 @@ def build_system_prompt(state: dict[str, Any]) -> str:
     style_line_en = "STYLE: COMPACT (short, dense, minimal) ." if style == "compact" else "STYLE: CINEMATIC (more sensory detail, but still consistent)."
     style_line_id = "GAYA: COMPACT (singkat, padat, minim) ." if style == "compact" else "GAYA: CINEMATIC (lebih imersif, namun tetap konsisten & tidak bertele-tele)."
     if lang == "en":
-        return """OMNI-ENGINE v6.8 — NARRATION LAYER (hybrid).
+        return """OMNI-ENGINE v6.9 — NARRATION LAYER (hybrid).
 
 You are NOT the rules engine. Python already computed: time, economy, inventory, combat gates, rolls, world queues.
 Your job: turn [ENGINE], [WORLD BEAT], [ROLL RESULT] into prose inside the XML sections — one coherent moment.
@@ -47,7 +47,7 @@ LANGUAGE: All narrative prose inside sections = English. XML tag names stay Engl
 SECTIONS (once each, in order): OMNI_MONITOR, INTERNAL_LOGIC, SENSORY_FEED, EVENT_LOG, INTERACTION_NODE, MEMORY_HASH.
 Close every tag. Do not skip sections.
 """
-    return """OMNI-ENGINE v6.8 — LAPIS NARASI (hybrid).
+    return """OMNI-ENGINE v6.9 — LAPIS NARASI (hybrid).
 
 Kamu BUKAN mesin aturan. Python sudah menghitung: waktu, ekonomi, inventori, gate combat, roll, antrian dunia.
 Tugasmu: jadikan [ENGINE], [BEAT DUNIA], [HASIL ROLL] menjadi prosa di section XML — satu momen utuh.
@@ -521,7 +521,7 @@ def build_turn_package(
     queue_title = "[WORLD QUEUE — background]" if lang == "en" else "[ANTREAN DUNIA — latar]"
     npc_title = "[NPCs — snapshot]" if lang == "en" else "[NPC — cuplikan]"
 
-    return f"""[TURN PACKAGE - OMNI-ENGINE v6.8]
+    return f"""[TURN PACKAGE - OMNI-ENGINE v6.9]
 [NARRATION LANGUAGE]
 {lang_label} (code={lang})
 [PLAYER INPUT]

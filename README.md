@@ -1,68 +1,89 @@
-# OMNI-ENGINE v6.8
+# OMNI-ENGINE v6.9
 
-**A deterministic sandbox simulation with an AI narrator** — you control one character and can attempt *any* logical action.  
-Python runs the world (state, time, economy, rolls, consequences). An LLM turns the same state into a coherent narrative.
+**Sandbox simulasi deterministik dengan narator AI** — satu karakter, aksi bebas dalam batas logika dunia.  
+Python menghitung waktu, ekonomi, roll, konsekuensi; LLM hanya mengubah *state yang sama* menjadi narasi konsisten.
 
-If you want a “mature” sandbox where your actions have persistent, systemic consequences (not a keyword game), this is the core.
+Kalau kamu cari “sandbox dewasa” di mana tindakan punya dampak sistemik dan persisten (bukan parser kata kunci), ini inti mesinnya.
 
-## What makes it different
+---
 
-- **Deterministic simulation**: identical state + input ⇒ identical roll outcomes (repeatable, testable).
-- **Hybrid intent resolution**: LLM resolves intent into structured JSON; Python enforces the rules and fallbacks.
-- **Persistent world**: locations, factions, NPC beliefs/emotions, markets, quests, and ripples persist and propagate.
-- **Structured intel**: news + ripples are deduped, bounded, and gated by propagation (local/contacts/broadcast).
-- **Reactive economy**: global baseline → country baseline → city market, influenced by geopolitics and local restrictions.
+## Apa yang bikin beda
 
-## Features (current)
+| Aspek | Perilaku |
+|--------|----------|
+| **Determinisme** | State + input yang sama ⇒ hasil roll dan simulasi yang sama (bisa diuji ulang). |
+| **Intent hybrid** | LLM merangkai niat pemain jadi JSON terstruktur; Python menegakkan aturan + fallback parser. |
+| **Dunia persisten** | Lokasi, fraksi, ekonomi, NPC, quest, ripple, dan intel tidak “reset” seenaknya. |
+| **Intel terstruktur** | Berita & ripple dibatasi, didedup, dan menyebar lewat jalur yang masuk akal (lokal / kontak / siaran). |
 
-### Core simulation
-- **Time & turns**: the world advances even when you “do nothing”.
-- **Inventory micro-actions**: automatic pocket/bag handling with time cost (reduces wasted turns).
-- **Restrictions**: `police_sweep` and `corporate_lockdown` create real penalties and area restrictions.
-- **Deterministic weather**: affects travel time and stealth/evasion modifiers per day+location.
+---
 
-### Social / NPCs
-- **NPC psychology**: Plutchik-based primaries with decay; secondary emotions derived.
-- **Beliefs & memory snippets**: NPCs remember claims with sources/bias/confidence and use them in social logic.
-- **Organic gossip**: during social interactions, NPCs can surface relevant news naturally (rate-limited).
+## Fitur utama (ringkas)
 
-### Hacking / Trace / Factions
-- **Trace escalation**: increases lead to attention states (Ghost → Flagged → Investigated → Manhunt).
-- **Hacking heat + cooldown**: pressure is tracked per target, plus inventory tooling hooks.
-- **Faction impacts + structured ripples**: outcomes ripple through contacts/broadcast depending on stealth/impact.
+### Simulasi & waktu
+- **Turn & jam dunia** berjalan; biaya waktu otomatis untuk mikro-aksi inventori.
+- **Cuaca deterministik** memengaruhi travel dan modifier (stealth/evasion) per lokasi.
+- **Restriksi lokasi** (`police_sweep`, `corporate_lockdown`) dengan dampak nyata.
 
-### Quests & world pressure
-- **Emergent quest chains**: multi-step objectives with deadlines, failure states, and branching.
-- **Remote incidents**: other cities can have events that propagate into your intel network.
+### Sosial & NPC
+- Emosi primer (Plutchik) + turunan, decay, keyakinan & memori singkat dengan sumber/kepercayaan.
+- Gossip organik saat interaksi sosial (rate-limited).
 
-### New integrated systems (v6.8)
-- **Disguise/persona**: change identity to reduce trace; can be caught under police pressure for heavier consequences.
-- **Safehouses**: rent/buy/upgrade + stash + daily rent pressure; bonus trace decay when laying low.
-- **Skill progression**: XP/levels per domain applied after rolls; skills decay when unused.
+### Jejak digital, ekonomi, fraksi
+- **Trace** naik turun dengan status perhatian (Ghost → … → Manhunt).
+- **Hacking heat** per target + tooling inventori.
+- **Ekonomi reaktif**: baseline global → negara → kota; tekanan geopolitik + restriksi lokal.
+- **Ripple** terstruktur sesuai dampak & stealth.
 
-## Quickstart (Windows)
+### Akomodasi, bank, toko, penyamaran
+- **Shop / bank / prepaid stay** (hotel / kost / suite) terintegrasi ke `world_notes` dan audit turn.
+- **Disguise** persona; **safehouse** sewa/stash/trace decay.
+- **Skill XP** per domain setelah roll; decay saat jarang dipakai.
 
-### Requirements
-- Python **3.11+**
+### Bahasa & konten
+- Pembelajaran bahasa, barrier komunikasi, dan preset kota **Earth-only** (`data/locations/`).
+- **Content packs** (`data/packs/`) untuk item/role/service — validasi dengan skrip.
 
-### Install
+---
+
+## Yang baru di v6.9
+
+- **Lapisan HTTP LLM bersama** (`ai/llm_http.py`): retry + backoff untuk **narasi (streaming)** dan **intent (JSON)** — env `LLM_HTTP_RETRIES`.
+- **Baris “fakta berubah turn ini”** di paket narasi (`ai/turn_prompt.py`) + **`commerce_notes`** di `meta.last_turn_audit` (Shop / Bank / Stay).
+- **Perintah hygiene**: `SHOWER` / `HYGIENE` / `MANDI` (reset jam hygiene, ~15 menit engine).
+- **Migrasi save**: `python scripts/migrate_save.py` (backup `.bak`, merge field baru).
+- **Validator**: `python scripts/validate_all.py` (packs + lokasi).
+- **Data**: preset kota, seed tambahan, pack `core` (occupations), snapshot balance di save.
+
+---
+
+## Persyaratan
+
+- **Python 3.11+**
+- Dependensi: `pip install -r requirements.txt`
+
+---
+
+## Mulai cepat
 
 ```bash
 pip install -r requirements.txt
+cp .env.example .env   # Windows: copy .env.example .env
+# isi OPENROUTER_API_KEY atau GROQ_API_KEY di .env
+
+python main.py
 ```
 
-### Configure LLM
+### Provider LLM
 
-Copy `.env.example` → `.env`, then choose a provider.
-
-**OpenRouter**
+**OpenRouter (default)**
 
 ```env
 OPENROUTER_API_KEY=sk-or-v1-...
 # OPENROUTER_MODEL=openrouter/free
 ```
 
-**Groq** (example: [Llama 3.3 70B](https://console.groq.com/docs/model/llama-3.3-70b-versatile))
+**Groq** (contoh: [Llama 3.3 70B](https://console.groq.com/docs/model/llama-3.3-70b-versatile))
 
 ```env
 LLM_PROVIDER=groq
@@ -70,70 +91,92 @@ GROQ_API_KEY=gsk_...
 GROQ_MODEL=llama-3.3-70b-versatile
 ```
 
-Model lists:
-- OpenRouter: `https://openrouter.ai/models`
-- Groq: `https://console.groq.com/docs/models`
+Model:
+- OpenRouter: https://openrouter.ai/models  
+- Groq: https://console.groq.com/docs/models  
 
-### Run
+Opsional: `LLM_MAX_TOKENS`, `LLM_INTENT_MAX_TOKENS`, `LLM_HTTP_RETRIES`, tuning `BAL_*` dan bio — lihat komentar di `.env.example`.
 
-```bash
-python main.py
-```
+### Save game
 
-Saves:
-- Current: `save/current.json`
-- Backup: `save/previous.json`
+| File | Isi |
+|------|-----|
+| `save/current.json` | Sesi aktif |
+| `save/previous.json` | Backup untuk `UNDO` (mode Normal) |
 
-On a fresh boot you’ll fill a profile and choose a **seed pack** (`default`, `minimal`, or `none`).
+Keduanya di-*ignore* Git (jangan commit save pribadi).
 
-## Key commands
-
-- **`HELP`**: show command list
-- **`WHEREAMI`**: current location + profile summary + known locations
-- **`MARKET`**: local market snapshot (falls back to global)
-- **`QUEST`**: active/completed/failed quest chains + steps/deadlines
-- **`ATLAS [country]`**: geopolitics + deterministic country profiles
-- **`COUNTRIES`**: list supported countries (Earth-only allowlist)
-- **`CITIES [country]`**: list supported cities (optionally filtered by country)
-- **`WHO` / `NPC <name>`**: list NPCs / inspect a specific NPC
-- **`HEAT`**: hacking heat/cooldowns
-- **`OFFERS [role]`**: NPC economy offers
-- **`NPCSIM_STATS`**: NPC simulation LOD counters
-- **`DISGUISE <persona>` / `DISGUISE OFF`**
-- **`SAFEHOUSE status|rent|buy|upgrade|stash put <id>|stash take <id>`**
-- **`WEATHER`**
-- **`SKILLS`**
-
-## Seed packs
-
-Seed packs live in `data/seeds/<name>.json`. They merge safely into the state (NPCs, events, ripples, notes, reputation, skills, trace, world) and do **not** overwrite your boot profile, bio, or economy.
-
-## Verification
-
-```bash
-python scripts/verify.py
-```
-
-Runs `compileall` + smoke/stress scenarios to catch regressions (determinism, markets, quests, restrictions, atlas caching, etc.).
-
-## Project layout
-
-| Path | Purpose |
-|------|---------|
-| `main.py` | REPL loop, intent integration, pipeline, autosave |
-| `engine/` | world simulation: time, factions, economy, quests, trace, NPCs |
-| `ai/` | LLM client + strict turn packaging |
-| `display/` | Rich-based monitor UI |
-| `data/` | state template, seed packs |
-| `scripts/` | verification & developer utilities |
-
-## Roadmap (high-impact next)
-
-- **Better action UX**: explicit “time cost breakdown” per turn (what auto-actions happened and why).
-- **More location depth**: districts/venues, travel-within-city, local services and procurement.
-- **NPC-to-NPC spread**: stronger social graph diffusion (who tells whom, why, and with what distortion).
-- **Safer modding**: data-driven items/roles/services/events packs with validation tooling.
+Boot pertama: isi profil dan pilih **seed pack** (`default`, `minimal`, atau `none`).
 
 ---
 
-If you’re building a sandbox where *systems* tell the story, OMNI-ENGINE is the foundation.
+## Perintah CLI (cuplikan)
+
+| Perintah | Fungsi |
+|----------|--------|
+| `HELP` | Daftar perintah |
+| `SHOWER` / `HYGIENE` / `MANDI` | Reset jam hygiene (engine, ~15 m) |
+| `WHEREAMI` | Lokasi + ringkasan profil |
+| `BANK …` / `STAY …` | Bank & prepaid menginap |
+| `MARKET` / `QUEST` | Pasar lokal & quest |
+| `ATLAS [negara]` / `COUNTRIES` / `CITIES [negara]` | Atlas & kota |
+| `WHO` / `NPC <nama>` | NPC |
+| `HEAT` / `OFFERS` | Hacking heat & penawaran NPC |
+| `DISGUISE …` / `SAFEHOUSE …` / `WEATHER` / `SKILLS` | Penyamaran, safehouse, cuaca, skill |
+| `MODE NORMAL\|IRONMAN` / `UNDO` | Mode & undo |
+
+---
+
+## Seed packs & data
+
+- **Seeds**: `data/seeds/<nama>.json` — merge aman ke state (tidak menimpa profil boot inti).
+- **Lokasi**: `data/locations/<kota>.json` — preset NPC/item/tag per kota.
+- **Packs**: `data/packs/<id>/` — konten modding; jalankan `validate_packs.py` sebelum PR.
+
+---
+
+## Pengembangan & kualitas
+
+```bash
+# Smoke + determinisme + skenario regresi
+python scripts/verify.py
+
+# Validasi konten (packs + semua preset lokasi)
+python scripts/validate_all.py
+
+# Migrasi save lama ke skema terbaru (in-place + .bak)
+python scripts/migrate_save.py
+python scripts/migrate_save.py path/ke/save.json
+```
+
+---
+
+## Struktur repo
+
+| Path | Peran |
+|------|--------|
+| `main.py` | Loop REPL, intent, pipeline, autosave |
+| `engine/` | Simulasi: waktu, dunia, ekonomi, quest, trace, NPC, bio, balance, … |
+| `ai/` | Klien LLM, resolver intent, paket turn / sistem prompt |
+| `display/` | UI terminal (Rich) |
+| `data/` | Template state, seeds, lokasi, packs |
+| `scripts/` | `verify`, `validate_*`, `migrate_save` |
+
+---
+
+## Roadmap (ikut minat)
+
+- UX waktu: breakdown biaya waktu per turn (apa yang otomatis jalan).
+- Kedalaman kota: distrik, travel intra-kota, layanan lokal.
+- Diffusi sosial NPC→NPC lebih kaya (siapa ke siapa, distorsi).
+- Modding lebih aman: skema pack + validator CI.
+
+---
+
+## Lisensi
+
+[MIT](LICENSE) — Copyright (c) 2026 Flynarch.
+
+---
+
+*OMNI-ENGINE: sistem dulu, cerita mengikuti state.*

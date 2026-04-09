@@ -180,7 +180,7 @@ def _expand_alias(cmd: str) -> str:
 
 
 def boot_sequence() -> dict[str, Any]:
-    console.print("[bold red]OMNI-ENGINE v6.8[/bold red]")
+    console.print("[bold red]OMNI-ENGINE v6.9[/bold red]")
     fields = ["name", "age", "year", "occupation", "background"]
     data: dict[str, Any] = {}
     for f in fields:

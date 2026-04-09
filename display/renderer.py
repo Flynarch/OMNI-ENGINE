@@ -196,7 +196,7 @@ def render_monitor(state: dict[str, Any]) -> None:
     right_prefix = Text()
     right_suffix = Text()
 
-    left.append("OMNI-ENGINE v6.8\n", style="bold red")
+    left.append("OMNI-ENGINE v6.9\n", style="bold red")
     lang = str(player.get("language", "id")).lower()
     left.append(
         f"{player.get('name', '?')} | Day {day} {clock} | Turn {turn} | Lang: {lang} | Seed: {seed}\n",

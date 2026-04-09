@@ -8,7 +8,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 SKILLS_TABLE_PATH = ROOT / "data" / "skills_table.json"
 
-# Fallback if JSON missing or invalid (v6.8 C1)
+# Fallback if JSON missing or invalid (v6.9 C1)
 _BASE_FALLBACK: dict[str, tuple[int, int]] = {
     "social": (60, 25),
     "combat": (55, 20),
@@ -107,7 +107,7 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
                 }
         except Exception:
             pass
-    # Ordered modifier stack (v6.8 deterministic order).
+    # Ordered modifier stack (v6.9 deterministic order).
     # 1. Skill decay
     decay_pen = int(action_ctx.get("skill_decay_penalty", 0))
     if decay_pen != 0:
