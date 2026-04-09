@@ -28,6 +28,84 @@ BELIEF_TAG_SOCIAL_MODS: dict[str, dict[str, int]] = {
 }
 
 
+# Belief anchors act as hard constraints on the final coefficients.
+BELIEF_ANCHORS: dict[str, dict[str, int]] = {
+    "Deep_Grudge": {"max_trust": 30, "min_suspicion": 50},
+    "Eternal_Gratitude": {"min_trust": 50, "max_suspicion": 20},
+    "Blackmail_Leverage": {"min_fear": 40},
+    "Debtor": {"min_respect": -20, "max_trust": 70},
+}
+
+
+def get_behavioral_anchors(state: dict[str, Any], npc_id: str) -> dict[str, int]:
+    """Return the most constraining anchor limits for the NPC based on belief_tags."""
+    npcs = state.get("npcs", {}) or {}
+    if not isinstance(npcs, dict):
+        return {}
+    npc = npcs.get(str(npc_id))
+    if not isinstance(npc, dict):
+        return {}
+    tags = npc.get("belief_tags", [])
+    if not isinstance(tags, list) or not tags:
+        return {}
+
+    out: dict[str, int] = {}
+    for raw in tags[:16]:
+        tag = str(raw or "").strip()
+        if not tag:
+            continue
+        a = BELIEF_ANCHORS.get(tag)
+        if not isinstance(a, dict):
+            continue
+        for k, v in a.items():
+            try:
+                n = int(v)
+            except Exception:
+                continue
+            if k.startswith("min_"):
+                out[k] = max(int(out.get(k, -10_000)), n)
+            elif k.startswith("max_"):
+                out[k] = min(int(out.get(k, 10_000)), n)
+            else:
+                out[k] = n
+    # Normalize: if min>max, keep the stricter bound (collapse to min).
+    for dim in ("trust", "respect", "suspicion", "fear"):
+        mn = out.get(f"min_{dim}")
+        mx = out.get(f"max_{dim}")
+        if isinstance(mn, int) and isinstance(mx, int) and mn > mx:
+            out[f"max_{dim}"] = int(mn)
+    return out
+
+
+def get_narrative_anchor_context(state: dict[str, Any], npc_id: str) -> str:
+    """Return a small deterministic prompt fragment for the narrator."""
+    npcs = state.get("npcs", {}) or {}
+    if not isinstance(npcs, dict):
+        return ""
+    npc = npcs.get(str(npc_id))
+    if not isinstance(npc, dict):
+        return ""
+    tags = npc.get("belief_tags", [])
+    if not isinstance(tags, list) or not tags:
+        return ""
+    # Pick the first tag as primary anchor (deterministic order already).
+    primary = str(tags[0] or "").strip()
+    if not primary:
+        return ""
+    tone = "neutral"
+    if primary == "Deep_Grudge":
+        tone = "cold_and_suspicious"
+    elif primary == "Eternal_Gratitude":
+        tone = "warm_and_helpful"
+    elif primary == "Blackmail_Leverage":
+        tone = "nervous_compliant"
+    elif primary == "Debtor":
+        tone = "defensive_uneasy"
+    elif primary.startswith("Core_Belief_"):
+        tone = "guarded"
+    return f"[ANCHOR] NPC ini memiliki {primary}, bicara dengan nada {tone}."
+
+
 def get_npc_social_modifiers(state: dict[str, Any], npc_id: str) -> dict[str, int]:
     """Aggregate social coefficients from npc belief_tags and memory_summary.
 
@@ -41,6 +119,7 @@ def get_npc_social_modifiers(state: dict[str, Any], npc_id: str) -> dict[str, in
     npc = npcs.get(str(npc_id))
     if not isinstance(npc, dict):
         return out
+    npc_tags = npc.get("belief_tags", []) if isinstance(npc.get("belief_tags"), list) else []
 
     tags = npc.get("belief_tags", [])
     if isinstance(tags, list):
@@ -70,6 +149,24 @@ def get_npc_social_modifiers(state: dict[str, Any], npc_id: str) -> dict[str, in
 
     for k in ("trust", "respect", "suspicion", "fear"):
         out[k] = _clamp_int(out.get(k, 0), -100, 100, 0)
+
+    # Apply behavioral anchors (hard constraints).
+    anchors = get_behavioral_anchors(state, npc_id)
+    if isinstance(anchors, dict) and anchors:
+        for dim in ("trust", "respect", "suspicion", "fear"):
+            before = int(out.get(dim, 0) or 0)
+            lo = anchors.get(f"min_{dim}")
+            hi = anchors.get(f"max_{dim}")
+            after = before
+            if isinstance(lo, int):
+                after = max(after, int(lo))
+            if isinstance(hi, int):
+                after = min(after, int(hi))
+            if after != before:
+                out[dim] = int(after)
+                state.setdefault("world_notes", []).append(
+                    f"[Anchor] {npc_id} {dim} clamped to {after} due to {str((npc_tags or ['?'])[0])}"
+                )
     return out
 
 

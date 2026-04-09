@@ -275,6 +275,15 @@ def _fmt_npc_beliefs_brief(state: dict[str, Any], action_ctx: dict[str, Any]) ->
     if not isinstance(tags, list) or not tags:
         return ""
     preview = ", ".join([str(x) for x in tags[:5]])
+    # Add a narrative anchor hint for consistent tone.
+    try:
+        from engine.npc.memory import get_narrative_anchor_context
+
+        anchor = get_narrative_anchor_context(state, npc_id)
+    except Exception:
+        anchor = ""
+    if anchor:
+        return "[NPC_BELIEFS]\n" + preview + "\n" + anchor
     return "[NPC_BELIEFS]\n" + preview
 def _fmt_social_stats(state: dict[str, Any]) -> str:
     stats = state.get("player", {}).get("social_stats", {}) or {}

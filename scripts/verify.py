@@ -1807,6 +1807,15 @@ def _smoke() -> None:
     mods = pkg.get("mods", []) or []
     assert any(isinstance(m, (list, tuple)) and "NPC beliefs" in str(m[0]) for m in mods)
 
+    # Anchor layer: Deep_Grudge clamps max_trust=30 and min_suspicion=50.
+    from engine.npc.memory import get_npc_social_modifiers
+
+    st_anchor = initialize_state({"name": "AnchorClamp", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_anchor.setdefault("npcs", {})["A"] = {"name": "A", "alive": True, "belief_tags": ["Deep_Grudge"], "belief_summary": {"suspicion": 0, "respect": 90}}
+    sm2 = get_npc_social_modifiers(st_anchor, "A")
+    assert int(sm2.get("trust", 0) or 0) <= 30
+    assert int(sm2.get("suspicion", 0) or 0) >= 50
+
     from engine.systems.scenes import advance_scene
 
     r1 = advance_scene(st_del, {"scene_action": "approach"})
