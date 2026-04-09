@@ -411,6 +411,16 @@ def update_npcs(state: dict, action_ctx: dict) -> None:
         s = int(n.get("disposition_score", 50))
         n["disposition_label"] = _label(s)
 
+        # Anchor-driven persistence: decay social state toward belief anchors each turn.
+        try:
+            from engine.core.modifiers import apply_social_decay
+            from engine.npc.memory import verify_narrative_consistency
+
+            apply_social_decay(state, str(name))
+            verify_narrative_consistency(state, str(name))
+        except Exception:
+            pass
+
         # Autonomous agenda tick: NPCs act while player does other things.
         agenda = n.get("agenda")
         if agenda and time_min % 120 == 0:

@@ -49,6 +49,126 @@ def base_pair(domain: str) -> tuple[int, int]:
     return b.get(domain, b["evasion"])
 
 
+def apply_social_decay(state: dict[str, Any], npc_id: str) -> dict[str, int]:
+    """Decay persistent NPC social fields toward anchor bounds (per turn).
+
+    Operates on:
+    - npc.trust (0..100)
+    - npc.fear (0..100)
+    - npc.belief_summary.suspicion/respect (0..100)
+
+    Returns deltas for debug/testing.
+    """
+    npcs = state.get("npcs", {}) or {}
+    if not isinstance(npcs, dict):
+        return {"trust": 0, "fear": 0, "suspicion": 0, "respect": 0}
+    npc = npcs.get(str(npc_id))
+    if not isinstance(npc, dict):
+        return {"trust": 0, "fear": 0, "suspicion": 0, "respect": 0}
+
+    try:
+        from engine.npc.memory import get_behavioral_anchors
+    except Exception:
+        return {"trust": 0, "fear": 0, "suspicion": 0, "respect": 0}
+
+    anchors = get_behavioral_anchors(state, str(npc_id))
+    if not isinstance(anchors, dict) or not anchors:
+        return {"trust": 0, "fear": 0, "suspicion": 0, "respect": 0}
+
+    def _step_toward(v: int, target: int, step: int) -> int:
+        if v > target:
+            return max(target, v - step)
+        if v < target:
+            return min(target, v + step)
+        return v
+
+    out = {"trust": 0, "fear": 0, "suspicion": 0, "respect": 0}
+
+    # Trust
+    try:
+        tr0 = int(npc.get("trust", 50) or 50)
+    except Exception:
+        tr0 = 50
+    tr = max(0, min(100, tr0))
+    if "max_trust" in anchors:
+        mx = max(0, min(100, int(anchors.get("max_trust", 100) or 100)))
+        if tr > mx:
+            tr2 = _step_toward(tr, mx, 20)
+            out["trust"] = tr2 - tr0
+            tr = tr2
+    if "min_trust" in anchors:
+        mn = max(0, min(100, int(anchors.get("min_trust", 0) or 0)))
+        if tr < mn:
+            tr2 = _step_toward(tr, mn, 8)
+            out["trust"] = tr2 - tr0
+            tr = tr2
+    npc["trust"] = int(tr)
+
+    # Fear
+    try:
+        f0 = int(npc.get("fear", 10) or 10)
+    except Exception:
+        f0 = 10
+    f = max(0, min(100, f0))
+    if "min_fear" in anchors:
+        mnf = max(0, min(100, int(anchors.get("min_fear", 0) or 0)))
+        if f < mnf:
+            f2 = _step_toward(f, mnf, 12)
+            out["fear"] = f2 - f0
+            f = f2
+    npc["fear"] = int(f)
+
+    # belief_summary
+    bs = npc.get("belief_summary") if isinstance(npc.get("belief_summary"), dict) else {}
+    if not isinstance(bs, dict):
+        bs = {}
+        npc["belief_summary"] = bs
+    try:
+        s0 = int(bs.get("suspicion", 0) or 0)
+    except Exception:
+        s0 = 0
+    s = max(0, min(100, s0))
+    if "min_suspicion" in anchors:
+        mns = max(0, min(100, int(anchors.get("min_suspicion", 0) or 0)))
+        if s < mns:
+            s2 = _step_toward(s, mns, 18)
+            out["suspicion"] = s2 - s0
+            s = s2
+    if "max_suspicion" in anchors:
+        mxs = max(0, min(100, int(anchors.get("max_suspicion", 100) or 100)))
+        if s > mxs:
+            s2 = _step_toward(s, mxs, 18)
+            out["suspicion"] = s2 - s0
+            s = s2
+    bs["suspicion"] = int(s)
+
+    try:
+        r0 = int(bs.get("respect", 50) or 50)
+    except Exception:
+        r0 = 50
+    r = max(0, min(100, r0))
+    if "min_respect" in anchors:
+        mnr = max(-100, min(100, int(anchors.get("min_respect", -100) or -100)))
+        floor = max(0, min(100, 50 + int(mnr / 2)))
+        if r < floor:
+            r2 = _step_toward(r, floor, 10)
+            out["respect"] = r2 - r0
+            r = r2
+    if "max_respect" in anchors:
+        mxr = max(-100, min(100, int(anchors.get("max_respect", 100) or 100)))
+        ceil = max(0, min(100, 50 + int(mxr / 2)))
+        if r > ceil:
+            r2 = _step_toward(r, ceil, 10)
+            out["respect"] = r2 - r0
+            r = r2
+    bs["respect"] = int(r)
+    npc["belief_summary"] = bs
+
+    if any(v != 0 for v in out.values()):
+        state.setdefault("world_notes", []).append(f"[SocialDecay] npc={npc_id} d_trust={out['trust']} d_fear={out['fear']} d_susp={out['suspicion']} d_rep={out['respect']}")
+    return out
+
+
 def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[str, Any]:
     domain = action_ctx.get("domain", "evasion")
     trained = bool(action_ctx.get("trained", True))

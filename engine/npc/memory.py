@@ -103,7 +103,37 @@ def get_narrative_anchor_context(state: dict[str, Any], npc_id: str) -> str:
         tone = "defensive_uneasy"
     elif primary.startswith("Core_Belief_"):
         tone = "guarded"
-    return f"[ANCHOR] NPC ini memiliki {primary}, bicara dengan nada {tone}."
+    # Current emotional state: based on clamped coefficients (anchor layer).
+    sm = get_npc_social_modifiers(state, npc_id)
+    trust = int(sm.get("trust", 0) or 0)
+    susp = int(sm.get("suspicion", 0) or 0)
+    fear = int(sm.get("fear", 0) or 0)
+    state_line = f"CurrentEmotionalState trust={trust} susp={susp} fear={fear}"
+    return f"[ANCHOR] NPC ini memiliki {primary}, bicara dengan nada {tone}. {state_line}"
+
+
+def verify_narrative_consistency(state: dict[str, Any], npc_id: str) -> str:
+    """Cross-check deterministic contradictions between tags and current coefficients."""
+    npcs = state.get("npcs", {}) or {}
+    if not isinstance(npcs, dict):
+        return "OK"
+    npc = npcs.get(str(npc_id))
+    if not isinstance(npc, dict):
+        return "OK"
+    tags = npc.get("belief_tags", [])
+    if not isinstance(tags, list):
+        tags = []
+    sm = get_npc_social_modifiers(state, npc_id)
+    trust = int(sm.get("trust", 0) or 0)
+    susp = int(sm.get("suspicion", 0) or 0)
+
+    if "Deep_Grudge" in tags and trust > 50:
+        state.setdefault("world_notes", []).append(f"[Consistency] CRITICAL_CONTRADICTION npc={npc_id} trust={trust} tag=Deep_Grudge")
+        return "CRITICAL_CONTRADICTION"
+    if "Eternal_Gratitude" in tags and susp > 60:
+        state.setdefault("world_notes", []).append(f"[Consistency] CRITICAL_CONTRADICTION npc={npc_id} susp={susp} tag=Eternal_Gratitude")
+        return "CRITICAL_CONTRADICTION"
+    return "OK"
 
 
 def get_npc_social_modifiers(state: dict[str, Any], npc_id: str) -> dict[str, int]:

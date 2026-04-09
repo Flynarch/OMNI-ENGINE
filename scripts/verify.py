@@ -1816,6 +1816,24 @@ def _smoke() -> None:
     assert int(sm2.get("trust", 0) or 0) <= 30
     assert int(sm2.get("suspicion", 0) or 0) >= 50
 
+    # Social Decay to Anchor: apply_social_decay should drag fields toward anchor bounds.
+    from engine.core.modifiers import apply_social_decay
+    st_sd = initialize_state({"name": "SocialDecay", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_sd.setdefault("npcs", {})["D"] = {
+        "name": "D",
+        "alive": True,
+        "belief_tags": ["Deep_Grudge"],
+        "trust": 100,
+        "fear": 0,
+        "belief_summary": {"suspicion": 0, "respect": 90},
+    }
+    d1 = apply_social_decay(st_sd, "D")
+    assert isinstance(d1, dict)
+    npc_d = (st_sd.get("npcs", {}) or {}).get("D", {})
+    assert isinstance(npc_d, dict)
+    assert int(npc_d.get("trust", 0) or 0) <= 80  # moved toward max_trust=30
+    assert int((npc_d.get("belief_summary", {}) or {}).get("suspicion", 0) or 0) >= 18  # moved toward min_suspicion=50
+
     from engine.systems.scenes import advance_scene
 
     r1 = advance_scene(st_del, {"scene_action": "approach"})
