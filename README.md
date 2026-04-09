@@ -1,80 +1,80 @@
 # OMNI-ENGINE v6.9
 
-**Sandbox simulasi deterministik dengan narator AI** — satu karakter, aksi bebas dalam batas logika dunia.  
-Python menghitung waktu, ekonomi, roll, konsekuensi; LLM hanya mengubah *state yang sama* menjadi narasi konsisten.
+**A deterministic sandbox simulation with an AI narrator** — one character, free-form actions within the world’s logic.  
+Python computes time, economy, rolls, and consequences; the LLM only turns that **same state** into coherent prose.
 
-Kalau kamu cari “sandbox dewasa” di mana tindakan punya dampak sistemik dan persisten (bukan parser kata kunci), ini inti mesinnya.
+If you want a “grown-up” sandbox where actions have persistent, systemic consequences (not a keyword parser), this is the core engine.
 
 ---
 
-## Apa yang bikin beda
+## What sets it apart
 
-| Aspek | Perilaku |
+| Aspect | Behavior |
 |--------|----------|
-| **Determinisme** | State + input yang sama ⇒ hasil roll dan simulasi yang sama (bisa diuji ulang). |
-| **Intent hybrid** | LLM merangkai niat pemain jadi JSON terstruktur; Python menegakkan aturan + fallback parser. |
-| **Dunia persisten** | Lokasi, fraksi, ekonomi, NPC, quest, ripple, dan intel tidak “reset” seenaknya. |
-| **Intel terstruktur** | Berita & ripple dibatasi, didedup, dan menyebar lewat jalur yang masuk akal (lokal / kontak / siaran). |
+| **Determinism** | Same state + input ⇒ same rolls and simulation (replayable, testable). |
+| **Hybrid intent** | An LLM maps player intent to structured JSON; Python enforces rules + a fallback parser. |
+| **Persistent world** | Locations, factions, economy, NPCs, quests, ripples, and intel do not reset on a whim. |
+| **Structured intel** | News and ripples are bounded, deduped, and propagate through plausible channels (local / contacts / broadcast). |
 
 ---
 
-## Fitur utama (ringkas)
+## Features (summary)
 
-### Simulasi & waktu
-- **Turn & jam dunia** berjalan; biaya waktu otomatis untuk mikro-aksi inventori.
-- **Cuaca deterministik** memengaruhi travel dan modifier (stealth/evasion) per lokasi.
-- **Restriksi lokasi** (`police_sweep`, `corporate_lockdown`) dengan dampak nyata.
+### Simulation & time
+- **Turns and world clock** advance; automatic time cost for inventory micro-actions.
+- **Deterministic weather** affects travel and stealth/evasion modifiers per location.
+- **Location restrictions** (`police_sweep`, `corporate_lockdown`) with real penalties.
 
-### Sosial & NPC
-- Emosi primer (Plutchik) + turunan, decay, keyakinan & memori singkat dengan sumber/kepercayaan.
-- Gossip organik saat interaksi sosial (rate-limited).
+### Social & NPCs
+- Primary emotions (Plutchik) + derived emotions, decay, beliefs and short memory with source/confidence.
+- Organic gossip during social interactions (rate-limited).
 
-### Jejak digital, ekonomi, fraksi
-- **Trace** naik turun dengan status perhatian (Ghost → … → Manhunt).
-- **Hacking heat** per target + tooling inventori.
-- **Ekonomi reaktif**: baseline global → negara → kota; tekanan geopolitik + restriksi lokal.
-- **Ripple** terstruktur sesuai dampak & stealth.
+### Trace, economy, factions
+- **Trace** scales with attention states (Ghost → … → Manhunt).
+- **Hacking heat** per target + inventory tooling hooks.
+- **Reactive economy**: global → country → city baselines; geopolitical pressure + local restrictions.
+- **Structured ripples** tied to impact and stealth.
 
-### Akomodasi, bank, toko, penyamaran
-- **Shop / bank / prepaid stay** (hotel / kost / suite) terintegrasi ke `world_notes` dan audit turn.
-- **Disguise** persona; **safehouse** sewa/stash/trace decay.
-- **Skill XP** per domain setelah roll; decay saat jarang dipakai.
+### Lodging, bank, shop, disguise
+- **Shop / bank / prepaid stay** (hotel / boarding / suite) wired into `world_notes` and turn audit.
+- **Disguise** personas; **safehouses** rent/stash/trace decay.
+- **Skill XP** per domain after rolls; decay when skills go unused.
 
-### Bahasa & konten
-- Pembelajaran bahasa, barrier komunikasi, dan preset kota **Earth-only** (`data/locations/`).
-- **Content packs** (`data/packs/`) untuk item/role/service — validasi dengan skrip.
-
----
-
-## Yang baru di v6.9
-
-- **Lapisan HTTP LLM bersama** (`ai/llm_http.py`): retry + backoff untuk **narasi (streaming)** dan **intent (JSON)** — env `LLM_HTTP_RETRIES`.
-- **Baris “fakta berubah turn ini”** di paket narasi (`ai/turn_prompt.py`) + **`commerce_notes`** di `meta.last_turn_audit` (Shop / Bank / Stay).
-- **Perintah hygiene**: `SHOWER` / `HYGIENE` / `MANDI` (reset jam hygiene, ~15 menit engine).
-- **Migrasi save**: `python scripts/migrate_save.py` (backup `.bak`, merge field baru).
-- **Validator**: `python scripts/validate_all.py` (packs + lokasi).
-- **Data**: preset kota, seed tambahan, pack `core` (occupations), snapshot balance di save.
+### Language & content
+- Language learning, communication barriers, and **Earth-only** city presets (`data/locations/`).
+- **Content packs** (`data/packs/`) for items/roles/services — validate with the bundled scripts.
 
 ---
 
-## Persyaratan
+## What’s new in v6.9
+
+- **Shared LLM HTTP layer** (`ai/llm_http.py`): retries + backoff for **narration (streaming)** and **intent (JSON)** — see `LLM_HTTP_RETRIES`.
+- **“Facts changed this turn”** line in the narration package (`ai/turn_prompt.py`) + **`commerce_notes`** in `meta.last_turn_audit` (Shop / Bank / Stay).
+- **Hygiene commands**: `SHOWER` / `HYGIENE` / `MANDI` (reset hygiene clock, ~15 engine minutes).
+- **Save migration**: `python scripts/migrate_save.py` (writes `.bak`, merges new fields).
+- **Validators**: `python scripts/validate_all.py` (packs + all location presets).
+- **Data**: city presets, extra seeds, `core` pack (occupations), balance snapshot in saves.
+
+---
+
+## Requirements
 
 - **Python 3.11+**
-- Dependensi: `pip install -r requirements.txt`
+- Dependencies: `pip install -r requirements.txt`
 
 ---
 
-## Mulai cepat
+## Quickstart
 
 ```bash
 pip install -r requirements.txt
 cp .env.example .env   # Windows: copy .env.example .env
-# isi OPENROUTER_API_KEY atau GROQ_API_KEY di .env
+# Set OPENROUTER_API_KEY or GROQ_API_KEY in .env
 
 python main.py
 ```
 
-### Provider LLM
+### LLM providers
 
 **OpenRouter (default)**
 
@@ -83,7 +83,7 @@ OPENROUTER_API_KEY=sk-or-v1-...
 # OPENROUTER_MODEL=openrouter/free
 ```
 
-**Groq** (contoh: [Llama 3.3 70B](https://console.groq.com/docs/model/llama-3.3-70b-versatile))
+**Groq** (example: [Llama 3.3 70B](https://console.groq.com/docs/model/llama-3.3-70b-versatile))
 
 ```env
 LLM_PROVIDER=groq
@@ -91,92 +91,92 @@ GROQ_API_KEY=gsk_...
 GROQ_MODEL=llama-3.3-70b-versatile
 ```
 
-Model:
+Model directories:
 - OpenRouter: https://openrouter.ai/models  
 - Groq: https://console.groq.com/docs/models  
 
-Opsional: `LLM_MAX_TOKENS`, `LLM_INTENT_MAX_TOKENS`, `LLM_HTTP_RETRIES`, tuning `BAL_*` dan bio — lihat komentar di `.env.example`.
+Optional: `LLM_MAX_TOKENS`, `LLM_INTENT_MAX_TOKENS`, `LLM_HTTP_RETRIES`, `BAL_*` and bio tuning — see `.env.example`.
 
-### Save game
+### Save files
 
-| File | Isi |
-|------|-----|
-| `save/current.json` | Sesi aktif |
-| `save/previous.json` | Backup untuk `UNDO` (mode Normal) |
+| File | Role |
+|------|------|
+| `save/current.json` | Active session |
+| `save/previous.json` | Backup for `UNDO` (Normal mode) |
 
-Keduanya di-*ignore* Git (jangan commit save pribadi).
+Both are gitignored — do not commit personal saves.
 
-Boot pertama: isi profil dan pilih **seed pack** (`default`, `minimal`, atau `none`).
+On first boot you fill a profile and pick a **seed pack** (`default`, `minimal`, or `none`).
 
 ---
 
-## Perintah CLI (cuplikan)
+## CLI commands (sample)
 
-| Perintah | Fungsi |
-|----------|--------|
-| `HELP` | Daftar perintah |
-| `SHOWER` / `HYGIENE` / `MANDI` | Reset jam hygiene (engine, ~15 m) |
-| `WHEREAMI` | Lokasi + ringkasan profil |
-| `BANK …` / `STAY …` | Bank & prepaid menginap |
-| `MARKET` / `QUEST` | Pasar lokal & quest |
-| `ATLAS [negara]` / `COUNTRIES` / `CITIES [negara]` | Atlas & kota |
-| `WHO` / `NPC <nama>` | NPC |
-| `HEAT` / `OFFERS` | Hacking heat & penawaran NPC |
-| `DISGUISE …` / `SAFEHOUSE …` / `WEATHER` / `SKILLS` | Penyamaran, safehouse, cuaca, skill |
+| Command | Purpose |
+|---------|---------|
+| `HELP` | Full command list |
+| `SHOWER` / `HYGIENE` / `MANDI` | Reset hygiene clock (engine, ~15 min) |
+| `WHEREAMI` | Location + short profile |
+| `BANK …` / `STAY …` | Banking & prepaid lodging |
+| `MARKET` / `QUEST` | Local market & quests |
+| `ATLAS [country]` / `COUNTRIES` / `CITIES [country]` | Atlas & cities |
+| `WHO` / `NPC <name>` | NPCs |
+| `HEAT` / `OFFERS` | Hacking heat & NPC offers |
+| `DISGUISE …` / `SAFEHOUSE …` / `WEATHER` / `SKILLS` | Disguise, safehouse, weather, skills |
 | `MODE NORMAL\|IRONMAN` / `UNDO` | Mode & undo |
 
 ---
 
 ## Seed packs & data
 
-- **Seeds**: `data/seeds/<nama>.json` — merge aman ke state (tidak menimpa profil boot inti).
-- **Lokasi**: `data/locations/<kota>.json` — preset NPC/item/tag per kota.
-- **Packs**: `data/packs/<id>/` — konten modding; jalankan `validate_packs.py` sebelum PR.
+- **Seeds**: `data/seeds/<name>.json` — safe merge into state (does not overwrite core boot profile).
+- **Locations**: `data/locations/<city>.json` — NPC/item/tag presets per city.
+- **Packs**: `data/packs/<id>/` — modding content; run `validate_packs.py` before large PRs.
 
 ---
 
-## Pengembangan & kualitas
+## Development & quality
 
 ```bash
-# Smoke + determinisme + skenario regresi
+# Compile check + smoke + regression scenarios (determinism, markets, quests, etc.)
 python scripts/verify.py
 
-# Validasi konten (packs + semua preset lokasi)
+# Validate content (packs + every location preset)
 python scripts/validate_all.py
 
-# Migrasi save lama ke skema terbaru (in-place + .bak)
+# Migrate an older save to the latest schema (in-place + .bak)
 python scripts/migrate_save.py
-python scripts/migrate_save.py path/ke/save.json
+python scripts/migrate_save.py path/to/save.json
 ```
 
 ---
 
-## Struktur repo
+## Repository layout
 
-| Path | Peran |
-|------|--------|
-| `main.py` | Loop REPL, intent, pipeline, autosave |
-| `engine/` | Simulasi: waktu, dunia, ekonomi, quest, trace, NPC, bio, balance, … |
-| `ai/` | Klien LLM, resolver intent, paket turn / sistem prompt |
-| `display/` | UI terminal (Rich) |
-| `data/` | Template state, seeds, lokasi, packs |
+| Path | Role |
+|------|------|
+| `main.py` | REPL loop, intent, pipeline, autosave |
+| `engine/` | Simulation: time, world, economy, quests, trace, NPCs, bio, balance, … |
+| `ai/` | LLM client, intent resolver, turn package / system prompts |
+| `display/` | Terminal UI (Rich) |
+| `data/` | State template, seeds, locations, packs |
 | `scripts/` | `verify`, `validate_*`, `migrate_save` |
 
 ---
 
-## Roadmap (ikut minat)
+## Roadmap (directional)
 
-- UX waktu: breakdown biaya waktu per turn (apa yang otomatis jalan).
-- Kedalaman kota: distrik, travel intra-kota, layanan lokal.
-- Diffusi sosial NPC→NPC lebih kaya (siapa ke siapa, distorsi).
-- Modding lebih aman: skema pack + validator CI.
+- Time UX: per-turn time breakdown (what ran automatically).
+- Deeper cities: districts, intra-city travel, local services.
+- Richer NPC→NPC social diffusion (who tells whom, with distortion).
+- Safer modding: pack schema + CI validators.
 
 ---
 
-## Lisensi
+## License
 
 [MIT](LICENSE) — Copyright (c) 2026 Flynarch.
 
 ---
 
-*OMNI-ENGINE: sistem dulu, cerita mengikuti state.*
+*OMNI-ENGINE: systems first; the story follows the state.*
