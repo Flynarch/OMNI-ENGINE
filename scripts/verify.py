@@ -1834,6 +1834,25 @@ def _smoke() -> None:
     assert int(npc_d.get("trust", 0) or 0) <= 80  # moved toward max_trust=30
     assert int((npc_d.get("belief_summary", {}) or {}).get("suspicion", 0) or 0) >= 18  # moved toward min_suspicion=50
 
+    # Social triggers should fire once and append to world_events.
+    from engine.npc.npcs import check_social_triggers
+
+    st_tr = initialize_state({"name": "TriggerTest", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_tr.setdefault("npcs", {})["T"] = {
+        "name": "T",
+        "alive": True,
+        "belief_tags": ["Blackmail_Leverage"],
+        "trust": 0,
+        "fear": 80,
+        "belief_summary": {"suspicion": 60, "respect": -40},
+    }
+    fired1 = check_social_triggers(st_tr, "T")
+    assert isinstance(fired1, list) and fired1
+    we = st_tr.get("world_events", []) or []
+    assert isinstance(we, list) and any(isinstance(x, dict) and str(x.get("npc_id", "")) == "T" for x in we)
+    fired2 = check_social_triggers(st_tr, "T")
+    assert fired2 == []
+
     from engine.systems.scenes import advance_scene
 
     r1 = advance_scene(st_del, {"scene_action": "approach"})

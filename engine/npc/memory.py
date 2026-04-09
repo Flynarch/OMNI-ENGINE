@@ -37,6 +37,53 @@ BELIEF_ANCHORS: dict[str, dict[str, int]] = {
 }
 
 
+SOCIAL_THRESHOLDS: dict[str, dict[str, int]] = {
+    "BETRAYAL_RISK": {"suspicion": 90, "trust": 10},
+    "LOYA_REWARD": {"trust": 85, "respect": 60},
+    "SUBMISSIVE_LEAK": {"fear": 70, "respect": -30},
+}
+
+
+def update_belief_summary(state: dict[str, Any], npc_id: str, raw_interaction_text: str) -> bool:
+    """Formal entrypoint: synthesize an anchor-safe belief_summary.text from latest interaction.
+
+    Deterministic: does not call the LLM. It produces a stable, bounded summary string while
+    enforcing that anchors are reflected and never contradicted.
+    """
+    npcs = state.get("npcs", {}) or {}
+    if not isinstance(npcs, dict):
+        return False
+    npc = npcs.get(str(npc_id))
+    if not isinstance(npc, dict):
+        return False
+
+    anchor = get_narrative_anchor_context(state, str(npc_id))
+    tags = npc.get("belief_tags", [])
+    if not isinstance(tags, list):
+        tags = []
+
+    # Build an anchor-locked summary line.
+    raw = str(raw_interaction_text or "").strip()
+    raw = " ".join(raw.split())  # normalize whitespace
+    if len(raw) > 240:
+        raw = raw[:240]
+
+    tag_line = ", ".join([str(x) for x in tags[:4] if str(x).strip()])
+    if tag_line:
+        tag_line = f"Beliefs={tag_line}."
+    else:
+        tag_line = "Beliefs=(none)."
+    # Mandatory constraint: include anchor line when present.
+    text = f"{tag_line} {anchor} LastInteraction: {raw}" if anchor else f"{tag_line} LastInteraction: {raw}"
+
+    bs = npc.setdefault("belief_summary", {})
+    if not isinstance(bs, dict):
+        bs = {}
+        npc["belief_summary"] = bs
+    bs["text"] = text[:360]
+    npc["belief_summary"] = bs
+    return True
+
 def get_behavioral_anchors(state: dict[str, Any], npc_id: str) -> dict[str, int]:
     """Return the most constraining anchor limits for the NPC based on belief_tags."""
     npcs = state.get("npcs", {}) or {}

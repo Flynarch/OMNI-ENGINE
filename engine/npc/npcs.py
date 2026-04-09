@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from engine.npc.memory import SOCIAL_THRESHOLDS, get_npc_social_modifiers, update_belief_summary
+
 
 def _label(score: int) -> str:
     return "Devoted" if score >= 90 else "Friendly" if score >= 70 else "Neutral" if score >= 50 else "Cold" if score >= 30 else "Hostile" if score >= 10 else "Enemy"
@@ -156,6 +158,93 @@ def add_belief_snippet(
     tr += int((rep - 50) / 30) - int((sus - 35) / 25)
     npc["disposition_score"] = _clamp_int(ds, 0, 100)
     npc["trust"] = _clamp_int(tr, 0, 100)
+
+
+def check_social_triggers(state: dict[str, Any], npc_id: str) -> list[str]:
+    """Check SOCIAL_THRESHOLDS and emit one-shot world_events (no spam)."""
+    npcs = state.get("npcs", {}) or {}
+    if not isinstance(npcs, dict):
+        return []
+    npc = npcs.get(str(npc_id))
+    if not isinstance(npc, dict):
+        return []
+
+    active = npc.setdefault("active_triggers", {})
+    if not isinstance(active, dict):
+        active = {}
+        npc["active_triggers"] = active
+
+    # Hybrid view for triggers:
+    # - trust/fear: persistent NPC fields (0..100)
+    # - suspicion: belief_summary.suspicion (0..100)
+    # - respect_coef: from belief tags coefficients (-100..100)
+    sm = get_npc_social_modifiers(state, str(npc_id))
+    respect = int(sm.get("respect", 0) or 0)
+    try:
+        trust = int(npc.get("trust", 50) or 50)
+    except Exception:
+        trust = 50
+    trust = max(0, min(100, trust))
+    try:
+        fear = int(npc.get("fear", 10) or 10)
+    except Exception:
+        fear = 10
+    fear = max(0, min(100, fear))
+    bs = npc.get("belief_summary") if isinstance(npc.get("belief_summary"), dict) else {}
+    if not isinstance(bs, dict):
+        bs = {}
+    try:
+        suspicion = int(bs.get("suspicion", 0) or 0)
+    except Exception:
+        suspicion = 0
+    suspicion = max(0, min(100, suspicion))
+
+    fired: list[str] = []
+    for key, req in SOCIAL_THRESHOLDS.items():
+        if not isinstance(req, dict):
+            continue
+        if key in active:
+            continue
+        ok = True
+        # Explicit semantics per trigger kind (deterministic).
+        if key == "BETRAYAL_RISK":
+            ok = (suspicion >= int(req.get("suspicion", 90) or 90)) and (trust <= int(req.get("trust", 10) or 10))
+        elif key == "LOYA_REWARD":
+            try:
+                rep0 = int(bs.get("respect", 50) or 50)
+            except Exception:
+                rep0 = 50
+            ok = (trust >= int(req.get("trust", 85) or 85)) and (rep0 >= int(req.get("respect", 60) or 60))
+        elif key == "SUBMISSIVE_LEAK":
+            # Requires high fear and very low respect (coefficient).
+            ok = (fear >= int(req.get("fear", 70) or 70)) and (respect <= int(req.get("respect", -30) or -30))
+        else:
+            # Conservative fallback
+            if "suspicion" in req and suspicion < int(req.get("suspicion", 0) or 0):
+                ok = False
+            if "fear" in req and fear < int(req.get("fear", 0) or 0):
+                ok = False
+            if "trust" in req and trust < int(req.get("trust", 0) or 0):
+                ok = False
+            if "respect" in req and respect < int(req.get("respect", -100) or -100):
+                ok = False
+        if not ok:
+            continue
+
+        active[key] = True
+        fired.append(key)
+        state.setdefault("world_events", []).append(
+            {
+                "kind": str(key),
+                "npc_id": str(npc_id),
+                "text": f"[Event] NPC {npc_id} triggered {key} (trust={trust} respect={respect} suspicion={suspicion} fear={fear}).",
+                "day": int((state.get("meta", {}) or {}).get("day", 1) or 1),
+            }
+        )
+        state.setdefault("world_notes", []).append(f"[Trigger] {npc_id}: {key}")
+
+    npc["active_triggers"] = active
+    return fired
 
 
 def apply_beliefs_from_ripple(state: dict[str, Any], rp: dict[str, Any]) -> None:
@@ -377,6 +466,10 @@ def update_npcs(state: dict, action_ctx: dict) -> None:
                                     confidence=0.7,
                                     bias=0.0,
                                 )
+                                try:
+                                    update_belief_summary(state, str(targs[0]), raw_interaction_text=str(action_ctx.get("normalized_input", "") or "social talk"))
+                                except Exception:
+                                    pass
                                 state.setdefault("world_notes", []).append(f"[Gossip] {targs[0]} shares: {txt[:90]}")
                                 action_ctx["npc_gossip"] = txt[:140]
                                 meta["last_gossip_turn"] = turn
@@ -418,6 +511,12 @@ def update_npcs(state: dict, action_ctx: dict) -> None:
 
             apply_social_decay(state, str(name))
             verify_narrative_consistency(state, str(name))
+        except Exception:
+            pass
+
+        # Social triggers (one-shot): convert social coefficients into world_events.
+        try:
+            check_social_triggers(state, str(name))
         except Exception:
             pass
 

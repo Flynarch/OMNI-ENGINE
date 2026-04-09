@@ -117,6 +117,7 @@ def _defaults() -> dict[str, Any]:
         "resolved_ripples": [],
         "resolved_events": [],
         "pending_events": [],
+        "world_events": [],
         "quests": {"active": [], "completed": [], "failed": [], "last_id": 0},
         "world_notes": [],
         "active_scene": None,
@@ -219,6 +220,10 @@ def _migrate_state(state: dict[str, Any]) -> dict[str, Any]:
         pass
     try:
         state.setdefault("quests", {"active": [], "completed": [], "failed": [], "last_id": 0})
+    except Exception:
+        pass
+    try:
+        state.setdefault("world_events", [])
     except Exception:
         pass
     try:
