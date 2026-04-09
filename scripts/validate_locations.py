@@ -8,7 +8,7 @@ sys.path.insert(0, str(ROOT))
 
 
 def main() -> int:
-    from engine.location_presets import LocationPresetError, load_location_preset
+    from engine.world.location_presets import LocationPresetError, load_location_preset
 
     loc_dir = ROOT / "data" / "locations"
     if not loc_dir.exists():

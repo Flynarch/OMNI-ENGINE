@@ -14,25 +14,25 @@ from ai.intent_resolver import resolve_intent
 from ai.parser import apply_memory_hash_to_state, enforce_stop_sequence_output, parse_memory_hash, record_ai_parse_health
 from ai.turn_prompt import build_system_prompt, build_turn_package, get_narration_lang
 from display.renderer import console, render_monitor, stream_render
-from engine.action_intent import parse_action_intent
-from engine.bio import update_bio
-from engine.combat import apply_combat_gates, resolve_combat_after_roll
-from engine.economy import update_economy
-from engine.inventory import update_inventory
-from engine.inventory_ops import apply_inventory_ops
-from engine.modifiers import compute_roll_package, stop_sequence_check
-from engine.npcs import update_npcs
-from engine.skills import update_skills
-from engine.seeds import list_seed_names
-from engine.state import CURRENT, PREVIOUS, backup_state, initialize_state, load_state, save_state
-from engine.timers import update_timers
-from engine.trace import update_trace
-from engine.world import world_tick
-from engine.hacking import apply_hacking_after_roll
-from engine.intimacy import apply_intimacy_aftermath
-from engine.npc_emotions import apply_npc_emotion_after_roll
-from engine.npc_targeting import apply_npc_targeting
-from engine.shop import buy_item, get_capacity_status, list_shop_quotes, sell_item, sell_item_all, sell_item_n, quote_item
+from engine.core.action_intent import parse_action_intent
+from engine.player.bio import update_bio
+from engine.systems.combat import apply_combat_gates, resolve_combat_after_roll
+from engine.player.economy import update_economy
+from engine.player.inventory import update_inventory
+from engine.player.inventory_ops import apply_inventory_ops
+from engine.core.modifiers import compute_roll_package, stop_sequence_check
+from engine.npc.npcs import update_npcs
+from engine.player.skills import update_skills
+from engine.core.seeds import list_seed_names
+from engine.core.state import CURRENT, PREVIOUS, backup_state, initialize_state, load_state, save_state
+from engine.world.timers import update_timers
+from engine.core.trace import update_trace
+from engine.world.world import world_tick
+from engine.systems.hacking import apply_hacking_after_roll
+from engine.systems.intimacy import apply_intimacy_aftermath
+from engine.npc.npc_emotions import apply_npc_emotion_after_roll
+from engine.npc.npc_targeting import apply_npc_targeting
+from engine.systems.shop import buy_item, get_capacity_status, list_shop_quotes, sell_item, sell_item_all, sell_item_n, quote_item
 
 
 def _ask(prompt: str) -> str:
@@ -63,7 +63,7 @@ def _load_occupation_templates() -> list[dict[str, Any]]:
 def _bootstrap_location_input(*, seed_pack: str | None = None) -> str:
     """Location picker with manual override (deterministic normalization remains in engine)."""
     try:
-        from engine.atlas import (
+        from engine.world.atlas import (
             default_city_for_country,
             is_known_place,
             list_known_cities,
@@ -241,7 +241,7 @@ def run_pipeline(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[str,
     roll_pkg = compute_roll_package(state, action_ctx)
     # Skill progression happens after roll resolution (deterministic).
     try:
-        from engine.skills import apply_skill_xp_after_roll
+        from engine.player.skills import apply_skill_xp_after_roll
 
         apply_skill_xp_after_roll(state, action_ctx, roll_pkg)
     except Exception:
@@ -254,6 +254,16 @@ def run_pipeline(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[str,
     apply_npc_emotion_after_roll(state, action_ctx, roll_pkg)
 
     apply_intimacy_aftermath(state, action_ctx, roll_pkg)
+
+    # Social diffusion: gossip about player spreads through NPC network.
+    try:
+        from engine.npc.npc_rumor_system import trigger_rumor_from_action
+        trigger_rumor_from_action(state, action_ctx, roll_pkg)
+        # Apply social memory decay.
+        from engine.social.social_diffusion import apply_social_decays
+        apply_social_decays(state)
+    except Exception:
+        pass
 
     resolve_combat_after_roll(state, action_ctx, roll_pkg)
 
@@ -412,12 +422,101 @@ def _compute_diff(before: dict[str, Any], after: dict[str, Any]) -> dict[str, An
     return out
 
 
+def _scene_blocks_command(state: dict[str, Any], up_cmd: str) -> bool:
+    """Return True if an active scene should block this command."""
+    try:
+        flags = state.get("flags", {}) or {}
+        if not (isinstance(flags, dict) and bool(flags.get("scenes_enabled", True))):
+            return False
+        if not isinstance(state.get("active_scene"), dict):
+            return False
+        if up_cmd == "SCENE" or up_cmd.startswith("SCENE "):
+            return False
+        if up_cmd in ("HELP", "QUIT", "EXIT"):
+            return False
+        return True
+    except Exception:
+        return False
+
+
 def handle_special(state: dict[str, Any], cmd: str) -> bool:
     up = cmd.upper()
+    # Single blocking gatekeeper for scenes (ONE place).
+    if _scene_blocks_command(state, up):
+        console.print("[yellow]Scene active. Use: SCENE | SCENE OPTIONS | SCENE <action>[/yellow]")
+        return True
+
+    if up == "SCENE" or up.startswith("SCENE "):
+        parts = cmd.split(maxsplit=2)
+        sub = parts[1].strip().lower() if len(parts) >= 2 else "status"
+        sc = state.get("active_scene")
+        if not isinstance(sc, dict) or not sc:
+            console.print("[yellow]SCENE: (none active)[/yellow]")
+            return True
+        if sub in ("status", "info"):
+            console.print("[bold]SCENE[/bold]")
+            console.print(f"- type={sc.get('scene_type','-')} phase={sc.get('phase','-')}")
+            exp = sc.get("expires_at") if isinstance(sc.get("expires_at"), dict) else {}
+            if isinstance(exp, dict) and exp:
+                console.print(f"- deadline: day{exp.get('day','?')} t{exp.get('time_min','?')}")
+            return True
+        if sub in ("options", "opts"):
+            opts = sc.get("next_options") or []
+            if not isinstance(opts, list) or not opts:
+                console.print("[yellow]SCENE OPTIONS: (none)[/yellow]")
+                return True
+            console.print("[bold]SCENE OPTIONS[/bold]")
+            for o in opts[:12]:
+                if isinstance(o, str):
+                    console.print(f"- {o}")
+            return True
+
+        # Action (approach/take/abort/wait)
+        act = sub
+        from engine.systems.scenes import advance_scene
+
+        action_ctx: dict[str, Any] = {
+            "action_type": "instant",
+            "domain": "other",
+            "normalized_input": f"scene {act}",
+            "instant_minutes": 2,
+            "stakes": "low",
+            "scene_action": act,
+        }
+        # Optional argument (e.g. SCENE BRIBE 500)
+        if len(parts) >= 3 and isinstance(parts[2], str) and parts[2].strip():
+            action_ctx["scene_arg"] = parts[2].strip()
+            if act in ("bribe",):
+                try:
+                    action_ctx["bribe_amount"] = int(parts[2].strip())
+                except Exception:
+                    action_ctx["bribe_amount"] = 0
+        res = advance_scene(state, action_ctx)
+        if not bool(res.get("ok")):
+            console.print(f"[red]SCENE failed[/red] {res.get('reason','error')}")
+            return True
+        # WAIT consumes 5 minutes by spec.
+        if act in ("wait",) and bool(res.get("ok")):
+            action_ctx["instant_minutes"] = 5
+        try:
+            run_pipeline(state, action_ctx)
+        except Exception:
+            pass
+        if bool(res.get("ended")):
+            console.print("[green]SCENE resolved[/green]")
+        else:
+            console.print(f"[green]SCENE OK[/green] phase={res.get('phase_after', '-')}")
+        # Show any engine messages for clarity.
+        for m in (res.get("messages") or [])[:4]:
+            if isinstance(m, str) and m.strip():
+                console.print(f"[dim]- {m}[/dim]")
+        return True
+
     if up == "HELP":
         console.print("[bold]HELP — Commands[/bold]")
         console.print("[dim]Core[/dim]")
         console.print("- HELP")
+        console.print("- SCENE | SCENE OPTIONS | SCENE <action>  (contextual; see SCENE OPTIONS)")
         console.print("- QUEST")
         console.print("- ATLAS [country]")
         console.print("- COUNTRIES")
@@ -430,6 +529,7 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         console.print("- UNDO  (Normal only)")
         console.print("- SAVE STATE")
         console.print("- SHOWER | HYGIENE | MANDI  (reset hygiene clock, ~15m)")
+        console.print("- RELOAD  (fill active firearm mag from reserve ammo)")
         console.print("- WORLD_BRIEF")
         console.print("- INTENT_DEBUG")
         console.print("")
@@ -439,11 +539,28 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         console.print("- HEAT")
         console.print("- OFFERS [role]   (contoh: OFFERS fixer)")
         console.print("- MARKET")
+        console.print("- SAFEHOUSE stash putammo <ammo_id> <rounds> | stash takeammo <ammo_id> <rounds>")
+        console.print("- SAFEHOUSE raid comply|hide|bribe <amt>|flee|negotiate|show_permit  (respon saat ada pending raid)")
+        console.print("- SAFEHOUSE burn  (abandon safehouse, clear stash)")
         console.print("- BANK status|deposit <n>|withdraw <n>")
         console.print("- STAY status|hotel|boarding|suite <nights>")
         console.print("[dim]  boarding = budget/shared room (Indonesian: kost); aliases: kos kost dorm hostel guesthouse[/dim]")
         console.print("- NPCSIM_STATS")
         console.print("- WHEREAMI")
+        console.print("")
+        console.print("[dim]Districts & Intra-city[/dim]")
+        console.print("- DISTRICTS        (list districts in current city)")
+        console.print("- TRAVELTO <id>    (travel to a district within the city)")
+        console.print("")
+        console.print("[dim]Vehicles[/dim]")
+        console.print("- MYCAR            (list owned vehicles)")
+        console.print("- BUYVEHICLE <type> (bicycle|motorcycle|car_standard|car_sports|car_van)")
+        console.print("- SELLVEHICLE <type>")
+        console.print("- USEVEHICLE <type>|OFF   (set active vehicle for TRAVEL)")
+        console.print("- DRIVE <dest> [type]     (travel using vehicle; uses active if omitted)")
+        console.print("- REFUEL <type> [amount]")
+        console.print("- REPAIR <type> [amount]")
+        console.print("- STEALVEHICLE <type>  (illegal!)")
         console.print("")
         console.print("[dim]Aliases[/dim]")
         console.print("- T <dest>  => travel <dest>")
@@ -465,6 +582,29 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         except Exception:
             console.print("[red]SHOWER error.[/red]")
         return True
+    if up == "RELOAD":
+        try:
+            from engine.core.reload import try_reload
+
+            r = try_reload(state)
+            if r.get("ok"):
+                console.print(
+                    f"[green]Reload +{r.get('loaded')} (mag {r.get('mag_after')} / reserve {r.get('reserve_after')}).[/green]"
+                )
+            else:
+                console.print(f"[yellow]Reload tidak jalan: {r.get('reason')}[/yellow]")
+            ctx = {
+                "action_type": "instant",
+                "domain": "combat",
+                "social_mode": "conflict",
+                "normalized_input": "reload",
+                "instant_minutes": 2,
+                "stakes": "low",
+            }
+            run_pipeline(state, ctx)
+        except Exception:
+            console.print("[red]RELOAD error.[/red]")
+        return True
     if up == "ATLAS" or up.startswith("ATLAS "):
         parts = cmd.split(maxsplit=2)
         world = state.get("world", {}) or {}
@@ -485,7 +625,7 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
 
         want = parts[1].strip().lower() if len(parts) >= 2 else ""
         try:
-            from engine.atlas import ensure_country_profile, ensure_location_profile
+            from engine.world.atlas import ensure_country_profile, ensure_location_profile
 
             if not want:
                 # Default to player's current country.
@@ -508,7 +648,7 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         return True
     if up == "COUNTRIES":
         try:
-            from engine.atlas import list_known_countries
+            from engine.world.atlas import list_known_countries
 
             xs = list_known_countries()
             console.print("[bold]COUNTRIES[/bold]")
@@ -521,7 +661,7 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         parts = cmd.split(maxsplit=2)
         want = parts[1].strip() if len(parts) >= 2 else ""
         try:
-            from engine.atlas import default_city_for_country, list_known_cities, normalize_country_name
+            from engine.world.atlas import default_city_for_country, list_known_cities, normalize_country_name
 
             if want:
                 c = normalize_country_name(want)
@@ -546,7 +686,7 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         return True
     if up == "LANGS":
         try:
-            from engine.language import communication_quality, player_language_proficiency
+            from engine.core.language import communication_quality, player_language_proficiency
 
             p = state.get("player", {}) or {}
             loc = str(p.get("location", "") or "").strip().lower()
@@ -574,7 +714,7 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         code = parts[1].strip().lower()
         method = parts[2].strip().lower() if len(parts) >= 3 else "class"
         try:
-            from engine.language_learning import learn_language
+            from engine.player.language_learning import learn_language
 
             # Preview first (no mutation) so we can validate cash/items/region safely.
             res0 = learn_language(state, code, method=method, preview=True)
@@ -608,7 +748,7 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                 run_pipeline(state, ctx)
             except Exception:
                 # Fallback: no pipeline, but still move time.
-                from engine.timers import update_timers
+                from engine.world.timers import update_timers
 
                 update_timers(state, {"action_type": "instant", "instant_minutes": mins})
 
@@ -628,7 +768,7 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         arg = parts[1].strip()
         if arg.lower() in ("off", "stop", "none"):
             try:
-                from engine.disguise import deactivate_disguise
+                from engine.systems.disguise import deactivate_disguise
 
                 deactivate_disguise(state, reason="manual")
             except Exception:
@@ -636,7 +776,7 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             console.print("[green]DISGUISE off.[/green]")
             return True
         try:
-            from engine.disguise import activate_disguise
+            from engine.systems.disguise import activate_disguise
 
             ok = activate_disguise(state, arg)
             if not ok:
@@ -647,19 +787,26 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             console.print("[red]DISGUISE error.[/red]")
         return True
     if up == "SAFEHOUSE" or up.startswith("SAFEHOUSE "):
-        parts = cmd.split(maxsplit=3)
+        parts = cmd.split(maxsplit=5)
         sub = parts[1].strip().lower() if len(parts) >= 2 else "status"
         try:
-            from engine.safehouse import ensure_safehouse_here, rent_here, buy_here, upgrade_security
+            from engine.systems.safehouse import ensure_safehouse_here, rent_here, buy_here, upgrade_security
 
             row = ensure_safehouse_here(state)
             if sub in ("status", "info"):
                 console.print("[bold]SAFEHOUSE[/bold]")
                 console.print(f"- loc={str((state.get('player',{}) or {}).get('location','-'))}")
                 console.print(f"- status={row.get('status','none')} rent_per_day={row.get('rent_per_day',0)} security=L{row.get('security_level',1)} delinquent={row.get('delinquent_days',0)}")
+                if row.get("last_raid_day"):
+                    console.print(f"- raid: last_day={row.get('last_raid_day')} count={row.get('raid_count',0)} cooldown_until_day={row.get('raid_cooldown_until_day',0)}")
                 st = row.get("stash") or []
                 if isinstance(st, list) and st:
                     console.print(f"- stash({len(st)}): " + ", ".join([str(x) for x in st[:10]]) + (" ..." if len(st) > 10 else ""))
+                sa = row.get("stash_ammo") or {}
+                if isinstance(sa, dict) and sa:
+                    items = [f"{k}={int(v or 0)}" for k, v in list(sa.items())[:8] if str(k).strip()]
+                    if items:
+                        console.print("- stash_ammo: " + ", ".join(items) + (" ..." if len(sa) > 8 else ""))
                 return True
             if sub == "rent":
                 ok = rent_here(state)
@@ -676,31 +823,128 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             if sub == "stash" and len(parts) >= 4:
                 act = parts[2].strip().lower()
                 item = parts[3].strip()
-                stash = row.setdefault("stash", [])
-                if not isinstance(stash, list):
-                    stash = []
-                    row["stash"] = stash
-                inv = state.get("inventory", {}) or {}
-                bag = inv.get("bag_contents", []) or []
+                # Ammo stash ops: SAFEHOUSE stash putammo <ammo_id> <rounds> | takeammo <ammo_id> <rounds>
+                if act in ("putammo", "storeammo", "ammo_put") and len(parts) >= 5:
+                    aid = item
+                    try:
+                        n = int(parts[4].strip())
+                    except Exception:
+                        n = 0
+                    try:
+                        from engine.systems.safehouse_stash import stash_put_ammo
+
+                        r = stash_put_ammo(state, aid, rounds=n)
+                        if r.get("ok"):
+                            console.print(f"[green]STASH ammo put {aid} -{r.get('rounds')}[/green]")
+                        else:
+                            console.print(f"[red]STASH ammo put gagal: {r.get('reason','error')}[/red]")
+                    except Exception:
+                        console.print("[red]STASH ammo put error.[/red]")
+                    return True
+                if act in ("takeammo", "getammo", "ammo_take") and len(parts) >= 5:
+                    aid = item
+                    try:
+                        n = int(parts[4].strip())
+                    except Exception:
+                        n = 0
+                    try:
+                        from engine.systems.safehouse_stash import stash_take_ammo
+
+                        r = stash_take_ammo(state, aid, rounds=n)
+                        if r.get("ok"):
+                            console.print(f"[green]STASH ammo take {aid} +{r.get('rounds')}[/green]")
+                        else:
+                            console.print(f"[red]STASH ammo take gagal: {r.get('reason','error')}[/red]")
+                    except Exception:
+                        console.print("[red]STASH ammo take error.[/red]")
+                    return True
                 if act in ("put", "store"):
-                    if isinstance(bag, list) and item in [str(x) for x in bag]:
-                        inv["bag_contents"] = [x for x in bag if str(x) != item]
-                        stash.append(item)
-                        console.print(f"[green]STASH put {item}[/green]")
-                    else:
-                        console.print("[red]Item tidak ada di bag.[/red]")
+                    try:
+                        from engine.systems.safehouse_stash import stash_put_from_bag
+
+                        r = stash_put_from_bag(state, item)
+                        if r.get("ok"):
+                            console.print(f"[green]STASH put {item}[/green]")
+                        else:
+                            console.print(f"[red]STASH put gagal: {r.get('reason','error')}[/red]")
+                    except Exception:
+                        console.print("[red]STASH put error.[/red]")
                     return True
                 if act in ("take", "get"):
-                    if item in [str(x) for x in stash]:
-                        row["stash"] = [x for x in stash if str(x) != item]
-                        if isinstance(bag, list):
-                            bag.append(item)
-                            inv["bag_contents"] = bag[-40:]
-                        console.print(f"[green]STASH take {item}[/green]")
-                    else:
-                        console.print("[red]Item tidak ada di stash.[/red]")
+                    try:
+                        from engine.systems.safehouse_stash import stash_take_to_bag
+
+                        r = stash_take_to_bag(state, item)
+                        if r.get("ok"):
+                            console.print(f"[green]STASH take {item}[/green]")
+                        else:
+                            console.print(f"[red]STASH take gagal: {r.get('reason','error')}[/red]")
+                    except Exception:
+                        console.print("[red]STASH take error.[/red]")
                     return True
-            console.print("[yellow]Pakai: SAFEHOUSE status|rent|buy|upgrade|stash put <id>|stash take <id>[/yellow]")
+            if sub == "raid" and len(parts) >= 3:
+                act = parts[2].strip().lower()
+                amt = 0
+                if act in ("bribe", "pay", "suap") and len(parts) >= 4:
+                    try:
+                        amt = int(parts[3].strip())
+                    except Exception:
+                        amt = 0
+                try:
+                    from engine.systems.safehouse_raid import set_pending_raid_response
+
+                    r = set_pending_raid_response(state, action=act, bribe_amount=amt)
+                    if r.get("ok"):
+                        console.print(f"[green]SAFEHOUSE RAID set: {r.get('action')} bribe={r.get('bribe_amount',0)}[/green]")
+                        # Spend some time reacting.
+                        mins = 3
+                        if str(r.get("action")) == "hide":
+                            mins = 6
+                        elif str(r.get("action")) == "flee":
+                            mins = 5
+                        elif str(r.get("action")) == "bribe":
+                            mins = 4
+                            # Pay bribe upfront.
+                            eco = state.setdefault("economy", {})
+                            cash = int(eco.get("cash", 0) or 0)
+                            if cash >= amt and amt > 0:
+                                eco["cash"] = cash - amt
+                            else:
+                                console.print("[yellow]Bribe amount invalid / cash kurang; tetap dicatat sebagai attempt.[/yellow]")
+                        try:
+                            run_pipeline(
+                                state,
+                                {
+                                    "action_type": "instant",
+                                    "domain": "other",
+                                    "normalized_input": f"safehouse raid {r.get('action')}",
+                                    "instant_minutes": mins,
+                                    "stakes": "medium",
+                                },
+                            )
+                        except Exception:
+                            pass
+                    else:
+                        console.print(f"[red]SAFEHOUSE RAID gagal: {r.get('reason','error')}[/red]")
+                except Exception:
+                    console.print("[red]SAFEHOUSE RAID error.[/red]")
+                return True
+            if sub in ("burn", "abandon"):
+                # Burn the current safehouse: clear stash and disable safehouse status (you lose it).
+                try:
+                    row["stash"] = []
+                    row["status"] = "none"
+                    row["rent_per_day"] = 0
+                    row["delinquent_days"] = 0
+                    row["raid_cooldown_until_day"] = 0
+                    state.setdefault("world_notes", []).append(
+                        f"[Safehouse] BURN safehouse @ {str((state.get('player',{}) or {}).get('location','-'))}"
+                    )
+                    console.print("[yellow]SAFEHOUSE burned: stash cleared, status set to none.[/yellow]")
+                except Exception:
+                    console.print("[red]SAFEHOUSE burn error.[/red]")
+                return True
+            console.print("[yellow]Pakai: SAFEHOUSE status|rent|buy|upgrade|stash put <id>|stash take <id>|stash putammo <ammo_id> <rounds>|stash takeammo <ammo_id> <rounds>|raid comply|hide|bribe <amt>|flee|negotiate|show_permit|burn[/yellow]")
         except Exception:
             console.print("[red]SAFEHOUSE error.[/red]")
         return True
@@ -708,7 +952,7 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         parts = cmd.split(maxsplit=2)
         sub = parts[1].strip().lower() if len(parts) >= 2 else "status"
         try:
-            from engine.banking import bank_aml_snapshot, bank_deposit, bank_withdraw
+            from engine.player.banking import bank_aml_snapshot, bank_deposit, bank_withdraw
 
             econ = state.setdefault("economy", {})
             cash = int(econ.get("cash", 0) or 0)
@@ -787,7 +1031,7 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         parts = cmd.split(maxsplit=3)
         sub = parts[1].strip().lower() if len(parts) >= 2 else "status"
         try:
-            from engine.accommodation import get_stay_here, nightly_rate, stay_checkin, normalize_stay_kind, stay_kind_label, stay_help_aliases
+            from engine.systems.accommodation import get_stay_here, nightly_rate, stay_checkin, normalize_stay_kind, stay_kind_label, stay_help_aliases
 
             loc = str((state.get("player", {}) or {}).get("location", "") or "").strip() or "-"
             if sub in ("status", "info"):
@@ -846,7 +1090,7 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         return True
     if up == "WEATHER":
         try:
-            from engine.weather import ensure_weather
+            from engine.world.weather import ensure_weather
 
             meta = state.get("meta", {}) or {}
             day = int(meta.get("day", 1) or 1)
@@ -858,6 +1102,255 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             console.print(f"[bold]WEATHER[/bold] {loc}: {w.get('kind','-')} (day {day})")
         except Exception:
             console.print("[red]WEATHER error.[/red]")
+            return True
+    # DISTRICT COMMANDS
+    if up == "DISTRICTS" or up == "DISTRICT":
+        try:
+            from engine.world.districts import describe_location, list_districts
+            
+            loc = str((state.get("player", {}) or {}).get("location", "") or "").strip()
+            if not loc:
+                console.print("[yellow]DISTRICTS: No current location.[/yellow]")
+                return True
+            
+            # Show current location description
+            current_desc = describe_location(state)
+            console.print(f"[bold]Current:[/bold] {current_desc}")
+            console.print("")
+            
+            # List all districts in current city
+            districts = list_districts(state, loc)
+            console.print("[bold]DISTRICTS in this city:[/bold]")
+            for d in districts:
+                is_center = " [yellow](city center)[/yellow]" if d.get("is_center") else ""
+                console.print(f"- {d.get('name','?')} ({d.get('id','?')}){is_center}")
+                console.print(f"  {d.get('desc','-')}")
+                services = d.get("services", [])
+                console.print(f"  Services: {', '.join(services) if services else 'none'}")
+                console.print(f"  Crime={d.get('crime_risk',3)}/5 Police={d.get('police_presence',3)}/5")
+        except Exception:
+            console.print("[red]DISTRICTS error.[/red]")
+        return True
+    # VEHICLE COMMANDS
+    if up == "MYCAR" or up == "MYVEHICLE" or up == "VEHICLES":
+        try:
+            from engine.systems.vehicles import list_owned_vehicles, VEHICLE_TYPES
+            
+            vehicles = list_owned_vehicles(state)
+            console.print("[bold]VEHICLES[/bold]")
+            if not vehicles:
+                console.print("[dim]No vehicles owned. Use BUYVEHICLE to purchase.[/dim]")
+                console.print("[dim]Available types: bicycle, motorcycle, car_standard, car_sports, car_van[/dim]")
+                return True
+            
+            for v in vehicles:
+                stolen = " [red](STOLEN)[/red]" if v.get("stolen") else ""
+                fuel_status = f"fuel={v.get('fuel', 0)}"
+                cond = v.get("condition", 100)
+                cond_color = "green" if cond > 70 else ("yellow" if cond > 30 else "red")
+                console.print(f"- {v.get('name','?')} {fuel_status} cond=[{cond_color}]{cond}[/{cond_color}]{stolen}")
+        except Exception:
+            console.print("[red]MYCAR error.[/red]")
+        return True
+    if up == "BUYVEHICLE" or up.startswith("BUYVEHICLE "):
+        try:
+            from engine.systems.vehicles import buy_vehicle, VEHICLE_TYPES
+            
+            parts = cmd.split(maxsplit=2)
+            if len(parts) < 2:
+                console.print("[yellow]Usage: BUYVEHICLE <type>[/yellow]")
+                console.print("[dim]Types: bicycle, motorcycle, car_standard, car_sports, car_van[/dim]")
+                return True
+            
+            vtype = parts[1].strip().lower()
+            result = buy_vehicle(state, vtype)
+            
+            if not result.get("ok"):
+                console.print(f"[red]BUYVEHICLE failed: {result.get('message', result.get('reason','error'))}[/red]")
+                if result.get("reason") == "not_enough_cash":
+                    console.print(f"[yellow]Need: {result.get('need')} | Have: {result.get('cash')}[/yellow]")
+            else:
+                console.print(f"[green]BUYVEHICLE OK[/green] {result.get('name')} for {result.get('price')} cash. Remaining: {result.get('cash_remaining')}")
+        except Exception:
+            console.print("[red]BUYVEHICLE error.[/red]")
+        return True
+    if up == "SELLVEHICLE" or up.startswith("SELLVEHICLE "):
+        try:
+            from engine.systems.vehicles import sell_vehicle
+            
+            parts = cmd.split(maxsplit=2)
+            if len(parts) < 2:
+                console.print("[yellow]Usage: SELLVEHICLE <type>[/yellow]")
+                return True
+            
+            vtype = parts[1].strip().lower()
+            result = sell_vehicle(state, vtype)
+            
+            if not result.get("ok"):
+                console.print(f"[red]SELLVEHICLE failed: {result.get('reason','error')}[/red]")
+            else:
+                console.print(f"[green]SELLVEHICLE OK[/green] Sold for {result.get('price')}. Cash: {result.get('cash')}")
+        except Exception:
+            console.print("[red]SELLVEHICLE error.[/red]")
+        return True
+    if up == "REFUEL" or up.startswith("REFUEL "):
+        try:
+            from engine.systems.vehicles import refuel_vehicle
+            
+            parts = cmd.split(maxsplit=3)
+            if len(parts) < 2:
+                console.print("[yellow]Usage: REFUEL <type> [amount][/yellow]")
+                return True
+            
+            vtype = parts[1].strip().lower()
+            amount = int(parts[2].strip()) if len(parts) >= 3 else None
+            result = refuel_vehicle(state, vtype, amount)
+            
+            if not result.get("ok"):
+                console.print(f"[red]REFUEL failed: {result.get('reason','error')}[/red]")
+            else:
+                console.print(f"[green]REFUEL OK[/green] +{result.get('fuel_added')} fuel. Now: {result.get('fuel_now')}. Cost: {result.get('cost')}")
+        except Exception:
+            console.print("[red]REFUEL error.[/red]")
+        return True
+    if up == "REPAIR" or up.startswith("REPAIR "):
+        try:
+            from engine.systems.vehicles import repair_vehicle
+            
+            parts = cmd.split(maxsplit=3)
+            if len(parts) < 2:
+                console.print("[yellow]Usage: REPAIR <type> [amount][/yellow]")
+                return True
+            
+            vtype = parts[1].strip().lower()
+            amount = int(parts[2].strip()) if len(parts) >= 3 else None
+            result = repair_vehicle(state, vtype, amount)
+            
+            if not result.get("ok"):
+                console.print(f"[red]REPAIR failed: {result.get('reason','error')}[/red]")
+            else:
+                console.print(f"[green]REPAIR OK[/green] +{result.get('repaired')} condition. Now: {result.get('condition_now')}%. Cost: {result.get('cost')}")
+        except Exception:
+            console.print("[red]REPAIR error.[/red]")
+        return True
+    if up == "STEALVEHICLE" or up.startswith("STEALVEHICLE "):
+        try:
+            from engine.systems.vehicles import steal_vehicle
+            
+            parts = cmd.split(maxsplit=2)
+            if len(parts) < 2:
+                console.print("[yellow]Usage: STEALVEHICLE <type>[/yellow]")
+                console.print("[red]Warning: Illegal! May increase trace.[/red]")
+                return True
+            
+            vtype = parts[1].strip().lower()
+            console.print("[yellow]Attempting to steal...[/yellow]")
+            result = steal_vehicle(state, vtype)
+            
+            if not result.get("ok"):
+                if result.get("caught"):
+                    console.print(f"[red]CAUGHT![/red] Trace +{result.get('trace_added')}. Roll: {result.get('roll')} vs Difficulty: {result.get('difficulty')}")
+                else:
+                    console.print(f"[red]STEALVEHICLE failed: {result.get('reason','error')}[/red]")
+            else:
+                console.print(f"[green]STEALVEHICLE OK[/green] Stole {result.get('name')}! Condition: {result.get('condition')}%")
+        except Exception:
+            console.print("[red]STEALVEHICLE error.[/red]")
+        return True
+    if up == "USEVEHICLE" or up.startswith("USEVEHICLE "):
+        try:
+            from engine.systems.vehicles import set_active_vehicle
+
+            parts = cmd.split(maxsplit=2)
+            if len(parts) < 2:
+                console.print("[yellow]Usage: USEVEHICLE <type>|OFF[/yellow]")
+                return True
+            arg = parts[1].strip().lower()
+            if arg in ("off", "none", "-", "no"):
+                r = set_active_vehicle(state, "")
+            else:
+                r = set_active_vehicle(state, arg)
+            if r.get("ok"):
+                av = r.get("active_vehicle_id") or "(none)"
+                console.print(f"[green]Active vehicle set:[/green] {av}")
+            else:
+                console.print(f"[red]USEVEHICLE failed:[/red] {r.get('reason','error')}")
+        except Exception:
+            console.print("[red]USEVEHICLE error.[/red]")
+        return True
+    if up == "DRIVE" or up.startswith("DRIVE "):
+        try:
+            parts = cmd.split(maxsplit=2)
+            if len(parts) < 2:
+                console.print("[yellow]Usage: DRIVE <dest> [vehicle_type][/yellow]")
+                return True
+            tail = parts[1].strip() if len(parts) == 2 else parts[2].strip()
+            toks = tail.split()
+            dest = tail
+            vid = ""
+            if len(toks) >= 2:
+                # last token could be vehicle id
+                cand = toks[-1].strip().lower()
+                try:
+                    from engine.systems.vehicles import VEHICLE_TYPES
+
+                    if cand in VEHICLE_TYPES:
+                        vid = cand
+                        dest = " ".join(toks[:-1]).strip()
+                except Exception:
+                    pass
+            ctx = {
+                "action_type": "travel",
+                "domain": "evasion",
+                "normalized_input": f"drive {dest}",
+                "travel_destination": dest,
+                "travel_minutes": 30,
+                "stakes": "low",
+            }
+            if vid:
+                ctx["vehicle_id"] = vid
+            run_pipeline(state, ctx)
+            console.print(f"[green]DRIVE queued.[/green] dest={dest}" + (f" vehicle={vid}" if vid else ""))
+        except Exception:
+            console.print("[red]DRIVE error.[/red]")
+        return True
+    if up == "TRAVELTO" or up.startswith("TRAVELTO "):
+        try:
+            from engine.world.districts import travel_within_city
+            
+            parts = cmd.split(maxsplit=1)
+            if len(parts) < 2:
+                console.print("[yellow]Usage: TRAVELTO <district_id>[/yellow]")
+                console.print("[dim]Use DISTRICTS to see available districts.[/dim]")
+                return True
+            
+            target = parts[1].strip().lower()
+            result = travel_within_city(state, target)
+            
+            if not result.get("ok"):
+                console.print(f"[red]{result.get('message','Error')}[/red]")
+            else:
+                console.print(f"[green]{result.get('message','')}[/green]")
+                if result.get("encounter"):
+                    enc = result["encounter"]
+                    if enc.get("type") == "crime":
+                        console.print(f"[yellow]Warning: Crime risk {enc.get('risk')}/5 in this area![/yellow]")
+                    elif enc.get("type") == "police":
+                        console.print(f"[yellow]Warning: Heavy police presence in this area![/yellow]")
+        except Exception:
+            console.print("[red]TRAVELTO error.[/red]")
+        return True
+    if up == "WHEREAMI":
+        try:
+            from engine.world.districts import describe_location
+            
+            current_desc = describe_location(state)
+            console.print(f"[bold]WHEREAMI[/bold]")
+            console.print(current_desc)
+        except Exception:
+            # Fallback to basic location
+            loc = str((state.get("player", {}) or {}).get("location", "") or "-").strip()
+            console.print(f"[bold]WHEREAMI[/bold] {loc}")
         return True
     if up == "SKILLS":
         sk = state.get("skills", {}) or {}
@@ -1075,6 +1568,79 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             for line in out[:25]:
                 console.print(line)
         return True
+    if up == "INFORMANTS" or up.startswith("INFORMANTS "):
+        try:
+            from engine.social.informants import seed_informant_roster
+
+            loc = str((state.get("player", {}) or {}).get("location", "") or "").strip().lower()
+            did = str((state.get("player", {}) or {}).get("district", "") or "").strip().lower()
+            seed_informant_roster(state, loc=loc, district=did)
+            roster = ((state.get("world", {}) or {}).get("informant_roster", {}) or {})
+            inf = ((state.get("world", {}) or {}).get("informants", {}) or {})
+            key = loc + ("|" + did if did else "")
+            row = roster.get(key) if isinstance(roster, dict) else None
+            names = (row.get("names") if isinstance(row, dict) else []) or []
+            if not isinstance(names, list) or not names:
+                console.print("[yellow]INFORMANTS: tidak ada roster (seed NPC dulu / content pack belum ada).[/yellow]")
+                return True
+            tbl = Table(title=f"INFORMANTS @ {key}")
+            tbl.add_column("name", no_wrap=True)
+            tbl.add_column("aff", no_wrap=True)
+            tbl.add_column("reliability", justify="right")
+            tbl.add_column("greed", justify="right")
+            for nm in names[:12]:
+                prof = inf.get(nm) if isinstance(inf, dict) else {}
+                if not isinstance(prof, dict):
+                    prof = {}
+                tbl.add_row(
+                    str(nm),
+                    str(prof.get("affiliation", "-")),
+                    str(int(prof.get("reliability", 50) or 50)),
+                    str(int(prof.get("greed", 40) or 40)),
+                )
+            console.print(tbl)
+            console.print("[dim]Commands: INFORMANT PAY <name> <amount> | INFORMANT BURN <name>[/dim]")
+        except Exception:
+            console.print("[red]INFORMANTS error.[/red]")
+        return True
+    if up == "INFORMANT" or up.startswith("INFORMANT "):
+        try:
+            from engine.social.informant_ops import pay_informant, burn_informant
+
+            parts = cmd.split(maxsplit=3)
+            if len(parts) < 3:
+                console.print("[yellow]Usage: INFORMANT PAY <name> <amount> | INFORMANT BURN <name>[/yellow]")
+                return True
+            act = parts[1].strip().lower()
+            name = parts[2].strip()
+            if act == "pay":
+                if len(parts) < 4:
+                    console.print("[yellow]Usage: INFORMANT PAY <name> <amount>[/yellow]")
+                    return True
+                try:
+                    amt = int(parts[3].strip())
+                except Exception:
+                    amt = 0
+                r = pay_informant(state, name, amt)
+                if not r.get("ok"):
+                    console.print(f"[red]PAY failed:[/red] {r.get('reason','error')}")
+                else:
+                    console.print(f"[green]PAY OK[/green] cash {r.get('cash_delta')} reliability {r.get('reliability_before')}→{r.get('reliability_after')}")
+                return True
+            if act == "burn":
+                r = burn_informant(state, name)
+                if not r.get("ok"):
+                    console.print(f"[red]BURN failed:[/red] {r.get('reason','error')}")
+                else:
+                    msg = "BURN OK"
+                    if r.get("backlash_scheduled"):
+                        msg += " (backlash: npc_report scheduled)"
+                    console.print(f"[green]{msg}[/green] roll={r.get('backlash_roll')} chance={r.get('backlash_chance')}")
+                return True
+            console.print("[red]Unknown INFORMANT action. Use PAY/BURN.[/red]")
+        except Exception:
+            console.print("[red]INFORMANT error.[/red]")
+        return True
     if up == "NPC" or up.startswith("NPC "):
         parts = cmd.split(maxsplit=2)
         if len(parts) < 2:
@@ -1086,6 +1652,11 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             console.print(f"[red]NPC tidak ditemukan: {name}[/red]")
             return True
         npc = npcs.get(name) or {}
+        if isinstance(npc, dict) and (npc.get("alive") is False or int(npc.get("hp", 1) or 1) <= 0):
+            console.print(f"[bold]NPC: {name}[/bold] [red](DEAD)[/red]")
+            console.print(f"- reason={npc.get('dead_reason','unknown')} dead_turn={npc.get('dead_turn','-')}")
+            console.print(f"- loc={npc.get('current_location', npc.get('home_location','-'))} home={npc.get('home_location','-')}")
+            return True
         bs = npc.get("belief_summary") or {}
         if not isinstance(bs, dict):
             bs = {}
@@ -1273,7 +1844,9 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             stock = "OK" if q.available else "SOLD OUT"
             tbl.add_row(str(i), q.item_id, q.name, q.category, stock, str(q.buy_price), str(q.sell_price))
         console.print(tbl)
-        console.print("[dim]Use: SHOP [role] [tag <x>] [available] [page N] | BUY <item_id> [xN] [bag|pocket] | SELL <item_id> [ALL] | PRICE <item_id>[/dim]")
+        console.print(
+            "[dim]Use: SHOP [role] [tag <x>] [available] [page N] | BUY <item_id> [xN] [bag|pocket] [counter|dead_drop|courier] | SELL <item_id> [ALL] | PRICE <item_id>[/dim]"
+        )
         return True
     if up == "PRICE" or up.startswith("PRICE "):
         parts = cmd.split(maxsplit=2)
@@ -1293,13 +1866,14 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             console.print(f"- stock=SOLD OUT ({q.sold_out_reason})")
         return True
     if up == "BUY" or up.startswith("BUY "):
-        parts = cmd.split(maxsplit=4)
+        parts = cmd.split(maxsplit=5)
         if len(parts) < 2:
-            console.print("[yellow]Usage: BUY <item_id> [xN] [bag|pocket][/yellow]")
+            console.print("[yellow]Usage: BUY <item_id> [xN] [bag|pocket] [counter|dead_drop|courier][/yellow]")
             return True
         iid = parts[1].strip()
         qty = 1
         prefer = "bag"
+        delivery = "counter"
         for tok in parts[2:]:
             t = str(tok).strip().lower()
             if t.startswith("x") and len(t) >= 2:
@@ -1309,12 +1883,14 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                     qty = 1
             elif t in ("bag", "pocket"):
                 prefer = t
+            elif t in ("counter", "dead_drop", "deaddrop", "dead", "drop", "courier", "meet"):
+                delivery = t
 
         bought = 0
         last_err = None
         last_res = None
         for _ in range(qty):
-            res = buy_item(state, iid, prefer=prefer)
+            res = buy_item(state, iid, prefer=prefer, delivery=delivery)
             last_res = res
             if not bool(res.get("ok")):
                 last_err = res
@@ -1340,6 +1916,11 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         q = (last_res or {}).get("quote")
         cash_after = (last_res or {}).get("cash_after")
         placed = (last_res or {}).get("placed_to", prefer)
+        if placed == "delivery_pending":
+            d = (last_res or {}).get("delivery", "?")
+            due = (last_res or {}).get("delivery_due_in_min", "?")
+            fee = (last_res or {}).get("delivery_fee", 0)
+            console.print(f"[yellow]Delivery scheduled[/yellow] via={d} fee={fee} due~{due}min (pickup required)")
         if bought == 1 and q:
             console.print(f"[green]BUY OK[/green] {q.item_id} price={q.buy_price} cash={cash_after} to={placed}")
         elif q:
@@ -1422,7 +2003,7 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         console.print(f"- loc={p.get('location','-')} year={p.get('year','-')} seed={state.get('meta',{}).get('seed_pack','-')}")
         # Location profile (culture/econ/law background).
         try:
-            from engine.atlas import ensure_location_profile, fmt_profile_short
+            from engine.world.atlas import ensure_location_profile, fmt_profile_short
 
             loc = str(p.get("location", "") or "").strip()
             if loc:
@@ -1457,6 +2038,11 @@ def main() -> None:
         cmd = _expand_alias(_ask("> "))
         if not cmd:
             continue
+        # Global scene blocker (non-special path).
+        up0 = cmd.upper()
+        if _scene_blocks_command(state, up0):
+            console.print("[yellow]Scene active. Use: SCENE | SCENE OPTIONS | SCENE <action>[/yellow]")
+            continue
         if handle_special(state, cmd):
             continue
 
@@ -1465,33 +2051,27 @@ def main() -> None:
         # 1) Intent resolution: prefer LLM, fallback to heuristic parser.
         intent = resolve_intent(state, cmd)
         if intent:
+            from engine.core.action_intent import apply_step_to_action_ctx, merge_intent_into_action_ctx, select_best_step
+
             action_ctx = parse_action_intent(cmd)
-            for key in (
-                "action_type",
-                "domain",
-                "combat_style",
-                "social_mode",
-                "social_context",
-                "intent_note",
-                "targets",
-                "stakes",
-                "risk_level",
-                "time_cost_min",
-                "travel_destination",
-                "inventory_ops",
-                "accommodation_intent",
-            ):
-                if key in intent and intent[key] is not None:
-                    action_ctx[key] = intent[key]
-            try:
-                conf = float(intent.get("confidence", 0.0))
-            except Exception:
-                conf = 0.0
-            action_ctx["intent_confidence"] = conf
+            merge_intent_into_action_ctx(action_ctx, intent)
             meta = state.setdefault("meta", {})
             meta["last_intent_source"] = "llm"
             meta["last_intent_raw"] = intent
-            stakes = intent.get("stakes")
+
+            # Intent v2 plan execution: pick the first valid step by preconditions and overlay it.
+            if int(action_ctx.get("intent_version", 1) or 1) == 2 and isinstance(action_ctx.get("intent_plan"), dict):
+                sid = select_best_step(action_ctx, state)
+                if isinstance(sid, str) and sid.strip():
+                    action_ctx["step_now_id"] = sid.strip()
+                    steps = (action_ctx.get("intent_plan") or {}).get("steps")
+                    if isinstance(steps, list):
+                        for st in steps:
+                            if isinstance(st, dict) and str(st.get("step_id", "") or "").strip() == action_ctx["step_now_id"]:
+                                apply_step_to_action_ctx(action_ctx, st)
+                                break
+
+            stakes = action_ctx.get("stakes")
             if isinstance(stakes, str):
                 action_ctx["has_stakes"] = stakes not in ("none", "low")
                 if action_ctx.get("domain") == "social" and action_ctx.get("social_mode") == "conflict":
@@ -1506,7 +2086,7 @@ def main() -> None:
             if action_ctx.get("domain") == "combat" and action_ctx.get("action_type") != "combat":
                 action_ctx["action_type"] = "combat"
             try:
-                tcm = int(intent.get("time_cost_min", 0) or 0)
+                tcm = int(action_ctx.get("time_cost_min", 0) or 0)
             except Exception:
                 tcm = 0
             if tcm > 0:
@@ -1585,7 +2165,7 @@ def main() -> None:
 
         # Optional: NL "menginap semalam" / "stay one night" → deterministic prepaid stay (OMNI_AUTO_STAY_INTENT=1).
         try:
-            from engine.accommodation import stay_kind_label, try_auto_stay_from_intent
+            from engine.systems.accommodation import stay_kind_label, try_auto_stay_from_intent
 
             auto_r = try_auto_stay_from_intent(state, action_ctx)
             if bool(auto_r.get("applied")):

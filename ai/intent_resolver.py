@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 from ai.llm_http import chat_completion_json
 
 
-INTENT_SYSTEM_PROMPT = """OMNI-ENGINE v6.9 — INTENT RESOLVER.
+INTENT_SYSTEM_PROMPT = """OMNI-ENGINE v6.9 — INTENT RESOLVER (Schema v2).
 You are a STRICT json-serializer for player intent in a simulation.
 
 You do NOT narrate. You do NOT describe feelings. You ONLY return a single JSON object.
@@ -15,55 +15,79 @@ You do NOT narrate. You do NOT describe feelings. You ONLY return a single JSON 
 The human types a natural language command as PLAYER_INPUT plus a short ENGINE_SNAPSHOT.
 Your job is to infer what the player character is TRYING TO DO in this world.
 
-Return ONE JSON object with keys:
+Return ONE JSON object using this schema (Intent v2):
+
+Top-level keys:
+- version: 2
+- confidence: float 0.0-1.0
+- player_goal: short string
+- context_assumptions: array of short strings (may be empty)
+- plan: object with:
+  - plan_id: short string
+  - steps: array (1..4) of step objects
+- safety: object with:
+  - refuse: boolean
+  - refuse_reason: short string (empty if refuse=false)
+
+Step object keys:
+- step_id: short string
+- label: short string
 - action_type: one of ["instant","combat","travel","sleep","rest","talk","investigate","use_item","custom"]
 - domain: one of ["evasion","combat","social","hacking","medical","driving","stealth","other"]
 - combat_style: one of ["melee","ranged","none"] (only meaningful when domain="combat"; otherwise use "none")
 - social_mode: one of ["non_conflict","conflict","none"]
 - social_context: one of ["standard","formal","street","none"]
-- intent_note: short snake_case label (e.g. "social_dialogue", "intimacy_private", "ask_time", "look_for_person")
-- targets: array of short strings naming people/things/places if mentioned
+- intent_note: short snake_case label
+- targets: array of short strings
 - stakes: one of ["none","low","medium","high"]
 - risk_level: one of ["low","medium","high"]
-- time_cost_min: integer minutes 0-60 (how long this action realistically takes; 0 means use engine default)
-- travel_destination: short place name if action_type="travel" (e.g. "jakarta", "london"), else "none"
-- inventory_ops: array of operations (may be empty). Each operation is one of:
-  - {"op":"stow","from":"r_hand|l_hand","to":"pocket|bag","time_cost_min":1}
-  - {"op":"swap_hands","time_cost_min":1}
-  - {"op":"drop","from":"r_hand|l_hand","time_cost_min":1}
-  - {"op":"equip_weapon","weapon_id":"<id>","time_cost_min":1}
-  - {"op":"pickup","item_id":"<id>","to":"pocket|bag","time_cost_min":1}
-- confidence: float 0.0-1.0 of your confidence in this interpretation
+- time_cost_min: integer minutes 0-240 (0 means use engine default)
+- travel_destination: short place name if action_type="travel", else "".
+- inventory_ops: array of inventory micro-ops (same shapes as v1)
+- preconditions: array of simple preconditions (may be empty). Each is:
+  - {"kind":"hands_free|has_item|scene_phase|target_visible|npc_alive|location_is|district_is","op":"eq|neq|in","value":<json>}
+- on_success: array of {"next":"<step_id>","when":"always|if_possible"} (may be empty)
+- on_failure: array of {"next":"<step_id>","when":"always|if_blocked|if_failed_roll"} (may be empty)
 
 Rules:
-- If the player is simply talking / asking questions / looking around, that is usually social_mode=\"non_conflict\" and stakes=\"low\".
-- ONLY use social_mode=\"conflict\" when there is explicit coercion, threat, deception, or tense negotiation.
-- If you are confused, choose the simplest plausible intent and set confidence<=0.5.
+- Keep steps minimal. Prefer 1 step unless player explicitly asks for conditional/multi-step.
+- For conditionals: represent as step2 with preconditions, and link via on_success/on_failure.
 - NEVER invent enemies or weapons if not clearly stated.
-- For combat: if the player mentions shooting/aiming/ranged weapon/firearm OR Indonesian equivalents (tembak/menembak/shot/pistol/senjata/senapan/rifle), use combat_style=\"ranged\" and domain=\"combat\".
-- For melee combat: if the player mentions stabbing/striking/melee weapon OR Indonesian equivalents (tusuk/pukul/memukul/hantam/tendang/pisau), use combat_style=\"melee\" and domain=\"combat\".
-- If the player wants to fight but doesn't specify style, set combat_style=\"none\".
-- If nothing matches, set domain=\"other\" and action_type=\"instant\".
-- Consensual private adult intimacy (fade-to-black): action_type=\"talk\", domain=\"social\", social_mode=\"non_conflict\", intent_note=\"intimacy_private\", stakes=\"medium\", time_cost_min 45-90. NEVER use intent_note=\"intimacy_private\" for coercion/rape; use social_mode=\"conflict\" or refuse.
-- For time_cost_min: simple talk/look around = 1-3, searching a place = 5-15, breaking in = 10-30, combat = 1, travel handled by action_type travel.
-- For inventory_ops: if the player wants to pick up / use a large object while holding something, add stow/swap/drop operations so the main action can proceed without \"wasting a turn\". Prefer stow to pocket/bag over drop.
-- For inventory_ops pickup: if the player references an object being in the current scene (e.g. \"laptop di meja\", \"HP di saku\", \"barang di tas\") and the object id can be inferred from nearby_items in the ENGINE_SNAPSHOT, add:
-  - {"op":"pickup","item_id":"<id>","to":"pocket|bag","time_cost_min":1}
-- For inventory_ops weapon switching: if PLAYER_INPUT implies using a different weapon (\"senjata yang satunya\", \"other gun\") and weapon_ids has multiple entries, add:
-  - equip_weapon for the other weapon_id (prefer this; do NOT stow unless hands are actually holding a non-weapon item)
-  - If the input also includes shooting (tembak/menembak/shoot), then this is NOT a pure switch: set action_type=\"combat\" and stakes at least \"medium\".
-
-Examples (you still must return ONLY JSON):
-- \"aku menembak orang bersenjata di depan\" => action_type=\"combat\", domain=\"combat\", combat_style=\"ranged\", social_mode=\"none\", stakes=\"high\"
-- \"aku pukul orang yang menghalangi jalan\" => action_type=\"combat\", domain=\"combat\", combat_style=\"melee\", stakes=\"medium\"
-- \"aku mau bicara dengan orang sekitar\" => action_type=\"talk\", domain=\"social\", social_mode=\"non_conflict\", stakes=\"low\"
-- \"aku memaksa orang itu untuk ngomong sekarang\" => domain=\"social\", social_mode=\"conflict\", stakes=\"medium\"
-- \"memegang pistol aku mencoba menembakan senjata yang satunya\" => action_type=\"combat\", domain=\"combat\", combat_style=\"ranged\", intent_note=\"switch_then_shoot\", stakes=\"high\", inventory_ops=[{\"op\":\"equip_weapon\",\"weapon_id\":\"<other>\",\"time_cost_min\":1}]
-- \"sedang di kafe dan laptop di meja, aku akan balik ke kos\" => action_type=\"travel\", domain=\"other\", social_mode=\"none\", stakes=\"low\", time_cost_min=10, inventory_ops=[{\"op\":\"pickup\",\"item_id\":\"<nearby_item_id>\",\"to\":\"bag\",\"time_cost_min\":2}]
-- \"pergi ke jakarta\" => action_type=\"travel\", domain=\"other\", social_mode=\"none\", stakes=\"low\", time_cost_min=90, travel_destination=\"jakarta\", inventory_ops=[]
+- If confused: choose simplest plausible step plan and set confidence<=0.5.
+- Consensual private adult intimacy (fade-to-black): action_type="talk", domain="social", social_mode="non_conflict", intent_note="intimacy_private", stakes="medium", time_cost_min 45-90.
+- Refuse disallowed content by setting safety.refuse=true.
 
 Return ONLY the JSON, no explanation, no markdown.
 """
+
+
+def _flatten_intent_v2_for_compat(obj: Dict[str, Any]) -> Dict[str, Any]:
+    """Derive v1-like top-level keys from v2 so existing callers can keep working."""
+    out = dict(obj)
+    plan = out.get("plan") if isinstance(out.get("plan"), dict) else {}
+    steps = plan.get("steps") if isinstance(plan.get("steps"), list) else []
+    step0 = steps[0] if steps and isinstance(steps[0], dict) else {}
+    # v1-compat fields expected by main.py
+    for k in (
+        "action_type",
+        "domain",
+        "combat_style",
+        "social_mode",
+        "social_context",
+        "intent_note",
+        "targets",
+        "stakes",
+        "risk_level",
+        "time_cost_min",
+        "travel_destination",
+        "inventory_ops",
+    ):
+        if k in step0 and step0.get(k) is not None:
+            out[k] = step0.get(k)
+    # A stable hint for future engine compilation
+    if "step_now_id" not in out and isinstance(step0.get("step_id"), str):
+        out["step_now_id"] = step0.get("step_id")
+    return out
 
 
 def _invoke_llm_for_intent(payload: Dict[str, Any]) -> str:
@@ -144,9 +168,17 @@ def resolve_intent(state: Dict[str, Any], player_input: str) -> Optional[Dict[st
     obj = _safe_parse_json_blob(raw)
     if not obj:
         return None
-    # Minimal sanity checks
-    if "domain" not in obj or "action_type" not in obj:
-        return None
+    # Minimal sanity checks (v1 or v2)
+    if int(obj.get("version", 1) or 1) == 2:
+        if "plan" not in obj or not isinstance(obj.get("plan"), dict):
+            return None
+        steps = (obj.get("plan") or {}).get("steps")
+        if not (isinstance(steps, list) and steps and isinstance(steps[0], dict)):
+            return None
+        obj = _flatten_intent_v2_for_compat(obj)
+    else:
+        if "domain" not in obj or "action_type" not in obj:
+            return None
     try:
         conf = float(obj.get("confidence", 0.0))
     except Exception:

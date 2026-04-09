@@ -35,19 +35,19 @@ def _smoke() -> None:
         validate_memory_hash_delimiters,
         validate_tag_balance,
     )
-    from engine.action_intent import parse_action_intent
-    from engine.combat import apply_combat_gates, resolve_combat_after_roll
-    from engine.economy import update_economy
-    from engine.world import world_tick
-    from engine.quests import generate_faction_events
-    from engine.quests import generate_faction_strikes, generate_daily_news
-    from engine.modifiers import compute_roll_package
-    from engine.inventory_ops import apply_inventory_ops
-    from engine.timers import update_timers
-    from engine.state import initialize_state
-    from engine.hacking import apply_hacking_after_roll, ensure_location_factions
-    from engine.npc_emotions import apply_npc_emotion_after_roll
-    from engine.npc_targeting import apply_npc_targeting
+    from engine.core.action_intent import parse_action_intent
+    from engine.systems.combat import apply_combat_gates, resolve_combat_after_roll
+    from engine.player.economy import update_economy
+    from engine.world.world import world_tick
+    from engine.systems.quests import generate_faction_events
+    from engine.systems.quests import generate_faction_strikes, generate_daily_news
+    from engine.core.modifiers import compute_roll_package
+    from engine.player.inventory_ops import apply_inventory_ops
+    from engine.world.timers import update_timers
+    from engine.core.state import initialize_state
+    from engine.systems.hacking import apply_hacking_after_roll, ensure_location_factions
+    from engine.npc.npc_emotions import apply_npc_emotion_after_roll
+    from engine.npc.npc_targeting import apply_npc_targeting
 
     def _stable_json(obj: object) -> str:
         return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -67,7 +67,7 @@ def _smoke() -> None:
             "active_ripples": state.get("active_ripples", []),
         }
         return hashlib.sha256(_stable_json(core).encode("utf-8", errors="ignore")).hexdigest()
-    from engine.npcs import update_npcs
+    from engine.npc.npcs import update_npcs
 
     st = initialize_state(
         {
@@ -308,7 +308,7 @@ def _smoke() -> None:
     heat1 = int(hh2[key].get("heat", 0) or 0)
     # Next day decay.
     st_heat["meta"]["day"] = 2
-    from engine.world import world_tick as _wt
+    from engine.world.world import world_tick as _wt
     _wt(st_heat, {"action_type": "instant"})
     heat2 = int((st_heat.get("world", {}).get("hacking_heat") or {}).get(key, {}).get("heat", 0) or 0)
     assert heat2 <= heat1
@@ -628,7 +628,7 @@ def _smoke() -> None:
     assert len(st_cap.get("resolved_events") or []) + len(st_cap.get("resolved_ripples") or []) >= 4
 
     # Event resolver: police_sweep/corporate_lockdown/black_market_offer should create real consequences.
-    from engine.modifiers import compute_roll_package
+    from engine.core.modifiers import compute_roll_package
 
     st_ev = initialize_state({"name": "EventResolve", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_ev.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60})
@@ -639,6 +639,11 @@ def _smoke() -> None:
         {"event_type": "black_market_offer", "title": "Offer", "due_day": 1, "due_time": 8 * 60, "triggered": False, "payload": {"location": "london", "bm_power": 70, "bm_stability": 60}},
     ]
     update_timers(st_ev, {"action_type": "instant", "instant_minutes": 0})
+    # police_sweep is now scene-backed (checkpoint_sweep); resolve it to apply restrictions deterministically.
+    if isinstance(st_ev.get("active_scene"), dict) and (st_ev.get("active_scene") or {}).get("scene_type") == "checkpoint_sweep":
+        from engine.systems.scenes import advance_scene
+
+        advance_scene(st_ev, {"scene_action": "comply"})
     r = ((st_ev.get("world", {}) or {}).get("locations", {}) or {}).get("london", {}).get("restrictions", {}) or {}
     assert int(r.get("police_sweep_until_day", 0) or 0) >= 1
     assert int(r.get("corporate_lockdown_until_day", 0) or 0) >= 1
@@ -684,7 +689,7 @@ def _smoke() -> None:
     st_m.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60})
     st_m.setdefault("world", {}).setdefault("locations", {})["london"] = {"restrictions": {"corporate_lockdown_until_day": 2}, "market": {"electronics": {"price_idx": 100, "scarcity": 0}, "medical": {"price_idx": 100, "scarcity": 0}, "weapons": {"price_idx": 100, "scarcity": 0}, "food": {"price_idx": 100, "scarcity": 0}, "transport": {"price_idx": 100, "scarcity": 0}}}
     st_m.setdefault("world", {}).setdefault("locations", {})["jakarta"] = {"restrictions": {}, "market": {"electronics": {"price_idx": 100, "scarcity": 0}, "medical": {"price_idx": 100, "scarcity": 0}, "weapons": {"price_idx": 100, "scarcity": 0}, "food": {"price_idx": 100, "scarcity": 0}, "transport": {"price_idx": 100, "scarcity": 0}}}
-    from engine.market import update_market
+    from engine.player.market import update_market
 
     update_market(st_m)
     g_market = (st_m.get("economy", {}) or {}).get("market", {}) or {}
@@ -698,7 +703,7 @@ def _smoke() -> None:
     assert isinstance(g_e, int)
 
     # Remote location events: world_tick can schedule a remote event tagged with payload.location.
-    from engine.world import world_tick
+    from engine.world.world import world_tick
 
     st_rem = initialize_state({"name": "RemoteEvt", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_rem.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60})
@@ -711,7 +716,7 @@ def _smoke() -> None:
     assert any(isinstance(ev, dict) and isinstance(ev.get("payload"), dict) and ev.get("payload", {}).get("location") in ("jakarta", "london") for ev in pes)
 
     # Atlas/location profile: should be deterministic + cached per location.
-    from engine.atlas import ensure_location_profile
+    from engine.world.atlas import ensure_location_profile
 
     st_at = initialize_state({"name": "Atlas", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_at.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60})
@@ -749,7 +754,7 @@ def _smoke() -> None:
     st_flow.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60})
     st_flow.setdefault("world", {}).setdefault("locations", {})["london"] = {"restrictions": {}, "market": {"electronics": {"price_idx": 220, "scarcity": 10}, "medical": {"price_idx": 100, "scarcity": 0}, "weapons": {"price_idx": 100, "scarcity": 0}, "food": {"price_idx": 100, "scarcity": 0}, "transport": {"price_idx": 100, "scarcity": 0}}}
     st_flow.setdefault("world", {}).setdefault("locations", {})["jakarta"] = {"restrictions": {}, "market": {"electronics": {"price_idx": 80, "scarcity": 10}, "medical": {"price_idx": 100, "scarcity": 0}, "weapons": {"price_idx": 100, "scarcity": 0}, "food": {"price_idx": 100, "scarcity": 0}, "transport": {"price_idx": 100, "scarcity": 0}}}
-    from engine.market import update_market
+    from engine.player.market import update_market
 
     update_market(st_flow)
     lpx = int((((st_flow["world"]["locations"]["london"]["market"]["electronics"]).get("price_idx", 100)) or 100))
@@ -761,7 +766,7 @@ def _smoke() -> None:
     st_geo = initialize_state({"name": "Geo", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_geo.setdefault("meta", {}).update({"day": 5, "time_min": 8 * 60})
     st_geo.setdefault("world", {}).setdefault("atlas", {}).setdefault("geopolitics", {"last_tick_day": 4, "tension_idx": 70, "active_sanctions": [{"day": 5, "a": "united states", "b": "japan", "kind": "sanction"}]})
-    from engine.market import update_market
+    from engine.player.market import update_market
 
     before_e = int(((st_geo.get("economy", {}) or {}).get("market", {}) or {}).get("electronics", {}).get("price_idx", 100) or 100)
     update_market(st_geo)
@@ -769,11 +774,11 @@ def _smoke() -> None:
     assert after_e >= before_e
 
     # Country market layer: iconic oil_gas countries should have cheaper transport baseline than manufacturing hubs.
-    from engine.atlas import ensure_country_market
+    from engine.world.atlas import ensure_country_market
 
     st_cm = initialize_state({"name": "CountryMarket", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_cm.setdefault("meta", {}).update({"day": 3, "time_min": 8 * 60})
-    from engine.market import update_market
+    from engine.player.market import update_market
 
     update_market(st_cm)  # compute global market first
     gmk = (st_cm.get("economy", {}) or {}).get("market", {}) or {}
@@ -784,7 +789,7 @@ def _smoke() -> None:
     assert iran_t <= ger_t
 
     # Auto quest offers: trace cleanup / debt repayment / corp infiltration.
-    from engine.world import world_tick
+    from engine.world.world import world_tick
 
     st_qo = initialize_state({"name": "AutoQuest", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_qo.setdefault("meta", {}).update({"day": 2, "time_min": 8 * 60})
@@ -800,7 +805,7 @@ def _smoke() -> None:
     assert "corp_infiltration" in kinds
 
     # Progress one step: trace_cleanup cover tracks.
-    from engine.quests import tick_quest_chains
+    from engine.systems.quests import tick_quest_chains
 
     tick_quest_chains(st_qo, {"normalized_input": "hapus jejak cover tracks", "action_type": "instant", "domain": "hacking"})
     qa2 = (st_qo.get("quests", {}) or {}).get("active") or []
@@ -808,7 +813,7 @@ def _smoke() -> None:
     assert tc and int(tc[0].get("step", 0) or 0) >= 1
 
     # Deterministic roll: same state + same action_ctx => same roll.
-    from engine.modifiers import compute_roll_package
+    from engine.core.modifiers import compute_roll_package
 
     st_rng = initialize_state({"name": "DetRoll", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_rng.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60, "turn": 10})
@@ -818,14 +823,14 @@ def _smoke() -> None:
     assert r1 == r2
 
     # Factions should persist per-location across travel (no reset).
-    from engine.world import world_tick
+    from engine.world.world import world_tick
 
     st_f = initialize_state({"name": "FactionPersist", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_f.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60, "turn": 1})
     st_f.setdefault("world", {}).setdefault("locations", {})["london"] = {"restrictions": {}, "market": {}}
     st_f.setdefault("world", {}).setdefault("locations", {})["jakarta"] = {"restrictions": {}, "market": {}}
     # Initialize factions for london and mutate.
-    from engine.hacking import ensure_location_factions
+    from engine.systems.hacking import ensure_location_factions
 
     ensure_location_factions(st_f)
     st_f["world"]["factions"]["corporate"]["power"] = 99
@@ -837,7 +842,7 @@ def _smoke() -> None:
     assert int(st_f["world"]["factions"]["corporate"]["power"] or 0) == 99
 
     # Disguise: activate -> expires -> trace reduced; caught under sweep increases trace.
-    from engine.disguise import activate_disguise, tick_disguise_expiry, ensure_disguise
+    from engine.systems.disguise import activate_disguise, tick_disguise_expiry, ensure_disguise
 
     st_d = initialize_state({"name": "Disguise", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_d.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60, "turn": 1})
@@ -852,7 +857,7 @@ def _smoke() -> None:
     assert bool(ensure_disguise(st_d).get("active", True)) is False
 
     # Safehouse: rent + lay low reduces trace; rent delinquency emits ripple.
-    from engine.safehouse import rent_here, apply_lay_low_bonus, process_daily_rent, ensure_safehouses
+    from engine.systems.safehouse import rent_here, apply_lay_low_bonus, process_daily_rent, ensure_safehouses
 
     st_sh = initialize_state({"name": "SH", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_sh.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60})
@@ -873,7 +878,7 @@ def _smoke() -> None:
     assert any(isinstance(rp, dict) and rp.get("kind") == "landlord_report" for rp in ar)
 
     # Weather determinism: same day+loc yields same kind.
-    from engine.weather import ensure_weather
+    from engine.world.weather import ensure_weather
 
     st_w = initialize_state({"name": "W", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_w.setdefault("meta", {}).update({"day": 5, "time_min": 8 * 60})
@@ -889,7 +894,7 @@ def _smoke() -> None:
     assert ctx_bad.get("action_type") == "instant"
 
     # Skills progression: XP increases after roll.
-    from engine.skills import apply_skill_xp_after_roll, _ensure_skill
+    from engine.player.skills import apply_skill_xp_after_roll, _ensure_skill
 
     st_skp = initialize_state({"name": "Skill", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_skp.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60})
@@ -900,7 +905,7 @@ def _smoke() -> None:
     assert after_xp > before_xp
 
     # Content packs: core pack loads and applies item_sizes.
-    from engine.content_packs import freeze_packs_into_state, apply_pack_effects
+    from engine.core.content_packs import freeze_packs_into_state, apply_pack_effects
 
     st_p = initialize_state({"name": "Pack", "location": "london", "year": "2025"}, seed_pack="minimal")
     freeze_packs_into_state(st_p, pack_ids=["core"])
@@ -927,7 +932,7 @@ def _smoke() -> None:
     assert isinstance(langs_occ, dict) and int(langs_occ.get("en", 0) or 0) >= 60
 
     # Language learning MVP: class/book/immersion updates player.languages with time/cost.
-    from engine.language_learning import learn_language
+    from engine.player.language_learning import learn_language
 
     st_ll = initialize_state({"name": "LearnLang", "location": "tokyo", "year": "2025", "language": "en"}, seed_pack="minimal")
     st_ll.setdefault("economy", {})["cash"] = 1000
@@ -940,7 +945,7 @@ def _smoke() -> None:
     assert bool(res_imm.get("ok")) and int(res_imm.get("delta", 0) or 0) > 0
 
     # History indices determinism (seed/year/country): cached and stable.
-    from engine.atlas import ensure_country_history_idx
+    from engine.world.atlas import ensure_country_history_idx
 
     st_hist = initialize_state({"name": "Hist", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_hist.setdefault("meta", {})["sim_year"] = 1942
@@ -951,7 +956,7 @@ def _smoke() -> None:
     assert h3.get("last_year") != h1.get("last_year") or h3 != h1
 
     # Border controls travel friction: should add time when strict.
-    from engine.timers import update_timers
+    from engine.world.timers import update_timers
 
     st_bt = initialize_state({"name": "BorderTravel", "location": "nyc", "year": "1942"}, seed_pack="minimal")
     st_bt.setdefault("meta", {})["sim_year"] = 1942
@@ -965,7 +970,7 @@ def _smoke() -> None:
     assert any(isinstance(x, dict) and x.get("label") == "border_controls" for x in tb)
 
     # Hacking tier gate: intrusion without exploit should return No Roll (Missing Tools).
-    from engine.modifiers import compute_roll_package
+    from engine.core.modifiers import compute_roll_package
 
     st_hg = initialize_state({"name": "HackGate", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_hg.setdefault("inventory", {}).setdefault("bag_contents", []).append("laptop_basic")
@@ -974,7 +979,7 @@ def _smoke() -> None:
     assert str(rp.get("outcome", "")).startswith("No Roll (Missing Tools)")
 
     # Language barrier (year-aware): early year + no translator blocks high-stakes social in foreign language.
-    from engine.language import communication_quality
+    from engine.core.language import communication_quality
 
     st_lb = initialize_state({"name": "Lang", "location": "tokyo", "year": 1995, "language": "en"}, seed_pack="minimal")
     # Force local language to be non-English for test determinism.
@@ -995,7 +1000,7 @@ def _smoke() -> None:
     assert any("language" in str(k).lower() for k, _v in (pkg2.get("mods") or []))
 
     # NPC sim: LOD cap respected (<=80 evaluated) and planner can schedule events/ripples.
-    from engine.npc_sim import tick_npc_sim
+    from engine.npc.npc_sim import tick_npc_sim
 
     st_sim = initialize_state({"name": "NPCSimVerify", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_sim.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60, "turn": 1})
@@ -1065,7 +1070,7 @@ def _smoke() -> None:
     st_rel.setdefault("player", {}).setdefault("languages", {}).update({"en": 90})
     st_rel.setdefault("npcs", {})["X"] = {"name": "X", "affiliation": "civilian", "belief_summary": {"suspicion": 0, "respect": 50}}
     st_rel.setdefault("world", {}).setdefault("social_graph", {}).setdefault("__player__", {})["X"] = {"type": "debt", "strength": 80, "since_day": 1, "last_interaction_day": 1}
-    from engine.modifiers import compute_roll_package as _crp2
+    from engine.core.modifiers import compute_roll_package as _crp2
     rp_rel = _crp2(st_rel, {"domain": "social", "social_mode": "conflict", "targets": ["X"], "trained": True, "uncertain": True, "has_stakes": True})
     assert any(k == "Relationship" for k, _ in (rp_rel.get("mods") or []))
 
@@ -1250,7 +1255,7 @@ def _smoke() -> None:
     # Force high suspicion to validate modifier wiring (tuning of belief deltas is separate).
     st_b["npcs"]["C1"].setdefault("belief_summary", {})["suspicion"] = 80
     # Belief should influence social conflict roll via modifiers.
-    from engine.modifiers import compute_roll_package as _crp
+    from engine.core.modifiers import compute_roll_package as _crp
     ctx_sc = {"domain": "social", "social_mode": "conflict", "targets": ["C1"], "uncertain": True, "has_stakes": True}
     rp3 = _crp(st_b, ctx_sc)
     assert any(k in ("NPC suspicion", "NPC respect") for k, _ in (rp3.get("mods") or []))
@@ -1303,7 +1308,7 @@ def _smoke() -> None:
     assert debt_st["economy"]["debt"] == 85
 
     # SHOP MVP: deterministic pricing + buy/sell affects cash & inventory.
-    from engine.shop import buy_item, list_shop_quotes, quote_item, sell_item, sell_item_all, sell_item_n, get_capacity_status
+    from engine.systems.shop import buy_item, list_shop_quotes, quote_item, sell_item, sell_item_all, sell_item_n, get_capacity_status
 
     st_shop = initialize_state({"name": "ShopVerify", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_shop.setdefault("economy", {})["cash"] = 5000
@@ -1348,6 +1353,426 @@ def _smoke() -> None:
     q_tag = list_shop_quotes(st_shop, limit=10, tag="translator")
     assert isinstance(q_tag, list) and len(q_tag) >= 1
 
+    # Shop skill modifiers: streetwise should slightly improve buy/sell prices (bounded).
+    st_shop_mod = initialize_state({"name": "ShopMods", "location": "london", "year": "2025", "language": "en"}, seed_pack="minimal")
+    st_shop_mod.setdefault("economy", {})["cash"] = 5000
+    st_shop_mod.setdefault("skills", {})["streetwise"] = {"level": 1, "xp": 0, "base": 10, "last_used_day": 0, "mastery_streak": 0}
+    qb1 = quote_item(st_shop_mod, "burner_phone")
+    assert qb1 is not None
+    st_shop_mod.setdefault("skills", {})["streetwise"]["level"] = 10
+    qb2 = quote_item(st_shop_mod, "burner_phone")
+    assert qb2 is not None
+    assert int(qb2.buy_price) <= int(qb1.buy_price)
+
+    # Shop language premium: if local language isn't shared, buy price should be higher (all else equal).
+    st_shop_lang = initialize_state({"name": "ShopLang", "location": "tokyo", "year": "2025", "language": "en"}, seed_pack="minimal")
+    st_shop_lang.setdefault("economy", {})["cash"] = 5000
+    # Force deterministic local language context.
+    st_shop_lang.setdefault("world", {}).setdefault("locations", {}).setdefault("tokyo", {}).setdefault("profile", {})["language"] = "ja"
+    st_shop_lang.setdefault("player", {})["languages"] = {"en": 80}
+    ql1 = quote_item(st_shop_lang, "burner_phone")
+    assert ql1 is not None
+    st_shop_lang.setdefault("player", {})["languages"]["ja"] = 80
+    ql2 = quote_item(st_shop_lang, "burner_phone")
+    assert ql2 is not None
+    assert int(ql2.buy_price) <= int(ql1.buy_price)
+
+    # Delivery: contraband can be purchased via dead drop (delayed, pickup required).
+    st_del = initialize_state({"name": "Delivery", "location": "new york", "year": "2025"}, seed_pack="minimal")
+    st_del.setdefault("economy", {})["cash"] = 10000
+    st_del.setdefault("player", {})["district"] = "harbor"  # metropolis: has black_market
+    rdel = buy_item(st_del, "compact_pistol", prefer="bag", delivery="dead_drop")
+    assert bool(rdel.get("ok")) and rdel.get("placed_to") == "delivery_pending"
+    assert any(isinstance(ev, dict) and ev.get("event_type") == "delivery_drop" for ev in (st_del.get("pending_events") or []))
+    assert isinstance(rdel.get("drop_district", ""), str)
+    # Delivery spawn objects can carry trap flags (decoy/sting_on_pickup) deterministically.
+    from engine.world.timers import update_timers
+    # Jump time forward. We need two timer ticks:
+    # - first tick triggers delivery_drop -> pending_deliveries
+    # - second tick materializes pending_deliveries -> nearby_items (+ scene start)
+    st_del.setdefault("meta", {}).update({"day": 1, "time_min": 9 * 60})
+    st_del.setdefault("player", {})["district"] = str(rdel.get("drop_district") or st_del.get("player", {}).get("district", "harbor"))
+    update_timers(st_del, {"action_type": "instant", "domain": "other", "instant_minutes": 60})
+    update_timers(st_del, {"action_type": "instant", "domain": "other", "instant_minutes": 1})
+    nb = (st_del.get("world", {}) or {}).get("nearby_items", []) or []
+    # If spawned, it should include the flags.
+    if nb and isinstance(nb[0], dict):
+        assert "decoy" in nb[0] and "sting_on_pickup" in nb[0]
+    # Scene should start when delivery materializes in current drop district.
+    sc = st_del.get("active_scene")
+    assert isinstance(sc, dict) and sc.get("scene_type") == "drop_pickup" and sc.get("phase") == "spot_package"
+
+    # Dead NPC guard: targeting should not select dead NPCs.
+    from engine.npc.npc_targeting import apply_npc_targeting
+
+    st_dead = initialize_state({"name": "DeadNPC", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_dead.setdefault("npcs", {})["Bob"] = {"name": "Bob", "alive": False, "hp": 0, "current_location": "london", "home_location": "london"}
+    ctx_dead = {"domain": "social", "normalized_input": "talk bob", "targets": ["Bob"]}
+    apply_npc_targeting(st_dead, ctx_dead, "talk bob")
+    assert ctx_dead.get("targets") == []
+
+    # Effects stacking + expiry: should expire after timers tick.
+    from engine.systems.effects import add_effect
+    from engine.world.timers import update_timers
+
+    st_eff = initialize_state({"name": "Effects", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_eff.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60, "turn": 1})
+    player = st_eff.setdefault("player", {})
+    add_effect(st_eff, target=player, effect_id="bleeding", kind="bleed", duration_min=1, stacks=1, stacking="stack", source="test")
+    add_effect(st_eff, target=player, effect_id="bleeding", kind="bleed", duration_min=1, stacks=1, stacking="stack", source="test")
+    effs0 = (st_eff.get("player", {}) or {}).get("effects", []) or []
+    assert isinstance(effs0, list) and any(isinstance(e, dict) and e.get("id") == "bleeding" and int(e.get("stacks", 0) or 0) >= 2 for e in effs0)
+    update_timers(st_eff, {"action_type": "instant", "instant_minutes": 2})
+    effs1 = (st_eff.get("player", {}) or {}).get("effects", []) or []
+    assert not any(isinstance(e, dict) and e.get("id") == "bleeding" for e in effs1)
+
+    # Social diffusion budget: if budget is zero, hops should be throttled.
+    st_sd = initialize_state({"name": "SocDiff", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_sd.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60, "turn": 1})
+    st_sd.setdefault("world", {})["social_diffusion"] = {"max_hops_per_day": 0, "max_hops_per_turn": 0, "used_today": 0, "used_turn": 0, "day": 1, "turn": 1}
+    st_sd.setdefault("npcs", {})["A"] = {"name": "A", "alive": True, "hp": 100, "current_location": "london", "home_location": "london"}
+    st_sd.setdefault("npcs", {})["B"] = {"name": "B", "alive": True, "hp": 100, "current_location": "london", "home_location": "london"}
+    st_sd.setdefault("pending_events", []).append(
+        {
+            "event_type": "social_diffusion_hop",
+            "due_day": 1,
+            "due_time": 8 * 60,
+            "triggered": False,
+            "payload": {"from_npc": "A", "to_npc": "B", "rumor": "player hack rumor", "category": "hack", "hop": 0},
+        }
+    )
+    update_timers(st_sd, {"action_type": "instant", "instant_minutes": 1})
+    # No new hops should have been queued.
+    assert not any(isinstance(e, dict) and e.get("event_type") == "social_diffusion_hop" and not bool(e.get("triggered")) for e in (st_sd.get("pending_events") or []))
+
+    # Ripple contacts gate: contacts + origin_faction should eventually surface (indirect leak) rather than drop.
+    st_rp = initialize_state({"name": "RippleGate", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_rp.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60, "turn": 1})
+    st_rp.setdefault("world", {}).setdefault("contacts", {})["CorpContact"] = {"name": "CorpContact", "affiliation": "corporate", "trust": 40}
+    st_rp.setdefault("active_ripples", []).append(
+        {
+            "kind": "test",
+            "text": "[Test] contact police ripple",
+            "triggered_day": 1,
+            "surface_day": 1,
+            "surface_time": 8 * 60,
+            "surfaced": False,
+            "propagation": "contacts",
+            "origin_location": "london",
+            "origin_faction": "police",
+            "witnesses": [],
+            "surface_attempts": 0,
+        }
+    )
+    from engine.world.timers import update_timers as _ut
+
+    # Attempt 1: reschedule
+    _ut(st_rp, {"action_type": "instant", "instant_minutes": 1})
+    # Jump to next day 08:00 twice to allow surface_attempts to accumulate.
+    st_rp["meta"]["day"] = 2
+    st_rp["meta"]["time_min"] = 8 * 60
+    st_rp["meta"]["turn"] = 2
+    _ut(st_rp, {"action_type": "instant", "instant_minutes": 1})
+    st_rp["meta"]["day"] = 3
+    st_rp["meta"]["time_min"] = 8 * 60
+    st_rp["meta"]["turn"] = 3
+    _ut(st_rp, {"action_type": "instant", "instant_minutes": 1})
+    surfaced = st_rp.get("surfacing_ripples_this_turn", []) or []
+    assert any(isinstance(r, dict) and "[Test]" in str(r.get("text", "")) and not bool(r.get("dropped_by_propagation")) for r in surfaced)
+
+    # Scheduler cap drain: cap=3 should defer overflow and drain across subsequent turns (no loss).
+    st_cap = initialize_state({"name": "CapDrain", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_cap.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60, "turn": 1})
+    pe = st_cap.setdefault("pending_events", [])
+    for i in range(10):
+        pe.append(
+            {
+                "event_type": "informant_tip",  # safe no-op if payload empty
+                "due_day": 1,
+                "due_time": 8 * 60,
+                "triggered": False,
+                "payload": {"kind": "test", "i": i},
+            }
+        )
+    from engine.world.timers import update_timers as _ut2
+
+    _ut2(st_cap, {"action_type": "instant", "instant_minutes": 1})
+    tr1 = st_cap.get("triggered_events_this_turn", []) or []
+    assert len(tr1) <= 3
+    # Advance turn; keep time due.
+    st_cap["meta"]["turn"] = 2
+    _ut2(st_cap, {"action_type": "instant", "instant_minutes": 1})
+    tr2 = st_cap.get("triggered_events_this_turn", []) or []
+    assert len(tr2) <= 3
+    st_cap["meta"]["turn"] = 3
+    _ut2(st_cap, {"action_type": "instant", "instant_minutes": 1})
+    tr3 = st_cap.get("triggered_events_this_turn", []) or []
+    assert len(tr3) <= 3
+    # Eventually, all should be marked triggered after enough turns.
+    for t in range(4, 8):
+        st_cap["meta"]["turn"] = t
+        _ut2(st_cap, {"action_type": "instant", "instant_minutes": 1})
+    assert all(bool(ev.get("triggered")) for ev in (st_cap.get("pending_events") or []) if isinstance(ev, dict) and ev.get("event_type") == "informant_tip")
+
+    # Ripple dedup: volatile meta keys should not defeat dedup.
+    from engine.social.ripple_queue import enqueue_ripple
+
+    st_dedup = initialize_state({"name": "RippleDedup", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_dedup["active_ripples"] = []
+    enqueue_ripple(
+        st_dedup,
+        {
+            "kind": "npc_offer",
+            "propagation": "contacts",
+            "origin_location": "london",
+            "origin_faction": "black_market",
+            "text": "[Offer] Fixer offers service",
+            "meta": {"npc": "FixerA", "service": "sell_info", "expires_day": 2},
+            "surfaced": False,
+        },
+    )
+    enqueue_ripple(
+        st_dedup,
+        {
+            "kind": "npc_offer",
+            "propagation": "contacts",
+            "origin_location": "london",
+            "origin_faction": "black_market",
+            "text": "[Offer] Fixer offers service",
+            "meta": {"npc": "FixerA", "service": "sell_info", "expires_day": 3},
+            "surfaced": False,
+        },
+    )
+    ar = st_dedup.get("active_ripples", []) or []
+    assert isinstance(ar, list) and len(ar) == 1
+
+    # Different stable meta should not dedup.
+    enqueue_ripple(
+        st_dedup,
+        {
+            "kind": "npc_offer",
+            "propagation": "contacts",
+            "origin_location": "london",
+            "origin_faction": "black_market",
+            "text": "[Offer] Fixer offers service",
+            "meta": {"npc": "FixerB", "service": "sell_info"},
+            "surfaced": False,
+        },
+    )
+    ar2 = st_dedup.get("active_ripples", []) or []
+    assert isinstance(ar2, list) and len(ar2) == 2
+
+    # Observability: swallowed exceptions should be recorded in meta.errors.
+    # Force a deterministic failure by temporarily patching cache_sim_time to raise.
+    st_err = initialize_state({"name": "ErrVerify", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_err.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60, "turn": 1})
+    from engine.world.timers import update_timers as _ut_err
+    import engine.world.time_model as _tm
+
+    _orig_cache = _tm.cache_sim_time
+    try:
+        def _boom(_state):
+            raise RuntimeError("test boom")
+
+        _tm.cache_sim_time = _boom
+        _ut_err(st_err, {"action_type": "instant", "instant_minutes": 1})
+    finally:
+        _tm.cache_sim_time = _orig_cache
+
+    errs = (st_err.get("meta", {}) or {}).get("errors", {}) or {}
+    assert isinstance(errs, dict) and int(errs.get("timers.cache_sim_time", 0) or 0) >= 1
+
+    # Travel district normalization: after travel, player.district must be valid for the destination.
+    from engine.world.districts import is_valid_district
+    from engine.world.world import world_tick
+
+    st_dist = initialize_state({"name": "DistVerify", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_dist.setdefault("player", {})["district"] = "nonexistent_district"
+    ctx_tr = {"action_type": "travel", "travel_destination": "tokyo", "travel_minutes": 30, "time_breakdown": []}
+    world_tick(st_dist, ctx_tr)
+    did = str((st_dist.get("player", {}) or {}).get("district", "") or "").strip().lower()
+    loc2 = str((st_dist.get("player", {}) or {}).get("location", "") or "").strip().lower()
+    assert bool(did) and is_valid_district(st_dist, loc2, did)
+
+    # Delivery fairness: ready matching delivery beyond index 40 must spawn.
+    st_df = initialize_state({"name": "DelFair", "location": "new york", "year": "2025"}, seed_pack="minimal")
+    st_df.setdefault("meta", {}).update({"day": 1, "time_min": 9 * 60, "turn": 1})
+    st_df.setdefault("player", {})["district"] = "harbor"
+    pd = st_df.setdefault("world", {}).setdefault("pending_deliveries", [])
+    for i in range(55):
+        pd.append(
+            {
+                "delivery_id": f"X{i}",
+                "location": "new york",
+                "drop_district": "downtown",
+                "ready_day": 1,
+                "ready_time": 9 * 60,
+                "item_id": "burner_phone",
+                "item_name": "burner_phone",
+                "delivered": False,
+                "expired": False,
+            }
+        )
+    pd.append(
+        {
+            "delivery_id": "MATCH55",
+            "location": "new york",
+            "drop_district": "harbor",
+            "ready_day": 1,
+            "ready_time": 9 * 60,
+            "item_id": "burner_phone",
+            "item_name": "burner_phone",
+            "delivered": False,
+            "expired": False,
+        }
+    )
+    from engine.world.timers import update_timers as _ut_df
+
+    _ut_df(st_df, {"action_type": "instant", "instant_minutes": 1})
+    nb2 = (st_df.get("world", {}) or {}).get("nearby_items", []) or []
+    assert any(isinstance(x, dict) and str(x.get("delivery_id", "")) == "MATCH55" for x in nb2)
+
+    # Contacts authority: local snapshot must not override global contact entry on travel.
+    st_ca = initialize_state({"name": "ContactAuth", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_ca.setdefault("world", {}).setdefault("contacts", {})["AgentX"] = {"name": "AgentX", "is_contact": True, "marker": "KEEP", "home_location": "london"}
+    st_ca.setdefault("world", {}).setdefault("locations", {}).setdefault("tokyo", {})["npcs"] = {"AgentX": {"name": "AgentX", "is_contact": True}}
+    world_tick(st_ca, {"action_type": "travel", "travel_destination": "tokyo", "travel_minutes": 30, "time_breakdown": []})
+    assert str((st_ca.get("npcs", {}) or {}).get("AgentX", {}).get("marker", "")) == "KEEP"
+
+    # Inventory clamp: negative/non-int quantities should normalize to non-negative ints.
+    st_iq = initialize_state({"name": "InvClamp", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_iq.setdefault("inventory", {})["item_quantities"] = {"ammo_9mm": -5, "weird": "3", "huge": 999999999}
+    from engine.player.inventory import update_inventory
+
+    update_inventory(st_iq, {})
+    iq2 = (st_iq.get("inventory", {}) or {}).get("item_quantities", {}) or {}
+    assert isinstance(iq2, dict)
+    assert int(iq2.get("ammo_9mm", 0) or 0) >= 0
+    assert int(iq2.get("weird", 0) or 0) == 3
+    assert int(iq2.get("huge", 0) or 0) <= 99999
+
+    # Scheduler starvation: due ripple bookkeeping should advance even when cap is saturated by events.
+    st_starve = initialize_state({"name": "Starve", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_starve.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60, "turn": 1})
+    st_starve.setdefault("player", {})["location"] = "london"
+    for i in range(6):
+        st_starve.setdefault("pending_events", []).append(
+            {"event_type": "informant_tip", "due_day": 1, "due_time": 8 * 60, "triggered": False, "payload": {"i": i}}
+        )
+    st_starve.setdefault("active_ripples", []).append(
+        {
+            "kind": "test",
+            "text": "[Starve] unreachable ripple",
+            "surface_day": 1,
+            "surface_time": 8 * 60,
+            "surfaced": False,
+            "propagation": "local_witness",
+            "origin_location": "tokyo",
+            "surface_attempts": 0,
+        }
+    )
+    from engine.world.timers import update_timers as _ut_s
+
+    for t in range(1, 6):
+        st_starve["meta"]["turn"] = t
+        _ut_s(st_starve, {"action_type": "instant", "instant_minutes": 1})
+    rp0 = (st_starve.get("active_ripples", []) or [None])[0]
+    assert isinstance(rp0, dict) and int(rp0.get("surface_attempts", 0) or 0) >= 1
+
+    # Intent v2 plan execution: select_best_step should skip failing step0 and choose step1.
+    from engine.core.action_intent import merge_intent_into_action_ctx, select_best_step
+
+    st_plan = initialize_state({"name": "IntentPlan", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_plan.setdefault("economy", {})["cash"] = 0
+    action_ctx_plan = parse_action_intent("test plan")
+    intent_v2 = {
+        "version": 2,
+        "confidence": 0.9,
+        "player_goal": "test",
+        "context_assumptions": [],
+        "plan": {
+            "plan_id": "p_test",
+            "steps": [
+                {
+                    "step_id": "s0",
+                    "label": "expensive",
+                    "action_type": "instant",
+                    "domain": "other",
+                    "preconditions": [{"kind": "money_gte", "op": "gte", "value": 10}],
+                },
+                {
+                    "step_id": "s1",
+                    "label": "cheap",
+                    "action_type": "instant",
+                    "domain": "other",
+                    "preconditions": [{"kind": "money_gte", "op": "gte", "value": 0}],
+                },
+            ],
+        },
+        "safety": {"refuse": False, "refuse_reason": ""},
+    }
+    merge_intent_into_action_ctx(action_ctx_plan, intent_v2)
+    sid = select_best_step(action_ctx_plan, st_plan)
+    assert sid == "s1"
+
+    # Intent v2 plan execution: skill_gte should gate steps based on state.skills[*].level.
+    st_skill = initialize_state({"name": "IntentPlanSkill", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_skill.setdefault("skills", {}).setdefault("hacking", {})["level"] = 1
+    action_ctx_skill = parse_action_intent("test plan skill")
+    intent_v2_skill = {
+        "version": 2,
+        "confidence": 0.9,
+        "player_goal": "test",
+        "context_assumptions": [],
+        "plan": {
+            "plan_id": "p_skill",
+            "steps": [
+                {
+                    "step_id": "s0",
+                    "label": "needs_hacking3",
+                    "action_type": "instant",
+                    "domain": "hacking",
+                    "preconditions": [{"kind": "skill_gte", "op": "gte", "value": {"skill": "hacking", "level": 3}}],
+                },
+                {
+                    "step_id": "s1",
+                    "label": "fallback",
+                    "action_type": "instant",
+                    "domain": "other",
+                    "preconditions": [{"kind": "skill_gte", "op": "gte", "value": {"skill": "hacking", "level": 1}}],
+                },
+            ],
+        },
+        "safety": {"refuse": False, "refuse_reason": ""},
+    }
+    merge_intent_into_action_ctx(action_ctx_skill, intent_v2_skill)
+    sid2 = select_best_step(action_ctx_skill, st_skill)
+    assert sid2 == "s1"
+
+    from engine.systems.scenes import advance_scene
+
+    r1 = advance_scene(st_del, {"scene_action": "approach"})
+    assert bool(r1.get("ok")) and r1.get("phase_before") == "spot_package" and r1.get("phase_after") == "approach"
+    # WAIT twice OK, third should fail and not consume input.
+    w1 = advance_scene(st_del, {"scene_action": "wait"})
+    assert bool(w1.get("ok")) and w1.get("phase_after") == "approach"
+    w2 = advance_scene(st_del, {"scene_action": "wait"})
+    assert bool(w2.get("ok")) and w2.get("phase_after") == "approach"
+    w3 = advance_scene(st_del, {"scene_action": "wait"})
+    assert bool(w3.get("ok")) is False and w3.get("reason") == "wait_limit_reached"
+    # TAKE resolves (decoy or normal); must end the scene.
+    t1 = advance_scene(st_del, {"scene_action": "take"})
+    assert bool(t1.get("ok")) and bool(t1.get("ended")) is True
+    assert st_del.get("active_scene") is None
+
+    # Courier deliveries create a delayed paper trail ping.
+    st_pt = initialize_state({"name": "PaperTrail", "location": "new york", "year": "2025"}, seed_pack="minimal")
+    st_pt.setdefault("economy", {})["cash"] = 20000
+    st_pt.setdefault("player", {})["district"] = "harbor"  # has black_market
+    r_pt = buy_item(st_pt, "compact_pistol", prefer="bag", delivery="courier")
+    assert bool(r_pt.get("ok"))
+    assert any(isinstance(ev, dict) and ev.get("event_type") == "paper_trail_ping" for ev in (st_pt.get("pending_events") or []))
+
     # SHOP polish: sold out is deterministic under high scarcity.
     st_so = initialize_state({"name": "SoldOutVerify", "location": "tokyo", "year": "2025"}, seed_pack="minimal")
     st_so.setdefault("meta", {}).update({"day": 7, "time_min": 8 * 60})
@@ -1367,6 +1792,274 @@ def _smoke() -> None:
         r = buy_item(st_so, sold.item_id, prefer="bag")
         assert bool(r.get("ok")) is False and r.get("reason") == "sold_out"
 
+    # District police presence: can refuse contraband outright and increases weapons sold-out.
+    st_dc = initialize_state({"name": "DistrictContraband", "location": "tokyo", "year": "2025"}, seed_pack="minimal")
+    st_dc.setdefault("economy", {})["cash"] = 9000
+    st_dc.setdefault("player", {})["district"] = "finance"  # police_presence=5 in east_asian templates
+    rd = buy_item(st_dc, "compact_pistol")
+    assert bool(rd.get("ok")) is False
+    assert rd.get("reason") in ("sold_out", "district_refuses_contraband")
+
+    # Permit as real document: if carried, police check payload should include permit_doc.
+    st_p = initialize_state({"name": "PermitDoc", "location": "new york", "year": "2025"}, seed_pack="minimal")
+    st_p.setdefault("player", {})["district"] = "port"  # has black_market in western templates
+    st_p.setdefault("inventory", {}).setdefault("bag_contents", []).append("compact_pistol")
+    st_p.setdefault("inventory", {}).setdefault("pocket_contents", []).append("weapon_permit_usa")
+    from engine.social.police_check import schedule_weapon_check
+
+    schedule_weapon_check(st_p, weapon_ids=["compact_pistol"], reason="test")
+    pe = st_p.get("pending_events", []) or []
+    assert any(isinstance(ev, dict) and ev.get("event_type") == "police_weapon_check" for ev in pe)
+    ev0 = [ev for ev in pe if isinstance(ev, dict) and ev.get("event_type") == "police_weapon_check"][0]
+    pd = (ev0.get("payload", {}) or {}).get("permit_doc", {})
+    assert isinstance(pd, dict) and bool(pd.get("permit_present", False)) is True
+
+    # Police stop is now a playable scene (police_weapon_check -> police_stop).
+    from engine.world.timers import update_timers
+    from engine.systems.scenes import advance_scene
+
+    st_p.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60})
+    update_timers(st_p, {"action_type": "instant", "domain": "other", "instant_minutes": 2})
+    sc2 = st_p.get("active_scene")
+    assert isinstance(sc2, dict) and sc2.get("scene_type") == "police_stop" and sc2.get("phase") == "stop"
+    r0 = advance_scene(st_p, {"scene_action": "comply"})
+    assert bool(r0.get("ok")) and r0.get("phase_after") == "dialog"
+    # Conceal then deny (should still be deterministic; may reduce found).
+    advance_scene(st_p, {"scene_action": "conceal", "scene_arg": "compact_pistol"})
+    r1 = advance_scene(st_p, {"scene_action": "say_yes"})
+    assert bool(r1.get("ok")) and bool(r1.get("ended")) is True
+    assert st_p.get("active_scene") is None
+
+    # Undercover sting is now a playable scene (undercover_sting -> sting_setup).
+    st_sting = initialize_state({"name": "StingScene", "location": "new york", "year": "2025"}, seed_pack="minimal")
+    st_sting.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60})
+    st_sting.setdefault("player", {})["district"] = "harbor"
+    # Ensure player carries an illegal weapon so follow-up scheduling path is exercised.
+    st_sting.setdefault("inventory", {}).setdefault("bag_contents", []).append("compact_pistol")
+    st_sting.setdefault("pending_events", []).append(
+        {
+            "event_type": "undercover_sting",
+            "title": "Undercover Sting",
+            "due_day": 1,
+            "due_time": 8 * 60,
+            "triggered": False,
+            "payload": {"location": "new york", "bought_item_id": "compact_pistol", "district_police_presence": 4, "sting_bias": "high"},
+        }
+    )
+    update_timers(st_sting, {"action_type": "instant", "domain": "other", "instant_minutes": 1})
+    scs = st_sting.get("active_scene")
+    assert isinstance(scs, dict) and scs.get("scene_type") == "sting_setup" and scs.get("phase") == "realization"
+    s0 = advance_scene(st_sting, {"scene_action": "walk_away"})
+    assert bool(s0.get("ok")) and bool(s0.get("ended")) is True
+    assert st_sting.get("active_scene") is None
+    # Either a follow-up police stop is scheduled or not, but if scheduled it must be deterministic and valid.
+    pe2 = st_sting.get("pending_events", []) or []
+    if any(isinstance(ev, dict) and ev.get("event_type") == "police_weapon_check" for ev in pe2):
+        evp = [ev for ev in pe2 if isinstance(ev, dict) and ev.get("event_type") == "police_weapon_check"][0]
+        assert isinstance(evp.get("payload"), dict)
+
+    # Safehouse raid is now a playable scene (safehouse_raid -> raid_response) and applies confiscation in-scene.
+    st_raid = initialize_state({"name": "RaidScene", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_raid.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60})
+    st_raid.setdefault("player", {})["district"] = "downtown"
+    # Prepare a safehouse with contraband in stash.
+    w = st_raid.setdefault("world", {})
+    sh = w.setdefault("safehouses", {})
+    sh.setdefault("london", {"status": "active", "security_level": 2, "delinquent_days": 0, "stash": [], "stash_ammo": {}})
+    sh["london"]["stash"] = [{"item_id": "compact_pistol"}]
+    w["safehouses"] = sh
+    st_raid.setdefault("economy", {})["cash"] = 2000
+    st_raid.setdefault("pending_events", []).append(
+        {
+            "event_type": "safehouse_raid",
+            "title": "Safehouse Raid",
+            "due_day": 1,
+            "due_time": 8 * 60,
+            "triggered": False,
+            "payload": {
+                "location": "london",
+                "country": "united kingdom",
+                "law_level": "strict",
+                "corruption": "low",
+                "firearm_policy": "civilian_ban",
+                "has_weapon_permit": False,
+                "disguise_active": False,
+                "security_level": 2,
+                "trace_snapshot": 0,
+                "hot_item_ids": ["compact_pistol"],
+            },
+        }
+    )
+    update_timers(st_raid, {"action_type": "instant", "domain": "other", "instant_minutes": 1})
+    scr = st_raid.get("active_scene")
+    assert isinstance(scr, dict) and scr.get("scene_type") == "raid_response"
+    rr = advance_scene(st_raid, {"scene_action": "comply"})
+    assert bool(rr.get("ok")) and bool(rr.get("ended")) is True
+    # Stash should be modified (confiscation may remove the item).
+    stash2 = (((st_raid.get("world", {}) or {}).get("safehouses", {}) or {}).get("london", {}) or {}).get("stash") or []
+    assert isinstance(stash2, list)
+    # Casefile should record high-signal triggers.
+    cf = ((st_raid.get("world", {}) or {}).get("casefile", []) or [])
+    assert isinstance(cf, list)
+    assert any(isinstance(x, dict) and x.get("event_type") in ("safehouse_raid", "police_weapon_check", "undercover_sting") for x in cf) or len(cf) >= 1
+
+    # Police sweep is now a playable scene (police_sweep -> checkpoint_sweep).
+    st_sw = initialize_state({"name": "SweepScene", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_sw.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60})
+    st_sw.setdefault("player", {})["district"] = "downtown"
+    st_sw.setdefault("pending_events", []).append(
+        {
+            "event_type": "police_sweep",
+            "title": "Police Sweep",
+            "due_day": 1,
+            "due_time": 8 * 60,
+            "triggered": False,
+            "payload": {"location": "london", "attention": "investigated"},
+        }
+    )
+    update_timers(st_sw, {"action_type": "instant", "domain": "other", "instant_minutes": 1})
+    sc_sw = st_sw.get("active_scene")
+    assert isinstance(sc_sw, dict) and sc_sw.get("scene_type") == "checkpoint_sweep"
+    # Carry illegal weapon so checkpoint can schedule follow-up stop deterministically.
+    st_sw.setdefault("inventory", {}).setdefault("bag_contents", []).append("compact_pistol")
+    # Also mark contraband so checkpoint can escalate toward raid deterministically (if safehouse exists here).
+    w_sw = st_sw.setdefault("world", {})
+    sh_sw = w_sw.setdefault("safehouses", {})
+    sh_sw.setdefault("london", {"status": "active", "security_level": 2, "delinquent_days": 0, "stash": [], "stash_ammo": {}})
+    w_sw["safehouses"] = sh_sw
+    rr_sw = advance_scene(st_sw, {"scene_action": "detour"})
+    assert bool(rr_sw.get("ok")) and bool(rr_sw.get("ended")) is True
+    rmap = (((st_sw.get("world", {}) or {}).get("locations", {}) or {}).get("london", {}) or {}).get("restrictions", {}) or {}
+    assert isinstance(rmap, dict) and int(rmap.get("police_sweep_until_day", 0) or 0) >= 1
+    # Follow-up stop may be scheduled; if scheduled it must be well-formed.
+    pe_sw = st_sw.get("pending_events", []) or []
+    if any(isinstance(ev, dict) and ev.get("event_type") == "police_weapon_check" for ev in pe_sw):
+        evp = [ev for ev in pe_sw if isinstance(ev, dict) and ev.get("event_type") == "police_weapon_check"][0]
+        assert isinstance(evp.get("payload"), dict)
+    if any(isinstance(ev, dict) and ev.get("event_type") == "safehouse_raid" for ev in pe_sw):
+        evr = [ev for ev in pe_sw if isinstance(ev, dict) and ev.get("event_type") == "safehouse_raid"][0]
+        assert isinstance(evr.get("payload"), dict)
+
+    # Travel encounters: scheduler gates into scene-backed traffic_stop / vehicle_search deterministically.
+    st_tr1 = initialize_state({"name": "TravelTraffic", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_tr1.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60, "turn": 1})
+    st_tr1.setdefault("player", {})["district"] = "downtown"
+    # Set medium score -> traffic_stop.
+    st_tr1.setdefault("world", {}).setdefault("heat_map", {}).setdefault("london", {})["__all__"] = {"level": 60, "until_day": 9, "reasons": ["test"]}
+    st_tr1.setdefault("world", {}).setdefault("suspicion", {}).setdefault("london", {})["__all__"] = {"level": 50, "until_day": 9, "reasons": ["test"]}
+    update_timers(st_tr1, {"action_type": "travel", "domain": "move", "travel_destination": "tokyo", "travel_minutes": 5})
+    sc_tr1 = st_tr1.get("active_scene")
+    assert isinstance(sc_tr1, dict) and sc_tr1.get("scene_type") == "traffic_stop"
+    # Use conceal and then comply.
+    st_tr1.setdefault("inventory", {}).setdefault("bag_contents", []).append("compact_pistol")
+    advance_scene(st_tr1, {"scene_action": "conceal", "scene_arg": "compact_pistol"})
+    rtr1 = advance_scene(st_tr1, {"scene_action": "comply"})
+    assert bool(rtr1.get("ok")) and bool(rtr1.get("ended")) is True
+    assert st_tr1.get("active_scene") is None
+
+    st_tr2 = initialize_state({"name": "TravelSearch", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_tr2.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60, "turn": 2})
+    st_tr2.setdefault("player", {})["district"] = "downtown"
+    # High score -> vehicle_search.
+    st_tr2.setdefault("world", {}).setdefault("heat_map", {}).setdefault("london", {})["__all__"] = {"level": 100, "until_day": 9, "reasons": ["test"]}
+    st_tr2.setdefault("world", {}).setdefault("suspicion", {}).setdefault("london", {})["__all__"] = {"level": 100, "until_day": 9, "reasons": ["test"]}
+    st_tr2.setdefault("trace", {})["trace_pct"] = 50
+    st_tr2.setdefault("economy", {})["cash"] = 5000
+    update_timers(st_tr2, {"action_type": "travel", "domain": "move", "travel_destination": "tokyo", "travel_minutes": 5})
+    sc_tr2 = st_tr2.get("active_scene")
+    assert isinstance(sc_tr2, dict) and sc_tr2.get("scene_type") == "vehicle_search"
+    # Bribe out deterministically (amount defaulted in scene if omitted).
+    rtr2 = advance_scene(st_tr2, {"scene_action": "bribe", "bribe_amount": 600})
+    assert bool(rtr2.get("ok")) and bool(rtr2.get("ended")) is True
+    assert st_tr2.get("active_scene") is None
+
+    # Border control travel scene: strict border_controls should prefer border_control over traffic_stop.
+    st_bc = initialize_state({"name": "BorderControl", "location": "london", "year": "1942"}, seed_pack="minimal")
+    st_bc.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60, "turn": 3, "sim_year": 1942})
+    st_bc.setdefault("player", {})["district"] = "downtown"
+    st_bc.setdefault("world", {}).setdefault("heat_map", {}).setdefault("london", {})["__all__"] = {"level": 90, "until_day": 9, "reasons": ["test"]}
+    st_bc.setdefault("world", {}).setdefault("suspicion", {}).setdefault("london", {})["__all__"] = {"level": 80, "until_day": 9, "reasons": ["test"]}
+    update_timers(st_bc, {"action_type": "travel", "domain": "move", "travel_destination": "tokyo", "travel_minutes": 5})
+    sc_bc = st_bc.get("active_scene")
+    assert isinstance(sc_bc, dict) and sc_bc.get("scene_type") == "border_control"
+    rr_bc = advance_scene(st_bc, {"scene_action": "comply"})
+    assert bool(rr_bc.get("ok")) and bool(rr_bc.get("ended")) is True
+    assert st_bc.get("active_scene") is None
+
+    # Heat/Suspicion core: deterministic bump + decay.
+    from engine.world.heat import bump_heat, bump_suspicion, decay_heat_and_suspicion
+
+    st_hs = initialize_state({"name": "HeatSusp", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_hs.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60})
+    bump_heat(st_hs, loc="london", delta=10, reason="test", ttl_days=3)
+    bump_suspicion(st_hs, loc="london", delta=20, reason="test", ttl_days=1)
+    hb0 = ((st_hs.get("world", {}) or {}).get("heat_map", {}) or {}).get("london", {}).get("__all__", {}) or {}
+    sb0 = ((st_hs.get("world", {}) or {}).get("suspicion", {}) or {}).get("london", {}).get("__all__", {}) or {}
+    assert int(hb0.get("level", 0) or 0) == 10
+    assert int(sb0.get("level", 0) or 0) == 20
+    decay_heat_and_suspicion(st_hs, cur_day=1)
+    # same day decay still applies (deterministic) but bounded
+    hb1 = ((st_hs.get("world", {}) or {}).get("heat_map", {}) or {}).get("london", {}).get("__all__", {}) or {}
+    sb1 = ((st_hs.get("world", {}) or {}).get("suspicion", {}) or {}).get("london", {}).get("__all__", {}) or {}
+    assert int(hb1.get("level", 0) or 0) <= 10
+    assert int(sb1.get("level", 0) or 0) <= 20
+
+    # Informant network: a rumor hop can generate informant_tip -> npc_report -> follow-up sweep/stop.
+    st_inf = initialize_state({"name": "Informants", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_inf.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60, "turn": 3})
+    st_inf.setdefault("player", {})["district"] = "downtown"
+    # Prepare NPCs + a forced informant profile.
+    st_inf.setdefault("npcs", {}).update(
+        {
+            "Fixer_Ivy": {"role": "fixer", "home_location": "london"},
+            "Cop_Rook": {"role": "police_officer", "home_location": "london"},
+        }
+    )
+    st_inf.setdefault("world", {}).setdefault("informants", {})["Cop_Rook"] = {"affiliation": "police", "reliability": 100, "last_tip_turn": -999}
+    # Simulate a rumor hop arriving at Cop_Rook.
+    st_inf.setdefault("pending_events", []).append(
+        {
+            "event_type": "social_diffusion_hop",
+            "due_day": 1,
+            "due_time": 8 * 60,
+            "triggered": False,
+            "payload": {"from_npc": "Fixer_Ivy", "to_npc": "Cop_Rook", "rumor": "Orang bilang kamu bawa pistol.", "category": "combat", "hop": 1},
+        }
+    )
+    update_timers(st_inf, {"action_type": "instant", "domain": "other", "instant_minutes": 1})
+    pe_inf = st_inf.get("pending_events", []) or []
+    assert any(isinstance(ev, dict) and ev.get("event_type") == "informant_tip" for ev in pe_inf)
+    # Trigger tip processing.
+    update_timers(st_inf, {"action_type": "instant", "domain": "other", "instant_minutes": 3})
+    pe2_inf = st_inf.get("pending_events", []) or []
+    # Tip should have produced at least an npc_report, and possibly follow-up police_sweep/stop.
+    assert any(isinstance(ev, dict) and ev.get("event_type") == "npc_report" for ev in pe2_inf) or isinstance(st_inf.get("active_scene"), dict)
+
+    # Informant roster + ops: seed roster, pay increases reliability, burn can schedule backlash.
+    from engine.social.informants import seed_informant_roster
+    from engine.social.informant_ops import pay_informant, burn_informant
+
+    st_ops = initialize_state({"name": "InformantOps", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_ops.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60, "turn": 10})
+    st_ops.setdefault("player", {})["district"] = "downtown"
+    st_ops.setdefault("economy", {})["cash"] = 5000
+    st_ops.setdefault("npcs", {}).update({"Cop_A": {"role": "police_officer", "home_location": "london"}, "Civ_B": {"role": "civilian", "home_location": "london"}})
+    rseed = seed_informant_roster(st_ops, loc="london", district="downtown")
+    assert bool(rseed.get("ok")) is True
+    names = list((rseed.get("names") or []) if isinstance(rseed.get("names"), list) else [])
+    assert names
+    pick = names[0]
+    # Ensure profile exists and pay works.
+    before_rel = int(((st_ops.get("world", {}) or {}).get("informants", {}) or {}).get(pick, {}).get("reliability", 50) or 50)
+    rpay = pay_informant(st_ops, pick, 1000)
+    assert bool(rpay.get("ok")) is True
+    after_rel = int(((st_ops.get("world", {}) or {}).get("informants", {}) or {}).get(pick, {}).get("reliability", 50) or 50)
+    assert after_rel >= before_rel
+    rburn = burn_informant(st_ops, pick)
+    assert bool(rburn.get("ok")) is True
+    # burned informant removed
+    assert pick not in (((st_ops.get("world", {}) or {}).get("informants", {}) or {}))
+
     # SHOP per-role: ordering should differ between roles for same context.
     st_role = initialize_state({"name": "RoleShop", "location": "tokyo", "year": "2025"}, seed_pack="minimal")
     st_role.setdefault("meta", {}).update({"day": 3, "time_min": 8 * 60})
@@ -1378,7 +2071,7 @@ def _smoke() -> None:
     assert q_fix[0].item_id != q_doc[0].item_id or q_fix[0].buy_price != q_doc[0].buy_price
 
     # BANK: deposit feeds AML via update_economy(cash_deposit).
-    from engine.banking import bank_deposit
+    from engine.player.banking import bank_deposit
 
     st_bank = initialize_state({"name": "BankVerify", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_bank.setdefault("economy", {}).update({"cash": 20000, "bank": 0, "aml_threshold": 10000})
@@ -1396,7 +2089,7 @@ def _smoke() -> None:
     assert str((st_aml.get("economy", {}) or {}).get("aml_status", "")).startswith("ACTIVE")
 
     # ACCOMMODATION: prepaid hotel nights tick down per game day (not on check-in day).
-    from engine.accommodation import normalize_stay_kind, process_accommodation_daily, stay_checkin
+    from engine.systems.accommodation import normalize_stay_kind, process_accommodation_daily, stay_checkin
 
     # NL accommodation intent: narrator hint only; engine charges via STAY command.
     ctx_stay_nl = parse_action_intent("kamu stay satu malam di hotel")
@@ -1409,7 +2102,7 @@ def _smoke() -> None:
 
     import os
 
-    from engine.accommodation import try_auto_stay_from_intent
+    from engine.systems.accommodation import try_auto_stay_from_intent
 
     assert try_auto_stay_from_intent(st, {"intent_note": "accommodation_stay", "accommodation_intent": {"nights": 1}}).get("reason") == "disabled"
     _prev_auto = os.environ.get("OMNI_AUTO_STAY_INTENT")
@@ -1452,7 +2145,7 @@ def _smoke() -> None:
     assert int(((st_acc.get("world", {}) or {}).get("accommodation", {}) or {}).get("paris", {}).get("nights_remaining", 0) or 0) == 1
 
     # Skill level → meaningful roll modifier (BAL_SKILL_MOD_PER_LEVEL).
-    from engine.modifiers import compute_roll_package
+    from engine.core.modifiers import compute_roll_package
 
     st_skill = initialize_state({"name": "SkillMod", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_skill.setdefault("skills", {})["evasion"] = {
@@ -1478,7 +2171,7 @@ def _smoke() -> None:
     assert any("Skill level" in x for x in mod_labels)
 
     # STRICT_PACK_VALIDATION: fail-fast on invalid extras (same path as OMNI_STRICT_PACK_EXTRAS).
-    from engine.content_packs import freeze_packs_into_state
+    from engine.core.content_packs import freeze_packs_into_state
 
     _prev_sp = os.environ.get("STRICT_PACK_VALIDATION")
     os.environ["STRICT_PACK_VALIDATION"] = "1"
@@ -1493,7 +2186,7 @@ def _smoke() -> None:
             os.environ["STRICT_PACK_VALIDATION"] = _prev_sp
 
     # NPC combat AI: pursuit (player fails) vs surrender (opponent breaks).
-    from engine.npc_combat_ai import apply_npc_combat_followup
+    from engine.npc.npc_combat_ai import apply_npc_combat_followup
 
     st_nc = initialize_state({"name": "NpcCombat", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_nc.setdefault("npcs", {})["Guard_A"] = {"name": "Guard_A", "affiliation": "police", "combat_morale": 60}
@@ -1525,7 +2218,7 @@ def _smoke() -> None:
     assert "Weather (engine)" in _tp or "Cuaca (engine)" in _tp
 
     # Bio: worst infection controls recovery block; shower intent resets hygiene clock; BAL-driven thresholds.
-    from engine.bio import update_bio
+    from engine.player.bio import update_bio
 
     st_bio = initialize_state({"name": "BioVerify", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_bio.setdefault("bio", {})["hours_since_shower"] = 10.0
@@ -1564,9 +2257,9 @@ def _smoke() -> None:
     assert float((st_bio.get("bio", {}) or {}).get("hours_since_shower", 99)) == 0.0
 
     # Intimacy: consensual path parses; aftermath sets satisfaction + partner mood (fade-to-black is LLM prompt).
-    from engine.action_intent import parse_action_intent
-    from engine.intimacy import apply_intimacy_aftermath
-    from engine.npcs import ensure_ambient_npcs
+    from engine.core.action_intent import parse_action_intent
+    from engine.systems.intimacy import apply_intimacy_aftermath
+    from engine.npc.npcs import ensure_ambient_npcs
 
     ctx_ix = parse_action_intent("make love with Rio")
     assert ctx_ix.get("intent_note") == "intimacy_private"
@@ -1586,7 +2279,7 @@ def _smoke() -> None:
     assert parse_action_intent("paksa dia bercinta").get("intent_note") != "intimacy_private"
 
     # Weapon kit: buying a firearm seeds inventory.weapons with ammo/capacity for combat gates.
-    from engine.shop import buy_item
+    from engine.systems.shop import buy_item
 
     st_wpn = initialize_state({"name": "WpnBuy", "location": "Test", "year": "2025"}, seed_pack="minimal")
     st_wpn.setdefault("economy", {})["cash"] = 9000
@@ -1597,6 +2290,83 @@ def _smoke() -> None:
     assert str(wrow.get("kind")) == "firearm"
     assert int(wrow.get("ammo", 0) or 0) >= 1
     assert int(wrow.get("mag_capacity", 0) or 0) >= 1
+    assert str(wrow.get("ammo_item_id", "")) == "ammo_9mm"
+    tr0 = int((st_wpn.get("trace", {}) or {}).get("trace_pct", 0) or 0)
+    assert tr0 > 0
+
+    # Vehicles: active vehicle modifies travel minutes and consumes fuel.
+    from engine.systems.vehicles import buy_vehicle, set_active_vehicle
+
+    st_v = initialize_state({"name": "Veh", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
+    st_v.setdefault("economy", {})["cash"] = 10000
+    assert buy_vehicle(st_v, "car_standard").get("ok") is True
+    assert set_active_vehicle(st_v, "car_standard").get("ok") is True
+    invv = st_v.setdefault("inventory", {})
+    fuel0 = int(((invv.get("vehicles", {}) or {}).get("car_standard") or {}).get("fuel", 0) or 0)
+    ctx_tr = {"action_type": "travel", "travel_destination": "tokyo", "travel_minutes": 60, "domain": "evasion"}
+    update_timers(st_v, ctx_tr)
+    fuel1 = int((((st_v.get("inventory", {}) or {}).get("vehicles", {}) or {}).get("car_standard") or {}).get("fuel", 0) or 0)
+    assert str(ctx_tr.get("vehicle_used", "")) == "car_standard"
+    assert fuel1 < fuel0
+
+    # District travel should use travel_minutes (not instant_minutes).
+    from engine.world.districts import ensure_city_districts, travel_within_city
+
+    st_d = initialize_state({"name": "Districts", "location": "tokyo", "year": "2025"}, seed_pack="minimal")
+    ensure_city_districts(st_d, "tokyo")
+    # Pick a deterministic district id
+    st_d.setdefault("player", {})["district"] = "finance"
+    before_tm = int((st_d.get("meta", {}) or {}).get("time_min", 0) or 0)
+    rdt = travel_within_city(st_d, "old_town")
+    assert bool(rdt.get("ok"))
+    after_tm = int((st_d.get("meta", {}) or {}).get("time_min", 0) or 0)
+    assert after_tm > before_tm
+
+    # Hacking should set cyber_alert context when noise rises.
+    from engine.systems.hacking import apply_hacking_after_roll
+
+    st_cy = initialize_state({"name": "Cyber", "location": "tokyo", "year": "2025"}, seed_pack="minimal")
+    st_cy.setdefault("player", {})["district"] = "finance"
+    ctx_h = {"domain": "hacking", "action_type": "instant", "normalized_input": "hack corporate main server", "visibility": "public"}
+    apply_hacking_after_roll(st_cy, ctx_h, {"outcome": "Success", "roll": 80, "net_threshold": 50})
+    slot = ((st_cy.get("world", {}) or {}).get("locations", {}) or {}).get("tokyo") or {}
+    ca = slot.get("cyber_alert") if isinstance(slot, dict) else None
+    assert isinstance(ca, dict)
+    assert int(ca.get("level", 0) or 0) >= 0
+
+    st_am = initialize_state({"name": "AmmoBuy", "location": "Test", "year": "2025"}, seed_pack="minimal")
+    st_am.setdefault("economy", {})["cash"] = 9000
+    nbag = len((st_am.get("inventory", {}) or {}).get("bag_contents", []) or [])
+    ra = buy_item(st_am, "ammo_9mm")
+    assert bool(ra.get("ok")), ra
+    assert len((st_am.get("inventory", {}) or {}).get("bag_contents", []) or []) == nbag
+    assert int(((st_am.get("inventory", {}) or {}).get("item_quantities") or {}).get("ammo_9mm", 0) or 0) >= 50
+
+    from engine.core.reload import try_reload
+
+    st_rl = initialize_state({"name": "Reload", "location": "Test", "year": "2025"}, seed_pack="minimal")
+    st_rl.setdefault("inventory", {}).update(
+        {
+            "active_weapon_id": "compact_pistol",
+            "weapons": {
+                "compact_pistol": {
+                    "kind": "firearm",
+                    "ammo": 0,
+                    "mag_capacity": 12,
+                    "ammo_item_id": "ammo_9mm",
+                    "condition_tier": 2,
+                    "jammed": False,
+                    "use_count": 0,
+                    "name": "Compact Pistol",
+                }
+            },
+            "item_quantities": {"ammo_9mm": 30},
+        }
+    )
+    rr = try_reload(st_rl)
+    assert rr.get("ok") is True
+    assert int(((st_rl.get("inventory", {}) or {}).get("weapons") or {}).get("compact_pistol", {}).get("ammo", -1) or -1) == 12
+    assert int(((st_rl.get("inventory", {}) or {}).get("item_quantities") or {}).get("ammo_9mm", -1) or -1) == 18
 
     # Inventory micro-ops: stow from hand should not waste a turn, only adds time.
     inv_st = initialize_state({"name": "InvVerify", "location": "Test", "year": "2025"}, seed_pack="minimal")
@@ -1650,6 +2420,22 @@ def _smoke() -> None:
     assert "laptop1" not in [x.get("id", x) if isinstance(x, dict) else x for x in inv3.get("world", {}).get("nearby_items", [])]
     assert "laptop1" in (inv3i.get("bag_contents") or [])
 
+    # Pickup: ammo goes to item_quantities (no bag slot).
+    inv_am = initialize_state({"name": "InvAmmoPickup", "location": "Test", "year": "2025"}, seed_pack="minimal")
+    inv_am.setdefault("world", {})["nearby_items"] = [{"id": "ammo_9mm", "name": "Box", "rounds": 25}]
+    inv_ami = inv_am.setdefault("inventory", {})
+    inv_ami["pocket_contents"] = []
+    inv_ami["bag_contents"] = []
+    ctx_am = {
+        "action_type": "instant",
+        "domain": "other",
+        "instant_minutes": 1,
+        "inventory_ops": [{"op": "pickup", "item_id": "ammo_9mm", "to": "bag", "time_cost_min": 1}],
+    }
+    apply_inventory_ops(inv_am, ctx_am)
+    assert int((inv_ami.get("item_quantities") or {}).get("ammo_9mm", 0) or 0) == 25
+    assert "ammo_9mm" not in (inv_ami.get("bag_contents") or [])
+
     # Inventory micro-op: drop from hand should reappear as nearby item.
     inv4 = initialize_state({"name": "InvDrop", "location": "Test", "year": "2025"}, seed_pack="minimal")
     inv4.setdefault("world", {})["nearby_items"] = []
@@ -1668,16 +2454,16 @@ def _smoke() -> None:
     assert any((isinstance(x, dict) and x.get("id") == "phone") or (isinstance(x, str) and x == "phone") for x in inv4.get("world", {}).get("nearby_items", []))
 
     # Stress test: run multiple mixed turns and validate invariants.
-    from engine.world import world_tick
-    from engine.bio import update_bio
-    from engine.skills import update_skills
-    from engine.npcs import update_npcs
-    from engine.inventory import update_inventory
-    from engine.trace import update_trace
-    from engine.hacking import apply_hacking_after_roll
-    from engine.npc_emotions import apply_npc_emotion_after_roll
-    from engine.combat import resolve_combat_after_roll
-    from engine.timers import update_timers
+    from engine.world.world import world_tick
+    from engine.player.bio import update_bio
+    from engine.player.skills import update_skills
+    from engine.npc.npcs import update_npcs
+    from engine.player.inventory import update_inventory
+    from engine.core.trace import update_trace
+    from engine.systems.hacking import apply_hacking_after_roll
+    from engine.npc.npc_emotions import apply_npc_emotion_after_roll
+    from engine.systems.combat import resolve_combat_after_roll
+    from engine.world.timers import update_timers
 
     st_s = initialize_state({"name": "Stress", "location": "jakarta", "year": "2025"}, seed_pack="default")
     st_s.setdefault("inventory", {}).setdefault("weapons", {})["gun1"] = {"name": "Gun-1", "kind": "firearm", "ammo": 5, "condition_tier": 2}
@@ -1730,7 +2516,7 @@ def _smoke() -> None:
         assert len(pe) < 80
 
     # Stress test: NPCSim heavy load (many NPCs + many contacts) should respect caps and avoid runaway queues.
-    from engine.npc_sim import tick_npc_sim as _tns
+    from engine.npc.npc_sim import tick_npc_sim as _tns
     st_nsim = initialize_state({"name": "NPCSimLoad", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_nsim.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60, "turn": 1})
     st_nsim.setdefault("world", {}).setdefault("contacts", {})
@@ -1863,7 +2649,7 @@ def _smoke() -> None:
     assert af1 == af2
 
     # Stress test: ironman vs normal + UNDO restore (state-level).
-    from engine.state import CURRENT, PREVIOUS, save_state, backup_state, load_state
+    from engine.core.state import CURRENT, PREVIOUS, save_state, backup_state, load_state
     st_mode = initialize_state({"name": "ModeTest", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_mode.setdefault("flags", {})["ironman_mode"] = False
     st_mode.setdefault("economy", {})["cash"] = 10

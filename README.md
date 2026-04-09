@@ -49,6 +49,7 @@ If you want a “grown-up” sandbox where actions have persistent, systemic con
 ## What’s new in v6.9
 
 - **Shared LLM HTTP layer** (`ai/llm_http.py`): retries + backoff for **narration (streaming)** and **intent (JSON)** — see `LLM_HTTP_RETRIES`.
+- **Intent schema v2 (plan-based)**: the LLM can return `version=2` with `plan.steps[]` + `preconditions`. The engine selects the first valid step for this turn (not always `steps[0]`) and overlays it into `action_ctx` for execution.
 - **“Facts changed this turn”** line in the narration package (`ai/turn_prompt.py`) + **`commerce_notes`** in `meta.last_turn_audit` (Shop / Bank / Stay).
 - **Hygiene commands**: `SHOWER` / `HYGIENE` / `MANDI` (reset hygiene clock, ~15 engine minutes).
 - **Save migration**: `python scripts/migrate_save.py` (writes `.bak`, merges new fields).

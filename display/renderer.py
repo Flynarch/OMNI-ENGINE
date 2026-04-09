@@ -8,7 +8,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from engine.combat import get_active_weapon
+from engine.systems.combat import get_active_weapon
 
 console = Console()
 
@@ -141,6 +141,69 @@ def _fmt_intel_items(state: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _fmt_active_scene(state: dict[str, Any]) -> list[str]:
+    sc = state.get("active_scene")
+    if not isinstance(sc, dict) or not sc:
+        return []
+    st = str(sc.get("scene_type", "") or "").strip()
+    ph = str(sc.get("phase", "") or "").strip()
+    exp = sc.get("expires_at") if isinstance(sc.get("expires_at"), dict) else {}
+    try:
+        ed = int((exp or {}).get("day", 0) or 0)
+    except Exception:
+        ed = 0
+    try:
+        et = int((exp or {}).get("time_min", 0) or 0)
+    except Exception:
+        et = 0
+    opts = sc.get("next_options") or []
+    if not isinstance(opts, list):
+        opts = []
+    lines: list[str] = []
+    lines.append(f"ActiveScene: {st or '-'} phase={ph or '-'}")
+    if ed > 0:
+        lines.append(f"deadline: day{ed} {_fmt_clock(et)}")
+    if opts:
+        # show a few options
+        preview = [str(x) for x in opts[:8] if isinstance(x, str)]
+        if preview:
+            lines.append("options: " + " | ".join(preview))
+    return lines
+
+
+def _fmt_scene_queue(state: dict[str, Any]) -> list[str]:
+    q = state.get("scene_queue", [])
+    if not isinstance(q, list) or not q:
+        return []
+    # Preview up to 3 queued scene types.
+    types: list[str] = []
+    for it in q[:8]:
+        if not isinstance(it, dict):
+            continue
+        st = str(it.get("scene_type", "") or "").strip()
+        if st:
+            types.append(st)
+        if len(types) >= 3:
+            break
+    if not types:
+        return ["SceneQueue: (items queued)"]
+    extra = ""
+    if len(q) > len(types):
+        extra = f" (+{len(q) - len(types)} more)"
+    return [f"SceneQueue: {', '.join(types)}{extra}"]
+
+
+def _fmt_scene_lock_reason(state: dict[str, Any]) -> list[str]:
+    sc = state.get("active_scene")
+    if not isinstance(sc, dict) or not sc:
+        return []
+    st = str(sc.get("scene_type", "") or "").strip()
+    ph = str(sc.get("phase", "") or "").strip()
+    if not st:
+        return []
+    return [f"SceneLock: resolve {st}({ph or '-'}) first"]
+
+
 def _fmt_npc_offers(state: dict[str, Any], max_n: int = 3) -> list[str]:
     world = state.get("world", {}) or {}
     econ = world.get("npc_economy", {}) or {}
@@ -219,7 +282,7 @@ def render_monitor(state: dict[str, Any]) -> None:
             left.append(f"SimYear: {sy}\n", style="dim")
     # Location profile summary (culture/econ background).
     try:
-        from engine.atlas import ensure_location_profile, fmt_profile_short
+        from engine.world.atlas import ensure_location_profile, fmt_profile_short
 
         loc_s = str(player.get("location", "") or "").strip()
         if loc_s:
@@ -237,6 +300,28 @@ def render_monitor(state: dict[str, Any]) -> None:
     left.append(f"BP: {bp}  ", style=bp_style)
     left.append(f"Blood: {bio.get('blood_volume', 5.0)}/{bio.get('blood_max', 5.0)}L\n")
     left.append(f"Trace: {tr.get('trace_pct', 0)}% [{tr.get('trace_status', 'Ghost')}]\n", style=trace_style)
+    # Local investigation pressure (Heat/Suspicion) — label + a few reasons only.
+    try:
+        from engine.social.suspicion_ui import get_heat_brief, get_suspicion_brief
+
+        hb = get_heat_brief(state)
+        sb = get_suspicion_brief(state)
+        if isinstance(hb, dict):
+            hlabel = str(hb.get("label", "none") or "none")
+            hrs = hb.get("reasons", []) or []
+            hline = f"Heat: {hlabel}"
+            if isinstance(hrs, list) and hrs:
+                hline += " (" + ", ".join([str(x) for x in hrs[:2]]) + ")"
+            left.append(hline + "\n", style="dim")
+        if isinstance(sb, dict):
+            slabel = str(sb.get("label", "none") or "none")
+            srs = sb.get("reasons", []) or []
+            sline = f"Suspicion: {slabel}"
+            if isinstance(srs, list) and srs:
+                sline += " (" + ", ".join([str(x) for x in srs[:2]]) + ")"
+            left.append(sline + "\n", style="dim")
+    except Exception:
+        pass
     # Disguise / Safehouse / Weather (new integrated systems; keep compact).
     try:
         d = (player.get("disguise", {}) or {}) if isinstance(player, dict) else {}
@@ -654,6 +739,29 @@ def render_monitor(state: dict[str, Any]) -> None:
             if len(s) > 140:
                 s = s[:137] + "..."
             right_prefix.append(f"- {s}\n", style="dim")
+
+    # Active scene (encounter) preview.
+    try:
+        sc_lines = _fmt_active_scene(state)
+        if sc_lines:
+            right_prefix.append("Scene:\n", style="bold")
+            # Lock reason first.
+            for ln in _fmt_scene_lock_reason(state)[:1]:
+                right_prefix.append(f"- {ln}\n", style="dim")
+            for ln in sc_lines[:6]:
+                right_prefix.append(f"- {ln}\n", style="dim")
+    except Exception:
+        pass
+
+    # Scene queue preview (queued encounters behind an active scene).
+    try:
+        sq = _fmt_scene_queue(state)
+        if sq:
+            right_prefix.append("SceneQueue:\n", style="bold")
+            for ln in sq[:3]:
+                right_prefix.append(f"- {ln}\n", style="dim")
+    except Exception:
+        pass
 
     # World queue preview (pending events).
     pe = state.get("pending_events", []) or []

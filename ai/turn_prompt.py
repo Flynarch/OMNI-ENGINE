@@ -5,7 +5,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from engine.combat import get_active_weapon
+from engine.systems.combat import get_active_weapon
 
 
 def get_narration_lang(state: dict[str, Any]) -> str:
@@ -39,6 +39,23 @@ CONTRACT:
 - [PLAYER INPUT] is what the human typed — address that action first.
 - If [ENGINE] says combat_blocked or lists triggered events/ripples, the story MUST reflect that (no alternate physics).
 - MEMORY_HASH is the continuity channel; keep NPC lines and ripples consistent with [WORLD QUEUE] when possible.
+- If travel uses a vehicle (see `vehicle_used` in action_ctx or the vehicle line), narration must reflect the chosen vehicle (noise/visibility), and must not contradict fuel/condition changes recorded by the engine.
+- If a pending/triggered event `police_weapon_check` exists, treat it as a focused police stop about weapons: use `country`, `law_level`, `firearm_policy`, and the `dialog` templates (opener / ask_weapon / ask_permit / hint_consequences / reactions) to drive a natural conversation about honesty, weapon permit, and local law — never contradict whether the weapon is illegal in that jurisdiction. If payload includes `permit_doc`, incorporate whether the permit is present/valid/forged into the scene (paper check, doubt, quick glance vs deeper verification).
+- If a `police_weapon_check` event triggered a scene (see `active_scene.scene_type=police_stop`), treat it as an interactive stop. You MUST only offer commands listed in `active_scene.next_options` (e.g. `SCENE COMPLY`, `SCENE SAY_NO`, `SCENE SHOW_PERMIT`, `SCENE BRIBE`, `SCENE RUN`). Do not resolve it in narration without player input.
+- If a pending/triggered event `safehouse_raid` exists, treat it as an urgent police search of the safehouse: use its `dialog` beats (opener / announce / search / found / outcome_*) and the local `country`/`law_level` context to narrate consequences (confiscation, trace jump, restrictions). Do NOT invent confiscated items that contradict the payload/meta.
+- If `safehouse_raid` triggered a scene (see `active_scene.scene_type=raid_response`), treat it as an interactive raid response. You MUST only offer commands listed in `active_scene.next_options` (e.g. `SCENE COMPLY`, `SCENE HIDE`, `SCENE BRIBE 500`, `SCENE FLEE`, `SCENE SHOW_PERMIT`). Do not resolve it in narration without player input.
+- If a pending event `safehouse_raid` is scheduled for soon (in [WORLD QUEUE]), explicitly prompt the player with actionable options they can type: `SAFEHOUSE RAID comply`, `SAFEHOUSE RAID hide`, `SAFEHOUSE RAID bribe <amount>`, `SAFEHOUSE RAID flee`.
+- If the safehouse was raided recently (see world_notes/news/ripples), remind the player that they can “burn” it: `SAFEHOUSE burn` to abandon it and clear stash.
+ - If a pending/triggered event `undercover_sting` exists, treat it as a tense realization that the black-market transaction was monitored (undercover / CCTV / marked bills). It should foreshadow that a police stop can happen moments later; give the player concrete actions (leave calmly, stash, change vehicle, go to safehouse, etc.) without contradicting [ENGINE] outcomes.
+ - If `undercover_sting` triggered a scene (see `active_scene.scene_type=sting_setup`), treat it as an interactive immediate-response moment. You MUST only offer commands listed in `active_scene.next_options` (e.g. `SCENE LAY_LOW`, `SCENE DITCH_ITEMS`, `SCENE WALK_AWAY`, `SCENE RUN`). Do not resolve it in narration without player input.
+ - If `police_sweep` triggered a scene (see `active_scene.scene_type=checkpoint_sweep`), treat it as an interactive checkpoint moment. You MUST only offer commands listed in `active_scene.next_options` (e.g. `SCENE COMPLY`, `SCENE DETOUR`, `SCENE BRIBE 500`, `SCENE RUN`, `SCENE WAIT`). Do not resolve it in narration without player input.
+ - If a travel encounter triggered a scene (`active_scene.scene_type=traffic_stop` or `vehicle_search`), treat it as an interactive roadside stop/search. You MUST only offer commands listed in `active_scene.next_options` (e.g. `SCENE COMPLY`, `SCENE BRIBE 200`, `SCENE CONCEAL <item_id>`, `SCENE DUMP <item_id>`, `SCENE RUN`). Do not resolve it in narration without player input.
+ - If a travel encounter triggered a scene (`active_scene.scene_type=border_control`), treat it as an interactive border/ID checkpoint moment. You MUST only offer commands listed in `active_scene.next_options` (e.g. `SCENE COMPLY`, `SCENE BRIBE 500`, `SCENE CONCEAL <item_id>`, `SCENE DUMP <item_id>`, `SCENE RUN`). Do not resolve it in narration without player input.
+ - If the player uses `INFORMANTS` / `INFORMANT PAY` / `INFORMANT BURN`, treat it as off-screen social maneuvering with contacts. Never invent new informants; only reflect what [ENGINE] outputs and any scheduled events (like `informant_tip` or `npc_report` backlash).
+ - If a pending/triggered event `delivery_drop` exists, narrate it as a discreet handoff (dead drop) or brief courier meet. The item should appear as pickupable in `nearby_items` shortly after; remind the player they can `PICKUP <item_id>` (or equivalent) and that loitering increases risk in high-police districts.
+ - If a delivery package in `nearby_items` is marked as `decoy` or `sting_on_pickup`, treat it as suspicious (wrong tape, wrong weight, too clean, someone watching). If the engine triggers a police stop afterward, connect the cause-and-effect (pickup → attention).
+ - If the world/news mentions `paper_trail` / `Jejak Transaksi` / `CCTV` / `serial cash`, treat it as delayed consequences of a courier-style transaction (not magic). Make it feel like real investigation momentum (cameras, informants, bank logs), and foreshadow increased checks/raids.
+ - If `active_scene` exists in [ENGINE], treat it as the primary interaction. You MUST present the current `scene_type`, `phase`, and the authoritative `next_options` as explicit commands the player can type (e.g. `SCENE APPROACH`, `SCENE TAKE`, `SCENE WAIT`). Do NOT invent options outside `next_options`. While a scene is active, do not narrate unrelated long actions as if they happened.
 
 LANGUAGE: All narrative prose inside sections = English. XML tag names stay English. MEMORY_HASH emoji prefixes unchanged.
 
@@ -57,6 +74,24 @@ KONTRAK:
 - [PLAYER INPUT] adalah perintah pemain — tanggapi tindakan itu dulu.
 - Jika [ENGINE] menyebut combat_blocked atau event/ripple terpicu, cerita HARUS selaras (bukan fisika lain).
 - MEMORY_HASH adalah saluran kontinuitas; samakan NPC/ripple dengan [ANTREAN DUNIA] bila relevan.
+- Jika travel memakai kendaraan (lihat `vehicle_used` di action_ctx atau baris vehicle), narasi wajib menyebut kendaraan itu (suara/visibilitas) dan tidak boleh bertentangan dengan fuel/condition yang sudah diubah engine.
+- Jika ada pending/triggered event `police_weapon_check`, anggap itu razia polisi fokus senjata: pakai `country`, `law_level`, `firearm_policy`, dan template `dialog` (opener / ask_weapon / ask_permit / hint_consequences / reaksi) untuk bikin percakapan alami soal kejujuran, weapon permit, dan hukum lokal — jangan pernah bertentangan dengan status senjata (legal/ilegal) di negara itu.
+- Jika ada pending/triggered event `police_weapon_check`, anggap itu razia polisi fokus senjata: pakai `country`, `law_level`, `firearm_policy`, dan template `dialog` (opener / ask_weapon / ask_permit / hint_consequences / reaksi) untuk bikin percakapan alami soal kejujuran, weapon permit, dan hukum lokal — jangan pernah bertentangan dengan status senjata (legal/ilegal) di negara itu. Kalau payload punya `permit_doc`, masukkan detailnya (ada/tidak, valid/tidak, terindikasi palsu) sebagai “paper check” yang realistis.
+- Kalau `police_weapon_check` memicu scene (lihat `active_scene.scene_type=police_stop`), anggap itu penghentian interaktif. Kamu WAJIB hanya menawarkan perintah yang ada di `active_scene.next_options` (mis. `SCENE COMPLY`, `SCENE SAY_NO`, `SCENE SHOW_PERMIT`, `SCENE BRIBE`, `SCENE RUN`). Jangan “menyelesaikan” razia itu di narasi tanpa input pemain.
+- Jika ada pending/triggered event `safehouse_raid`, anggap itu penggeledahan safehouse oleh polisi: pakai beat `dialog` (opener / announce / search / found / outcome_*) + konteks `country`/`law_level` untuk narasikan konsekuensi (penyitaan, lonjakan trace, pembatasan area). Jangan mengarang barang yang disita kalau bertentangan dengan payload/meta.
+- Kalau `safehouse_raid` memicu scene (lihat `active_scene.scene_type=raid_response`), anggap itu respons razia interaktif. Kamu WAJIB hanya menawarkan perintah yang ada di `active_scene.next_options` (mis. `SCENE COMPLY`, `SCENE HIDE`, `SCENE BRIBE 500`, `SCENE FLEE`, `SCENE SHOW_PERMIT`). Jangan “menyelesaikan” razia itu di narasi tanpa input pemain.
+- Jika pending event `safehouse_raid` sudah terjadwal dekat (lihat [ANTREAN DUNIA]), minta pemain memilih opsi yang bisa langsung diketik: `SAFEHOUSE RAID comply`, `SAFEHOUSE RAID hide`, `SAFEHOUSE RAID bribe <jumlah>`, `SAFEHOUSE RAID flee`.
+- Jika safehouse baru saja digeledah (lihat world_notes/news/ripples), ingatkan bahwa pemain bisa “burn” safehouse: `SAFEHOUSE burn` untuk meninggalkannya dan mengosongkan stash.
+ - Jika ada pending/triggered event `undercover_sting`, anggap itu momen tegang saat kamu sadar transaksi black market sedang dipantau (undercover/CCTV/uang bertanda). Ini harus jadi foreshadow bahwa razia/penghentian bisa terjadi sebentar lagi; kasih opsi aksi konkret (jalan santai, ganti rute, stash, ganti kendaraan, masuk safehouse, dll.) tanpa melawan hasil [ENGINE].
+ - Kalau `undercover_sting` memicu scene (lihat `active_scene.scene_type=sting_setup`), anggap itu momen respons cepat yang interaktif. Kamu WAJIB hanya menawarkan perintah yang ada di `active_scene.next_options` (mis. `SCENE LAY_LOW`, `SCENE DITCH_ITEMS`, `SCENE WALK_AWAY`, `SCENE RUN`). Jangan “menyelesaikan” sting itu di narasi tanpa input pemain.
+ - Kalau `police_sweep` memicu scene (lihat `active_scene.scene_type=checkpoint_sweep`), anggap itu momen checkpoint yang interaktif. Kamu WAJIB hanya menawarkan perintah yang ada di `active_scene.next_options` (mis. `SCENE COMPLY`, `SCENE DETOUR`, `SCENE BRIBE 500`, `SCENE RUN`, `SCENE WAIT`). Jangan “menyelesaikan” sweep itu di narasi tanpa input pemain.
+ - Kalau travel memicu scene (lihat `active_scene.scene_type=traffic_stop` atau `vehicle_search`), anggap itu penghentian/pengecekan di jalan yang interaktif. Kamu WAJIB hanya menawarkan perintah yang ada di `active_scene.next_options` (mis. `SCENE COMPLY`, `SCENE BRIBE 200`, `SCENE CONCEAL <item_id>`, `SCENE DUMP <item_id>`, `SCENE RUN`). Jangan “menyelesaikan” interaksi itu di narasi tanpa input pemain.
+ - Kalau travel memicu scene (lihat `active_scene.scene_type=border_control`), anggap itu momen pemeriksaan perbatasan/ID yang interaktif. Kamu WAJIB hanya menawarkan perintah yang ada di `active_scene.next_options` (mis. `SCENE COMPLY`, `SCENE BRIBE 500`, `SCENE CONCEAL <item_id>`, `SCENE DUMP <item_id>`, `SCENE RUN`). Jangan “menyelesaikan” interaksi itu di narasi tanpa input pemain.
+ - Kalau pemain pakai `INFORMANTS` / `INFORMANT PAY` / `INFORMANT BURN`, anggap itu manuver sosial off-screen lewat kontak. Jangan mengarang informant baru; cukup refleksikan output [ENGINE] dan event yang terjadwal (mis. `informant_tip` atau backlash `npc_report`).
+ - Jika ada pending/triggered event `delivery_drop`, narasikan sebagai serah-terima discreet (dead drop) atau courier meet singkat. Item akan muncul sebagai objek yang bisa dipickup di `nearby_items` beberapa saat kemudian; ingatkan pemain bisa `PICKUP <item_id>` dan bahwa kelamaan nongkrong di distrik polisi tinggi meningkatkan risiko.
+ - Jika paket delivery di `nearby_items` ditandai `decoy` atau `sting_on_pickup`, anggap itu mencurigakan (tape beda, berat aneh, terlalu rapi, ada orang ngeliatin). Kalau engine memicu razia setelahnya, jelaskan sebab-akibatnya (pickup → attention).
+ - Kalau world/news menyebut `paper_trail` / `Jejak Transaksi` / `CCTV` / `serial cash`, anggap itu konsekuensi tertunda dari transaksi model courier (bukan sihir). Buat terasa seperti investigasi nyata (kamera, informan, log bank), dan foreshadow check/raid yang makin sering.
+ - Kalau ada `active_scene` di [ENGINE], anggap itu interaksi utama. Kamu WAJIB menampilkan `scene_type`, `phase`, dan daftar `next_options` (authoritative) sebagai perintah yang bisa diketik pemain (mis. `SCENE APPROACH`, `SCENE TAKE`, `SCENE WAIT`). Jangan mengarang opsi di luar `next_options`. Saat scene aktif, jangan menarasikan aksi panjang lain seolah-olah sudah terjadi.
 
 BAHASA: Semua prosa narasi dalam section = Bahasa Indonesia natural. Nama tag XML tetap Inggris. Prefix emoji MEMORY_HASH jangan diganti.
 
@@ -89,6 +124,35 @@ def _fmt_player_card(state: dict[str, Any]) -> str:
     )
 
 
+def _fmt_vehicle_line(state: dict[str, Any]) -> str:
+    inv = state.get("inventory", {}) or {}
+    if not isinstance(inv, dict):
+        return "vehicle: (invalid inventory)"
+    vid = str(inv.get("active_vehicle_id", "") or "").strip().lower()
+    if not vid:
+        return "vehicle: (none active)"
+    vmap = inv.get("vehicles", {}) if isinstance(inv.get("vehicles"), dict) else {}
+    row = vmap.get(vid) if isinstance(vmap, dict) else None
+    if not isinstance(row, dict):
+        return f"vehicle: active={vid} (missing data)"
+    return f"vehicle: active={vid} fuel={int(row.get('fuel', 0) or 0)} cond={int(row.get('condition', 100) or 100)} stolen={bool(row.get('stolen', False))}"
+
+
+def _fmt_cyber_alert_line(state: dict[str, Any]) -> str:
+    try:
+        p = state.get("player", {}) or {}
+        loc = str(p.get("location", "") or "").strip().lower()
+        if not loc:
+            return "cyber_alert: -"
+        slot = ((state.get("world", {}) or {}).get("locations", {}) or {}).get(loc)
+        ca = slot.get("cyber_alert") if isinstance(slot, dict) else None
+        if not isinstance(ca, dict) or not ca:
+            return "cyber_alert: (none)"
+        return f"cyber_alert: level={ca.get('level',0)}/100 until_day={ca.get('until_day',0)} district={ca.get('district','-')}"
+    except Exception:
+        return "cyber_alert: (error)"
+
+
 def _fmt_location_tags(state: dict[str, Any]) -> str:
     try:
         p = state.get("player", {}) or {}
@@ -102,6 +166,61 @@ def _fmt_location_tags(state: dict[str, Any]) -> str:
         pass
     return "location_tags: -"
 
+
+def _fmt_district_line(state: dict[str, Any]) -> str:
+    p = state.get("player", {}) or {}
+    loc = str(p.get("location", "") or "").strip().lower()
+    did = str(p.get("district", "") or "").strip().lower()
+    if not (loc and did):
+        return "district: -"
+    try:
+        from engine.world.districts import get_district
+
+        d = get_district(state, loc, did)
+        if isinstance(d, dict):
+            return (
+                f"district: {d.get('name', did)} id={did} crime={d.get('crime_risk','-')}/5 "
+                f"police={d.get('police_presence','-')}/5 services={','.join(d.get('services',[]) or [])}"
+            )
+    except Exception:
+        pass
+    return f"district: id={did}"
+
+
+def _fmt_social_rumor_brief(state: dict[str, Any], action_ctx: dict[str, Any]) -> str:
+    """Give the LLM specific rumors/beliefs for the target NPC to reference."""
+    if str(action_ctx.get("domain", "") or "") != "social":
+        return ""
+    targs = action_ctx.get("targets")
+    if not (isinstance(targs, list) and targs and isinstance(targs[0], str)):
+        return ""
+    npc_name = str(targs[0])
+    lines: list[str] = []
+    # Belief summary (from ripples/news).
+    npc = (state.get("npcs", {}) or {}).get(npc_name)
+    if isinstance(npc, dict):
+        bs = npc.get("belief_summary") or {}
+        if isinstance(bs, dict):
+            lines.append(f"belief_summary: suspicion={bs.get('suspicion',0)}/100 respect={bs.get('respect',50)}/100")
+    # Social diffusion knowledge (gossip memory).
+    try:
+        from engine.social.social_diffusion import get_npc_knowledge_summary
+
+        k = get_npc_knowledge_summary(state, npc_name)
+        if isinstance(k, dict):
+            cats = k.get("known_categories") if isinstance(k.get("known_categories"), dict) else {}
+            if isinstance(cats, dict) and cats:
+                preview = []
+                for ck, cv in list(cats.items())[:3]:
+                    if isinstance(cv, dict) and cv.get("latest_text"):
+                        preview.append(f"{ck}:{str(cv.get('latest_text'))[:80]}")
+                if preview:
+                    lines.append("rumors_about_player: " + " | ".join(preview))
+    except Exception:
+        pass
+    if not lines:
+        return ""
+    return "[NPC CONTEXT]\n" + "\n".join(lines)
 def _fmt_social_stats(state: dict[str, Any]) -> str:
     stats = state.get("player", {}).get("social_stats", {}) or {}
     if not isinstance(stats, dict):
@@ -147,6 +266,10 @@ def _fmt_action_ctx(action_ctx: dict[str, Any]) -> str:
         lines.append(f"accommodation_intent=nights={aim.get('nights')} kind_guess={aim.get('kind')}")
     if action_ctx.get("accommodation_auto_applied"):
         lines.append("accommodation_auto_applied=True")
+    if action_ctx.get("vehicle_id"):
+        lines.append(f"vehicle_id={action_ctx.get('vehicle_id')}")
+    if action_ctx.get("vehicle_used"):
+        lines.append(f"vehicle_used={action_ctx.get('vehicle_used')}")
     return "\n".join(lines)
 
 
@@ -210,9 +333,15 @@ def _fmt_weapon_line(state: dict[str, Any]) -> str:
         return "active_weapon: (none / unarmed)"
     mag = w.get("mag_capacity", "-")
     jam = bool(w.get("jammed")) or bool(flags.get("weapon_jammed"))
+    aid = str(w.get("ammo_item_id", "") or "").strip()
+    res_txt = ""
+    if aid:
+        iq = inv.get("item_quantities") if isinstance(inv.get("item_quantities"), dict) else {}
+        if isinstance(iq, dict):
+            res_txt = f" reserve_{aid}={int(iq.get(aid, 0) or 0)}"
     return (
         f"active_weapon kind={w.get('kind', '?')} ammo={w.get('ammo', '-')}/{mag} "
-        f"jammed={jam} tier={w.get('condition_tier', '?')} id={inv.get('active_weapon_id') or 'legacy'}"
+        f"jammed={jam} tier={w.get('condition_tier', '?')} id={inv.get('active_weapon_id') or 'legacy'}{res_txt}"
     )
 
 
@@ -311,7 +440,7 @@ def _fmt_skills_engine(state: dict[str, Any], lang: str) -> str:
 
 def _fmt_weather_engine(state: dict[str, Any], lang: str) -> str:
     try:
-        from engine.weather import ensure_weather
+        from engine.world.weather import ensure_weather
 
         loc = str((state.get("player", {}) or {}).get("location", "") or "").strip().lower()
         day = int((state.get("meta", {}) or {}).get("day", 1) or 1)
@@ -341,7 +470,7 @@ def _fmt_disguise_engine(state: dict[str, Any], lang: str) -> str:
 
 def _fmt_language_engine(state: dict[str, Any], lang: str) -> str:
     try:
-        from engine.language import communication_quality
+        from engine.core.language import communication_quality
 
         lc = communication_quality(state, {"domain": "social", "normalized_input": "narration snapshot"})
         if lang == "en":
@@ -359,7 +488,7 @@ def _fmt_language_engine(state: dict[str, Any], lang: str) -> str:
 
 def _fmt_safehouse_engine(state: dict[str, Any], lang: str) -> str:
     try:
-        from engine.safehouse import ensure_safehouse_here
+        from engine.systems.safehouse import ensure_safehouse_here
 
         row = ensure_safehouse_here(state)
         st = str(row.get("status", "none") or "none")
@@ -573,6 +702,7 @@ def build_turn_package(
 {_fmt_meta_clock(state)}
 {_fmt_player_card(state)}
 {_fmt_location_tags(state)}
+{_fmt_district_line(state)}
 {_fmt_accommodation_state(state, lang)}
 {_fmt_turn_facts_delta(state, lang)}
 {_fmt_economy_detail(state, lang)}
@@ -581,6 +711,8 @@ def build_turn_package(
 {_fmt_weather_engine(state, lang)}
 {_fmt_disguise_engine(state, lang)}
 {_fmt_safehouse_engine(state, lang)}
+{_fmt_vehicle_line(state)}
+{_fmt_cyber_alert_line(state)}
 {_fmt_language_engine(state, lang)}
 {_fmt_intimacy_summary(state, lang)}
 {_fmt_npc_combat_brief(state, lang)}
@@ -598,6 +730,7 @@ flags: weapon_jammed={flags.get('weapon_jammed')} stop_seq={flags.get('stop_sequ
 {_fmt_npcs(state)}
 Recent world_notes:
 {_fmt_world_notes(state)}
+{_fmt_social_rumor_brief(state, action_ctx)}
 [CALCULATED STATE]
 Blood: {bio.get('blood_volume', 5.0)}L / {bio.get('blood_max', 5.0)}L | BP: {bio.get('bp_state', 'Stable')}
 Sleep Debt: {bio.get('sleep_debt', 0)}h | Infection: {bio.get('infection_pct', 0)}%

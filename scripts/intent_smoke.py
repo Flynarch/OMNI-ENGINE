@@ -7,11 +7,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from engine.state import initialize_state  # type: ignore  # noqa: E402
+from engine.core.state import initialize_state  # type: ignore  # noqa: E402
 from ai.intent_resolver import resolve_intent  # type: ignore  # noqa: E402
-from engine.action_intent import parse_action_intent  # type: ignore  # noqa: E402
-from engine.modifiers import compute_roll_package  # type: ignore  # noqa: E402
-from engine.inventory_ops import apply_inventory_ops  # type: ignore  # noqa: E402
+from engine.core.action_intent import parse_action_intent  # type: ignore  # noqa: E402
+from engine.core.modifiers import compute_roll_package  # type: ignore  # noqa: E402
+from engine.player.inventory_ops import apply_inventory_ops  # type: ignore  # noqa: E402
 
 
 def run() -> None:

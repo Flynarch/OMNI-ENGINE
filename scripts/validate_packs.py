@@ -9,7 +9,7 @@ sys.path.insert(0, str(ROOT))
 
 
 def main() -> int:
-    from engine.content_packs import PACKS_DIR, PackError, _load_pack_extras, load_pack
+    from engine.core.content_packs import PACKS_DIR, PackError, _load_pack_extras, load_pack
 
     if not PACKS_DIR.exists():
         print(f"[packs] directory not found: {PACKS_DIR}")

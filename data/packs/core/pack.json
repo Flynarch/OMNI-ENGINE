@@ -63,8 +63,42 @@
         "kind": "firearm",
         "mag_capacity": 12,
         "ammo": 12,
+        "ammo_item_id": "ammo_9mm",
         "condition_tier": 2
       }
+    },
+    {
+      "id": "ammo_9mm",
+      "name": "9mm FMJ (box)",
+      "size": 1,
+      "tags": ["ammo", "caliber_9mm", "restricted"],
+      "base_price": 40,
+      "rounds_per_box": 50,
+      "rarity": "common"
+    },
+    {
+      "id": "weapon_permit_usa",
+      "name": "Weapon Permit (USA)",
+      "size": 1,
+      "tags": ["document", "permit", "weapon_permit", "issuer_usa"],
+      "base_price": 1200,
+      "rarity": "rare"
+    },
+    {
+      "id": "weapon_permit_idn",
+      "name": "Weapon Permit (Indonesia)",
+      "size": 1,
+      "tags": ["document", "permit", "weapon_permit", "issuer_indonesia"],
+      "base_price": 6000,
+      "rarity": "rare"
+    },
+    {
+      "id": "weapon_permit_forged",
+      "name": "Forged Weapon Permit",
+      "size": 1,
+      "tags": ["document", "permit", "weapon_permit", "forged"],
+      "base_price": 2500,
+      "rarity": "rare"
     }
   ],
   "roles": [

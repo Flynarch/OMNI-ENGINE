@@ -68,7 +68,10 @@
     "item_sizes": {},
     "weapon_details": [],
     "weapons": {},
-    "active_weapon_id": ""
+    "active_weapon_id": "",
+    "item_quantities": {},
+    "vehicles": {},
+    "active_vehicle_id": ""
   },
   "reputation": {
     "police_label": "Neutral",
