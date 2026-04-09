@@ -221,6 +221,44 @@ def _fmt_social_rumor_brief(state: dict[str, Any], action_ctx: dict[str, Any]) -
     if not lines:
         return ""
     return "[NPC CONTEXT]\n" + "\n".join(lines)
+
+
+def _fmt_npc_memories_brief(state: dict[str, Any], action_ctx: dict[str, Any]) -> str:
+    """Inject a small, relevant memory snippet for the target NPC only."""
+    targs = action_ctx.get("targets")
+    if not (isinstance(targs, list) and targs and isinstance(targs[0], str)):
+        return ""
+    npc_id = str(targs[0]).strip()
+    if not npc_id:
+        return ""
+    npc = (state.get("npcs", {}) or {}).get(npc_id)
+    if not isinstance(npc, dict):
+        return ""
+    mems = npc.get("memories", [])
+    if not isinstance(mems, list) or not mems:
+        return ""
+    rows = [m for m in mems if isinstance(m, dict) and str(m.get("summary", "") or "").strip()]
+    if not rows:
+        return ""
+
+    def _score(m: dict[str, Any]) -> tuple[int, int, int]:
+        imp = int(m.get("importance", 0) or 0)
+        w = m.get("when") if isinstance(m.get("when"), dict) else {}
+        d = int((w or {}).get("day", 1) or 1)
+        tm = int((w or {}).get("time_min", 0) or 0)
+        return (imp, d, tm)
+
+    rows.sort(key=_score, reverse=True)
+    top = rows[:3]
+    lines: list[str] = []
+    for m in top:
+        kind = str(m.get("kind", "") or "").strip()
+        summ = str(m.get("summary", "") or "").strip()
+        if kind:
+            lines.append(f"- {kind}: {summ[:120]}")
+        else:
+            lines.append(f"- {summ[:120]}")
+    return "[NPC_MEMORIES]\n" + "\n".join(lines)
 def _fmt_social_stats(state: dict[str, Any]) -> str:
     stats = state.get("player", {}).get("social_stats", {}) or {}
     if not isinstance(stats, dict):
@@ -731,6 +769,7 @@ flags: weapon_jammed={flags.get('weapon_jammed')} stop_seq={flags.get('stop_sequ
 Recent world_notes:
 {_fmt_world_notes(state)}
 {_fmt_social_rumor_brief(state, action_ctx)}
+{_fmt_npc_memories_brief(state, action_ctx)}
 [CALCULATED STATE]
 Blood: {bio.get('blood_volume', 5.0)}L / {bio.get('blood_max', 5.0)}L | BP: {bio.get('bp_state', 'Stable')}
 Sleep Debt: {bio.get('sleep_debt', 0)}h | Infection: {bio.get('infection_pct', 0)}%

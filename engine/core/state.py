@@ -182,6 +182,9 @@ def _migrate_state(state: dict[str, Any]) -> dict[str, Any]:
                     home = str(n.get("home_location", "") or "").strip()
                     if home:
                         n["current_location"] = home
+                # Backfill: NPC memories (v2 memory bridge)
+                if "memories" not in n or not isinstance(n.get("memories"), list):
+                    n["memories"] = []
     except Exception:
         pass
     # Backfill: world.npc_economy, meta.market_index, player.narration_style, flags.ironman_mode

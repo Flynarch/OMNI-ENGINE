@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -22,6 +23,24 @@ def extract_memory_hash_block(text: str) -> str:
 def parse_memory_hash(text: str) -> dict[str, Any]:
     block = extract_memory_hash_block(text)
     out: dict[str, Any] = {}
+    # v2: allow a JSON object inside the MEMORY_HASH block (in addition to emoji lines).
+    # Backward compatible: if JSON parse fails, we still parse emoji lines.
+    v2_obj: dict[str, Any] | None = None
+    try:
+        s = block.strip()
+        if s.startswith("{") and s.endswith("}"):
+            obj = json.loads(s)
+            if isinstance(obj, dict):
+                v2_obj = obj
+        else:
+            a = s.find("{")
+            b = s.rfind("}")
+            if a != -1 and b != -1 and b > a:
+                obj = json.loads(s[a : b + 1])
+                if isinstance(obj, dict):
+                    v2_obj = obj
+    except Exception:
+        v2_obj = None
     mapping = {
         "🎯": "active_objective",
         "📜": "committed_actions",
@@ -43,6 +62,8 @@ def parse_memory_hash(text: str) -> dict[str, Any]:
         for emo, key in mapping.items():
             if s.startswith(emo):
                 out[key] = s[len(emo) :].strip(" :")
+    if isinstance(v2_obj, dict) and v2_obj:
+        out["v2"] = v2_obj
     out["raw"] = block
     return out
 
@@ -118,6 +139,141 @@ def apply_memory_hash_to_state(state: dict[str, Any], mh: dict[str, Any]) -> Non
                     "surface_attempts": 0,
                 }
             )
+
+    # v2: NPC memory deltas (bounded, fail-safe, logged).
+    v2 = mh.get("v2")
+    if isinstance(v2, dict) and int(v2.get("version", 0) or 0) == 2:
+        try:
+            deltas = v2.get("npc_memory_deltas", [])
+            if isinstance(deltas, list) and deltas:
+                _apply_npc_memory_deltas(state, deltas)
+        except Exception as e:
+            try:
+                from engine.core.errors import record_error
+
+                record_error(state, "ai.memory_hash_v2", e)
+            except Exception:
+                pass
+
+
+def _clamp_int(v: Any, lo: int, hi: int, default: int) -> int:
+    try:
+        n = int(v)
+    except Exception:
+        n = int(default)
+    return max(int(lo), min(int(hi), int(n)))
+
+
+def _clamp_float(v: Any, lo: float, hi: float, default: float) -> float:
+    try:
+        x = float(v)
+    except Exception:
+        x = float(default)
+    return max(float(lo), min(float(hi), float(x)))
+
+
+def _apply_npc_memory_deltas(state: dict[str, Any], deltas: list[Any]) -> None:
+    npcs = state.get("npcs", {}) or {}
+    if not isinstance(npcs, dict):
+        return
+    meta = state.get("meta", {}) or {}
+    cur_day = _clamp_int(meta.get("day", 1), 1, 999999, 1)
+    cur_time = _clamp_int(meta.get("time_min", 0), 0, 1439, 0)
+
+    added_total = 0
+    for row in deltas[:8]:
+        if not isinstance(row, dict):
+            continue
+        npc_id = str(row.get("npc_id", "") or "").strip()
+        if not npc_id:
+            continue
+        npc = npcs.get(npc_id)
+        if not isinstance(npc, dict):
+            try:
+                from engine.core.errors import record_error
+
+                record_error(state, "ai.memory_hash_v2", Exception(f"Unknown npc_id in npc_memory_deltas: {npc_id}"))
+            except Exception:
+                pass
+            continue
+
+        mems = npc.setdefault("memories", [])
+        if not isinstance(mems, list):
+            mems = []
+            npc["memories"] = mems
+
+        adds = row.get("memories_add", [])
+        if not isinstance(adds, list):
+            adds = []
+        for m in adds[:5]:
+            if added_total >= 6:
+                break
+            if not isinstance(m, dict):
+                continue
+            mid = str(m.get("memory_id", "") or "").strip()
+            kind = str(m.get("kind", "") or "").strip().lower()
+            summary = str(m.get("summary", "") or "").strip()
+            if not (mid and kind and summary):
+                continue
+
+            when = m.get("when") if isinstance(m.get("when"), dict) else {}
+            day = _clamp_int((when or {}).get("day", cur_day), 1, 999999, cur_day)
+            tmin = _clamp_int((when or {}).get("time_min", cur_time), 0, 1439, cur_time)
+            imp = _clamp_int(m.get("importance", 30), 0, 100, 30)
+            val = _clamp_int(m.get("valence", 0), -100, 100, 0)
+            conf = _clamp_float(m.get("confidence", 0.7), 0.0, 1.0, 0.7)
+            tags = m.get("tags", [])
+            if not isinstance(tags, list):
+                tags = []
+            tags2 = [str(x)[:24] for x in tags[:8] if isinstance(x, (str, int, float)) and str(x).strip()]
+
+            rec = {
+                "memory_id": mid[:40],
+                "kind": kind[:32],
+                "summary": summary[:180],
+                "when": {"day": int(day), "time_min": int(tmin)},
+                "importance": int(imp),
+                "valence": int(val),
+                "confidence": float(conf),
+                "tags": tags2,
+            }
+            mems.append(rec)
+            added_total += 1
+
+        # Optional updates: small subset
+        ups = row.get("memories_update", [])
+        if isinstance(ups, list) and ups:
+            for u in ups[:6]:
+                if not isinstance(u, dict):
+                    continue
+                mid = str(u.get("memory_id", "") or "").strip()
+                if not mid:
+                    continue
+                setv = u.get("set") if isinstance(u.get("set"), dict) else {}
+                if not setv:
+                    continue
+                for rec in mems[-60:]:
+                    if isinstance(rec, dict) and str(rec.get("memory_id", "") or "") == mid:
+                        if "importance" in setv:
+                            rec["importance"] = _clamp_int(setv.get("importance"), 0, 100, int(rec.get("importance", 30) or 30))
+                        if "valence" in setv:
+                            rec["valence"] = _clamp_int(setv.get("valence"), -100, 100, int(rec.get("valence", 0) or 0))
+                        break
+
+        # Bound list size (keep most important + most recent)
+        try:
+            def _key(x: dict[str, Any]) -> tuple[int, int, int]:
+                w = x.get("when") if isinstance(x.get("when"), dict) else {}
+                d = _clamp_int(w.get("day", 1), 1, 999999, 1)
+                tm = _clamp_int(w.get("time_min", 0), 0, 1439, 0)
+                imp = _clamp_int(x.get("importance", 0), 0, 100, 0)
+                return (imp, d, tm)
+
+            mems2 = [x for x in mems if isinstance(x, dict) and x.get("memory_id")]
+            mems2.sort(key=_key, reverse=True)
+            npc["memories"] = mems2[:50]
+        except Exception:
+            npc["memories"] = mems[-50:]
 
 
 def enforce_stop_sequence_output(text: str, stop_sequence_active: bool) -> str:

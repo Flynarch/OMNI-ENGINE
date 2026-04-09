@@ -1749,6 +1749,31 @@ def _smoke() -> None:
     sid2 = select_best_step(action_ctx_skill, st_skill)
     assert sid2 == "s1"
 
+    # MEMORY_HASH v2: JSON inside <MEMORY_HASH> should apply npc memories (bounded + clamped).
+    from ai.parser import apply_memory_hash_to_state, parse_memory_hash
+
+    st_mh = initialize_state({"name": "MemHashV2", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_mh.setdefault("npcs", {})["AgentX"] = {"name": "AgentX", "alive": True, "memories": []}
+    mh_text = (
+        "<MEMORY_HASH>{"
+        "\"version\":2,"
+        "\"npc_memory_deltas\":[{"
+        "\"npc_id\":\"AgentX\","
+        "\"memories_add\":[{\"memory_id\":\"m1\",\"kind\":\"favor\",\"summary\":\"Player paid the debt.\",\"importance\":150,\"valence\":200,\"confidence\":2.0}],"
+        "\"memories_update\":[]"
+        "}]"
+        "}</MEMORY_HASH>"
+    )
+    mh = parse_memory_hash(mh_text)
+    apply_memory_hash_to_state(st_mh, mh)
+    mems = (st_mh.get("npcs", {}) or {}).get("AgentX", {}).get("memories", [])
+    assert isinstance(mems, list) and mems
+    m0 = mems[0]
+    assert isinstance(m0, dict) and m0.get("memory_id") == "m1"
+    assert 0 <= int(m0.get("importance", 0) or 0) <= 100
+    assert -100 <= int(m0.get("valence", 0) or 0) <= 100
+    assert 0.0 <= float(m0.get("confidence", 0.0) or 0.0) <= 1.0
+
     from engine.systems.scenes import advance_scene
 
     r1 = advance_scene(st_del, {"scene_action": "approach"})
