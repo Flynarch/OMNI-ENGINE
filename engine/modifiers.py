@@ -453,6 +453,7 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
                 "no_weapon": "No weapon for ranged",
                 "out_of_ammo": "Out of ammo",
                 "broken": "Weapon broken",
+                "jammed": "Weapon jammed",
             }
             reason = labels.get(str(blocked), str(blocked))
             return {

@@ -53,12 +53,16 @@ def apply_combat_gates(state: dict[str, Any], action_ctx: dict[str, Any]) -> Non
     inv = state.setdefault("inventory", {})
     w = get_active_weapon(inv)
 
+    flags = state.setdefault("flags", {})
     if is_ranged_combat(action_ctx):
         if not isinstance(w, dict):
             action_ctx["combat_blocked"] = "no_weapon"
             return
         if int(w.get("condition_tier", 2)) >= 5:
             action_ctx["combat_blocked"] = "broken"
+            return
+        if bool(w.get("jammed")) or bool(flags.get("weapon_jammed")):
+            action_ctx["combat_blocked"] = "jammed"
             return
         if weapon_uses_ammo(w) and int(w.get("ammo", 0)) < 1:
             action_ctx["combat_blocked"] = "out_of_ammo"
@@ -99,6 +103,7 @@ def resolve_combat_after_roll(state: dict[str, Any], action_ctx: dict[str, Any],
         if jammed:
             flags["weapon_jammed"] = True
             flags["jam_critical"] = crit_jam
+            w["jammed"] = True
             return
         flags["ammo_ok"] = consume_ammo(w, 1)
         degrade_weapon(w, event="combat_damage")

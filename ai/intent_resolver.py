@@ -21,7 +21,7 @@ Return ONE JSON object with keys:
 - combat_style: one of ["melee","ranged","none"] (only meaningful when domain="combat"; otherwise use "none")
 - social_mode: one of ["non_conflict","conflict","none"]
 - social_context: one of ["standard","formal","street","none"]
-- intent_note: short snake_case label (e.g. "social_dialogue", "ask_time", "look_for_person")
+- intent_note: short snake_case label (e.g. "social_dialogue", "intimacy_private", "ask_time", "look_for_person")
 - targets: array of short strings naming people/things/places if mentioned
 - stakes: one of ["none","low","medium","high"]
 - risk_level: one of ["low","medium","high"]
@@ -44,6 +44,7 @@ Rules:
 - For melee combat: if the player mentions stabbing/striking/melee weapon OR Indonesian equivalents (tusuk/pukul/memukul/hantam/tendang/pisau), use combat_style=\"melee\" and domain=\"combat\".
 - If the player wants to fight but doesn't specify style, set combat_style=\"none\".
 - If nothing matches, set domain=\"other\" and action_type=\"instant\".
+- Consensual private adult intimacy (fade-to-black): action_type=\"talk\", domain=\"social\", social_mode=\"non_conflict\", intent_note=\"intimacy_private\", stakes=\"medium\", time_cost_min 45-90. NEVER use intent_note=\"intimacy_private\" for coercion/rape; use social_mode=\"conflict\" or refuse.
 - For time_cost_min: simple talk/look around = 1-3, searching a place = 5-15, breaking in = 10-30, combat = 1, travel handled by action_type travel.
 - For inventory_ops: if the player wants to pick up / use a large object while holding something, add stow/swap/drop operations so the main action can proceed without \"wasting a turn\". Prefer stow to pocket/bag over drop.
 - For inventory_ops pickup: if the player references an object being in the current scene (e.g. \"laptop di meja\", \"HP di saku\", \"barang di tas\") and the object id can be inferred from nearby_items in the ENGINE_SNAPSHOT, add:

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from engine.combat import get_active_weapon
+
+
 def update_inventory(state: dict, action_ctx: dict) -> None:
     inv = state.setdefault("inventory", {})
     inv.setdefault("r_hand", "-")
@@ -21,6 +24,9 @@ def update_inventory(state: dict, action_ctx: dict) -> None:
         if free_hand and flags.get("weapon_jammed"):
             flags["weapon_jammed"] = False
             flags["jam_clear_success"] = True
+            aw = get_active_weapon(inv)
+            if isinstance(aw, dict):
+                aw["jammed"] = False
         else:
             flags["jam_clear_success"] = False
 

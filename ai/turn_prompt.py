@@ -204,12 +204,15 @@ def _fmt_accommodation_policy(action_ctx: dict[str, Any], lang: str) -> str:
 
 def _fmt_weapon_line(state: dict[str, Any]) -> str:
     inv = state.get("inventory", {})
+    flags = state.get("flags", {}) or {}
     w = get_active_weapon(inv)
     if not isinstance(w, dict):
         return "active_weapon: (none / unarmed)"
+    mag = w.get("mag_capacity", "-")
+    jam = bool(w.get("jammed")) or bool(flags.get("weapon_jammed"))
     return (
-        f"active_weapon kind={w.get('kind', '?')} ammo={w.get('ammo', '-')} "
-        f"tier={w.get('condition_tier', '?')} id={inv.get('active_weapon_id') or 'legacy'}"
+        f"active_weapon kind={w.get('kind', '?')} ammo={w.get('ammo', '-')}/{mag} "
+        f"jammed={jam} tier={w.get('condition_tier', '?')} id={inv.get('active_weapon_id') or 'legacy'}"
     )
 
 
@@ -405,6 +408,18 @@ def _dialogue_contract(action_ctx: dict[str, Any], lang: str) -> str:
     if action_ctx.get("domain") != "social":
         return ""
     note = action_ctx.get("intent_note", "")
+    if note == "intimacy_private":
+        if lang == "en":
+            return """[INTIMACY — FADE-TO-BLACK]
+- The physical act is OFF-SCREEN. Do not write graphic sexual detail; imply time passing, then aftermath only.
+- After the fade: mood, tenderness, awkwardness, or distance must align with [INTIMACY SUMMARY] and the social roll outcome.
+- Post-fade dialogue is allowed if non-explicit. Respect consent + CALCULATED STATE.
+"""
+        return """[INTIMACY — FADE-TO-BLACK]
+- Adegan fisik OFF-SCREEN; tanpa detail grafis; cukup implikasi + lompatan waktu, lalu sesudahnya.
+- Setelah fade: suasana harus selaras dengan [INTIMACY SUMMARY] dan outcome roll sosial.
+- Dialog sesudah fade boleh selama non-eksplisit. Hormati konsensualitas + CALCULATED STATE.
+"""
     if note not in ("social_dialogue", "social_scan_crowd", "social_inquiry"):
         return ""
     if lang == "en":
@@ -470,6 +485,34 @@ def _fmt_turn_facts_delta(state: dict[str, Any], lang: str) -> str:
         return ""
     title = "[FACTS CHANGED THIS TURN — use for prose, do not contradict CALCULATED STATE below]" if lang == "en" else "[FAKTA BERUBAH TURN INI — untuk prosa; jangan bentrok dengan CALCULATED STATE di bawah]"
     return title + "\n" + " | ".join(parts)
+
+
+def _fmt_intimacy_summary(state: dict[str, Any], lang: str) -> str:
+    meta = state.get("meta", {}) or {}
+    il = meta.get("intimacy_last")
+    if not isinstance(il, dict):
+        return ""
+    try:
+        cur_turn = int(meta.get("turn", 0) or 0)
+        if int(il.get("turn", -1) or -1) != cur_turn:
+            return ""
+    except Exception:
+        return ""
+    partner = str(il.get("partner", "") or "-")
+    try:
+        sat = int(il.get("satisfaction", 0) or 0)
+    except Exception:
+        sat = 0
+    tier = str(il.get("tier", "") or "")
+    if lang == "en":
+        return (
+            f"[INTIMACY SUMMARY — engine, this turn]\n"
+            f"partner={partner} satisfaction_roll={sat}/100 tier={tier} (use for emotional aftermath only; fade explicit acts)"
+        )
+    return (
+        f"[INTIMACY SUMMARY — engine, turn ini]\n"
+        f"partner={partner} satisfaction_roll={sat}/100 tier={tier} (untuk suasana sesudah fade; adegan eksplisit tidak ditulis)"
+    )
 
 
 def _roll_reason_line(roll_pkg: dict[str, Any], lang: str) -> str:
@@ -539,6 +582,7 @@ def build_turn_package(
 {_fmt_disguise_engine(state, lang)}
 {_fmt_safehouse_engine(state, lang)}
 {_fmt_language_engine(state, lang)}
+{_fmt_intimacy_summary(state, lang)}
 {_fmt_npc_combat_brief(state, lang)}
 {_fmt_action_ctx(action_ctx)}
 {_fmt_accommodation_policy(action_ctx, lang)}

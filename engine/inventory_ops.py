@@ -117,6 +117,18 @@ def apply_inventory_ops(state: dict[str, Any], action_ctx: dict[str, Any]) -> No
                 applied.append(f"pickup_failed:no_capacity:{item_id}")
                 continue
 
+            try:
+                from engine.weapon_kit import ensure_weapon_for_item
+
+                ensure_weapon_for_item(
+                    state,
+                    item,
+                    display_name=found_item_label or item,
+                    source="pickup",
+                )
+            except Exception:
+                pass
+
             # Remove from nearby list after pickup.
             try:
                 del nearby[found_index]
@@ -192,6 +204,17 @@ def apply_inventory_ops(state: dict[str, Any], action_ctx: dict[str, Any]) -> No
                 applied.append("equip_failed")
                 continue
             inv["active_weapon_id"] = wid
+            try:
+                from engine.combat import get_active_weapon
+
+                flags = state.setdefault("flags", {})
+                aw = get_active_weapon(inv)
+                if isinstance(aw, dict) and bool(aw.get("jammed")):
+                    flags["weapon_jammed"] = True
+                else:
+                    flags["weapon_jammed"] = False
+            except Exception:
+                pass
             applied.append(f"equip_weapon:{wid}")
             extra_minutes += tcm
             continue

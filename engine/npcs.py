@@ -271,7 +271,7 @@ def ensure_ambient_npcs(state: dict, action_ctx: dict) -> None:
     if action_ctx.get("domain") != "social":
         return
     note = action_ctx.get("intent_note", "")
-    if note not in ("social_dialogue", "social_scan_crowd", "social_inquiry"):
+    if note not in ("social_dialogue", "social_scan_crowd", "social_inquiry", "intimacy_private"):
         return
     npcs = state.setdefault("npcs", {})
     if len(npcs) >= 2:

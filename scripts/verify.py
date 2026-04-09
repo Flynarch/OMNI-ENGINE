@@ -1563,6 +1563,41 @@ def _smoke() -> None:
     )
     assert float((st_bio.get("bio", {}) or {}).get("hours_since_shower", 99)) == 0.0
 
+    # Intimacy: consensual path parses; aftermath sets satisfaction + partner mood (fade-to-black is LLM prompt).
+    from engine.action_intent import parse_action_intent
+    from engine.intimacy import apply_intimacy_aftermath
+    from engine.npcs import ensure_ambient_npcs
+
+    ctx_ix = parse_action_intent("make love with Rio")
+    assert ctx_ix.get("intent_note") == "intimacy_private"
+    assert ctx_ix.get("visibility") == "private"
+    assert "Rio" in (ctx_ix.get("targets") or [])
+    st_ix = initialize_state({"name": "Ix", "location": "Test", "year": "2025"}, seed_pack="minimal")
+    st_ix.setdefault("npcs", {})["Rio"] = {"joy": 10, "trust": 40, "ambient": True, "affiliation": "civilian"}
+    ensure_ambient_npcs(st_ix, ctx_ix)
+    ctx_ix["domain"] = "social"
+    ctx_ix["social_mode"] = "non_conflict"
+    ctx_ix["normalized_input"] = "make love with Rio"
+    apply_intimacy_aftermath(st_ix, ctx_ix, {"outcome": "Success", "roll": 50, "mods": [], "net_threshold": 50})
+    il = (st_ix.get("meta", {}) or {}).get("intimacy_last")
+    assert isinstance(il, dict) and il.get("partner") == "Rio"
+    assert 1 <= int(il.get("satisfaction", 0)) <= 100
+    assert int(((st_ix.get("npcs", {}) or {}).get("Rio") or {}).get("joy", 0)) > 10
+    assert parse_action_intent("paksa dia bercinta").get("intent_note") != "intimacy_private"
+
+    # Weapon kit: buying a firearm seeds inventory.weapons with ammo/capacity for combat gates.
+    from engine.shop import buy_item
+
+    st_wpn = initialize_state({"name": "WpnBuy", "location": "Test", "year": "2025"}, seed_pack="minimal")
+    st_wpn.setdefault("economy", {})["cash"] = 9000
+    br = buy_item(st_wpn, "compact_pistol")
+    assert bool(br.get("ok")), br
+    wrow = (st_wpn.get("inventory", {}).get("weapons") or {}).get("compact_pistol")
+    assert isinstance(wrow, dict)
+    assert str(wrow.get("kind")) == "firearm"
+    assert int(wrow.get("ammo", 0) or 0) >= 1
+    assert int(wrow.get("mag_capacity", 0) or 0) >= 1
+
     # Inventory micro-ops: stow from hand should not waste a turn, only adds time.
     inv_st = initialize_state({"name": "InvVerify", "location": "Test", "year": "2025"}, seed_pack="minimal")
     inv = inv_st.setdefault("inventory", {})

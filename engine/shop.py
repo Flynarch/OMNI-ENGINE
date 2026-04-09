@@ -67,6 +67,34 @@ def _get_seed_key(state: dict[str, Any]) -> str:
     return "seed"
 
 
+def _cleanup_weapon_registry(state: dict[str, Any], item_id: str) -> None:
+    """Drop weapons[id] if the player no longer holds that item anywhere."""
+    inv = state.get("inventory", {}) or {}
+    if not isinstance(inv, dict):
+        return
+    iid = str(item_id or "").strip()
+    if not iid:
+        return
+    held = False
+    for key in ("pocket_contents", "bag_contents", "r_hand", "l_hand", "worn"):
+        v = inv.get(key)
+        if isinstance(v, list):
+            if any(str(x) == iid for x in v):
+                held = True
+                break
+        elif isinstance(v, str) and v.strip() == iid:
+            held = True
+            break
+    if held:
+        return
+    wmap = inv.setdefault("weapons", {})
+    if isinstance(wmap, dict) and iid in wmap:
+        del wmap[iid]
+    if str(inv.get("active_weapon_id", "") or "") == iid:
+        inv["active_weapon_id"] = ""
+        state.setdefault("flags", {})["weapon_jammed"] = False
+
+
 def _get_day(state: dict[str, Any]) -> int:
     meta = state.get("meta", {}) or {}
     try:
@@ -461,6 +489,13 @@ def buy_item(state: dict[str, Any], item_id: str, *, prefer: str = "bag") -> dic
 
     eco["cash"] = cash - q.buy_price
 
+    try:
+        from engine.weapon_kit import ensure_weapon_for_item
+
+        ensure_weapon_for_item(state, q.item_id, source="buy")
+    except Exception:
+        pass
+
     state.setdefault("world_notes", []).append(f"[Shop] BUY {q.item_id} price={q.buy_price} cat={q.category} to={placed}")
     return {"ok": True, "quote": q, "cash_after": int(eco["cash"]), "placed_to": placed}
 
@@ -485,6 +520,7 @@ def sell_item(state: dict[str, Any], item_id: str) -> dict[str, Any]:
     cash = _clamp_int(eco.get("cash", 0), 0, 10_000_000_000, 0)
     eco["cash"] = cash + q.sell_price
     state.setdefault("world_notes", []).append(f"[Shop] SELL {q.item_id} price={q.sell_price} cat={q.category}")
+    _cleanup_weapon_registry(state, q.item_id)
     return {"ok": True, "quote": q, "cash_after": int(eco["cash"])}
 
 
@@ -516,6 +552,7 @@ def sell_item_all(state: dict[str, Any], item_id: str) -> dict[str, Any]:
     gain = int(q.sell_price) * int(total)
     eco["cash"] = cash + gain
     state.setdefault("world_notes", []).append(f"[Shop] SELL_ALL {q.item_id} n={total} price={q.sell_price} total={gain} cat={q.category}")
+    _cleanup_weapon_registry(state, q.item_id)
     return {"ok": True, "quote": q, "count": int(total), "gain": int(gain), "cash_after": int(eco["cash"])}
 
 
@@ -550,5 +587,6 @@ def sell_item_n(state: dict[str, Any], item_id: str, *, n: int) -> dict[str, Any
     gain = int(q.sell_price) * int(sold)
     eco["cash"] = cash + gain
     state.setdefault("world_notes", []).append(f"[Shop] SELL_N {q.item_id} n={sold}/{want} price={q.sell_price} total={gain} cat={q.category}")
+    _cleanup_weapon_registry(state, q.item_id)
     return {"ok": True, "quote": q, "count": int(sold), "gain": int(gain), "cash_after": int(eco["cash"])}
 

@@ -29,6 +29,7 @@ from engine.timers import update_timers
 from engine.trace import update_trace
 from engine.world import world_tick
 from engine.hacking import apply_hacking_after_roll
+from engine.intimacy import apply_intimacy_aftermath
 from engine.npc_emotions import apply_npc_emotion_after_roll
 from engine.npc_targeting import apply_npc_targeting
 from engine.shop import buy_item, get_capacity_status, list_shop_quotes, sell_item, sell_item_all, sell_item_n, quote_item
@@ -251,6 +252,8 @@ def run_pipeline(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[str,
 
     # NPC emotion/relationship consequences (informant/betrayal, romance, etc).
     apply_npc_emotion_after_roll(state, action_ctx, roll_pkg)
+
+    apply_intimacy_aftermath(state, action_ctx, roll_pkg)
 
     resolve_combat_after_roll(state, action_ctx, roll_pkg)
 

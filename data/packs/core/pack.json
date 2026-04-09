@@ -51,6 +51,20 @@
       "tags": ["tool", "stealth"],
       "base_price": 80,
       "rarity": "uncommon"
+    },
+    {
+      "id": "compact_pistol",
+      "name": "Compact Pistol",
+      "size": 2,
+      "tags": ["weapons", "firearm", "illegal_in_many_regions"],
+      "base_price": 650,
+      "rarity": "uncommon",
+      "weapon": {
+        "kind": "firearm",
+        "mag_capacity": 12,
+        "ammo": 12,
+        "condition_tier": 2
+      }
     }
   ],
   "roles": [

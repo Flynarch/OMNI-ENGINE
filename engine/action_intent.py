@@ -173,6 +173,48 @@ def _parse_accommodation_intent(t: str) -> dict[str, Any] | None:
     return {"nights": nights, "kind": kind, "parser": "accommodation_nl"}
 
 
+_INTIMACY_FORCE_BLOCK = (
+    "paksa",
+    "memaksa",
+    "perkosa",
+    "rape",
+    "coerce",
+    "forced",
+)
+
+
+def _is_intimacy_private(t: str) -> bool:
+    """Consensual private intimacy (engine: fade-to-black + aftermath). Blocked if coercion cues."""
+    t = (t or "").strip().lower()
+    if not t:
+        return False
+    if any(b in t for b in _INTIMACY_FORCE_BLOCK):
+        return False
+    if any(k in t for k in _SOCIAL_CONFLICT_WORDS):
+        return False
+    return any(
+        k in t
+        for k in (
+            "have sex",
+            "make love",
+            "making love",
+            "sleep with",
+            "slept with",
+            "hook up",
+            "hookup",
+            "get laid",
+            "bed with",
+            "in bed with",
+            "love making",
+            "bercinta",
+            "berhubungan badan",
+            "hubungan badan",
+            "berhubungan intim",
+            "hubungan intim",
+        )
+    )
+
+
 def _is_social_scan(t: str) -> bool:
     if any(p in t for p in _SOCIAL_SCAN_PHRASES):
         return True
@@ -263,6 +305,33 @@ def parse_action_intent(player_input: str) -> dict[str, Any]:
         ctx["social_context"] = "standard"
         ctx["intent_note"] = "social_inquiry"
         ctx["social_mode"] = "non_conflict"
+    elif _is_intimacy_private(t):
+        ctx["domain"] = "social"
+        ctx["social_context"] = "standard"
+        ctx["intent_note"] = "intimacy_private"
+        ctx["social_mode"] = "non_conflict"
+        ctx["visibility"] = "private"
+        ctx["stakes"] = "medium"
+        ctx["has_stakes"] = True
+        ctx["uncertain"] = True
+        im = int(ctx.get("instant_minutes", 0) or 0)
+        ctx["instant_minutes"] = max(im, 75)
+        raw_in = (player_input or "").strip()
+        for pat in (
+            r"\bwith\s+([A-Za-z][A-Za-z0-9_'\-]{1,32})\b",
+            r"\bdengan\s+([A-Za-z][A-Za-z0-9_'\-]{1,32})\b",
+            r"\bbersama\s+([A-Za-z][A-Za-z0-9_'\-]{1,32})\b",
+        ):
+            m = re.search(pat, raw_in, flags=re.I)
+            if not m:
+                continue
+            name = m.group(1).strip()
+            if name.lower() in ("the", "a", "an", "itu", "dia", "mereka"):
+                continue
+            tl = ctx.setdefault("targets", [])
+            if isinstance(tl, list) and name not in tl:
+                tl.insert(0, name)
+            break
     elif _is_social_dialogue(t):
         ctx["domain"] = "social"
         ctx["social_context"] = "standard"
