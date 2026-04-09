@@ -1068,6 +1068,17 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                 from engine.world.heat import decay_heat_and_suspicion
 
                 decay_heat_and_suspicion(state, cur_day=int(cur_day))
+                # NPC memory decay + consolidation (once per day).
+                try:
+                    from engine.npc.memory import process_memory_decay
+
+                    counts = process_memory_decay(state)
+                    if isinstance(counts, dict) and (counts.get("decayed") or counts.get("removed") or counts.get("consolidated")):
+                        state.setdefault("world_notes", []).append(
+                            f"[Memory] decayed={int(counts.get('decayed',0) or 0)} removed={int(counts.get('removed',0) or 0)} consolidated={int(counts.get('consolidated',0) or 0)}"
+                        )
+                except Exception:
+                    pass
                 world["last_heat_decay_day"] = int(cur_day)
     except Exception as e:
         try:

@@ -1774,6 +1774,27 @@ def _smoke() -> None:
     assert -100 <= int(m0.get("valence", 0) or 0) <= 100
     assert 0.0 <= float(m0.get("confidence", 0.0) or 0.0) <= 1.0
 
+    # NPC memory decay + consolidation: high-importance memories older than 3 days become beliefs.
+    from engine.npc.memory import process_memory_decay
+
+    st_md = initialize_state({"name": "MemDecay", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_md.setdefault("meta", {}).update({"day": 10, "time_min": 8 * 60})
+    st_md.setdefault("npcs", {})["AgentY"] = {
+        "name": "AgentY",
+        "alive": True,
+        "memories": [
+            {"memory_id": "hi1", "kind": "betrayal", "summary": "Player sold them out.", "when": {"day": 6, "time_min": 0}, "importance": 95, "valence": -90, "confidence": 1.0, "tags": []},
+            {"memory_id": "lo1", "kind": "conversation", "summary": "Small talk.", "when": {"day": 9, "time_min": 0}, "importance": 5, "valence": 20, "confidence": 1.0, "tags": []},
+        ],
+    }
+    counts = process_memory_decay(st_md)
+    assert isinstance(counts, dict) and int(counts.get("consolidated", 0) or 0) >= 1
+    npc_y = (st_md.get("npcs", {}) or {}).get("AgentY", {})
+    assert isinstance(npc_y, dict)
+    assert isinstance(npc_y.get("belief_tags", []), list) and len(npc_y.get("belief_tags", [])) >= 1
+    # low-importance memory should drop after decay
+    assert all(isinstance(m, dict) and str(m.get("memory_id", "")) != "lo1" for m in (npc_y.get("memories", []) or []))
+
     from engine.systems.scenes import advance_scene
 
     r1 = advance_scene(st_del, {"scene_action": "approach"})

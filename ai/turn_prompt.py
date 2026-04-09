@@ -259,6 +259,23 @@ def _fmt_npc_memories_brief(state: dict[str, Any], action_ctx: dict[str, Any]) -
         else:
             lines.append(f"- {summ[:120]}")
     return "[NPC_MEMORIES]\n" + "\n".join(lines)
+
+
+def _fmt_npc_beliefs_brief(state: dict[str, Any], action_ctx: dict[str, Any]) -> str:
+    targs = action_ctx.get("targets")
+    if not (isinstance(targs, list) and targs and isinstance(targs[0], str)):
+        return ""
+    npc_id = str(targs[0]).strip()
+    if not npc_id:
+        return ""
+    npc = (state.get("npcs", {}) or {}).get(npc_id)
+    if not isinstance(npc, dict):
+        return ""
+    tags = npc.get("belief_tags", [])
+    if not isinstance(tags, list) or not tags:
+        return ""
+    preview = ", ".join([str(x) for x in tags[:5]])
+    return "[NPC_BELIEFS]\n" + preview
 def _fmt_social_stats(state: dict[str, Any]) -> str:
     stats = state.get("player", {}).get("social_stats", {}) or {}
     if not isinstance(stats, dict):
@@ -769,6 +786,7 @@ flags: weapon_jammed={flags.get('weapon_jammed')} stop_seq={flags.get('stop_sequ
 Recent world_notes:
 {_fmt_world_notes(state)}
 {_fmt_social_rumor_brief(state, action_ctx)}
+{_fmt_npc_beliefs_brief(state, action_ctx)}
 {_fmt_npc_memories_brief(state, action_ctx)}
 [CALCULATED STATE]
 Blood: {bio.get('blood_volume', 5.0)}L / {bio.get('blood_max', 5.0)}L | BP: {bio.get('bp_state', 'Stable')}
