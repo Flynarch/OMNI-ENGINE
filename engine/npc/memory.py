@@ -15,6 +15,64 @@ def _norm_s(v: Any) -> str:
     return str(v or "").strip()
 
 
+# Belief tag semantic mapping -> social coefficients (clamped later to -100..100).
+BELIEF_TAG_SOCIAL_MODS: dict[str, dict[str, int]] = {
+    # Core requested mappings
+    "Deep_Grudge": {"respect": -50, "trust": -60, "suspicion": +40, "fear": 0},
+    "Eternal_Gratitude": {"respect": +60, "trust": +70, "suspicion": -30, "fear": 0},
+    "Core_Belief_Violence": {"respect": -20, "trust": 0, "suspicion": +10, "fear": +40},
+    # Additional RPG tropes
+    "Debtor": {"respect": -10, "trust": -25, "suspicion": +15, "fear": 0},
+    "Informant_Loyalty": {"respect": +15, "trust": +35, "suspicion": -10, "fear": 0},
+    "Blackmail_Leverage": {"respect": -25, "trust": -40, "suspicion": +30, "fear": +10},
+}
+
+
+def get_npc_social_modifiers(state: dict[str, Any], npc_id: str) -> dict[str, int]:
+    """Aggregate social coefficients from npc belief_tags and memory_summary.
+
+    Output keys: trust/respect/suspicion/fear, each clamped to [-100, 100].
+    Deterministic: no randomness; pure aggregation.
+    """
+    out = {"trust": 0, "respect": 0, "suspicion": 0, "fear": 0}
+    npcs = state.get("npcs", {}) or {}
+    if not isinstance(npcs, dict):
+        return out
+    npc = npcs.get(str(npc_id))
+    if not isinstance(npc, dict):
+        return out
+
+    tags = npc.get("belief_tags", [])
+    if isinstance(tags, list):
+        for raw in tags[:12]:
+            tag = str(raw or "").strip()
+            if not tag:
+                continue
+            mods = BELIEF_TAG_SOCIAL_MODS.get(tag)
+            if isinstance(mods, dict):
+                for k in ("trust", "respect", "suspicion", "fear"):
+                    try:
+                        out[k] += int(mods.get(k, 0) or 0)
+                    except Exception:
+                        continue
+
+    # Optionally bridge existing belief_summary into same space (lightweight).
+    bs = npc.get("belief_summary")
+    if isinstance(bs, dict):
+        try:
+            out["suspicion"] += int((int(bs.get("suspicion", 0) or 0) - 50) / 2)
+        except Exception:
+            pass
+        try:
+            out["respect"] += int((int(bs.get("respect", 50) or 50) - 50) / 2)
+        except Exception:
+            pass
+
+    for k in ("trust", "respect", "suspicion", "fear"):
+        out[k] = _clamp_int(out.get(k, 0), -100, 100, 0)
+    return out
+
+
 def process_memory_decay(
     state: dict[str, Any],
     *,

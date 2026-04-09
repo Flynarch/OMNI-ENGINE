@@ -1795,6 +1795,18 @@ def _smoke() -> None:
     # low-importance memory should drop after decay
     assert all(isinstance(m, dict) and str(m.get("memory_id", "")) != "lo1" for m in (npc_y.get("memories", []) or []))
 
+    # Belief tags -> social modifiers should affect roll package for social conflict.
+    st_sm = initialize_state({"name": "SocialMods", "location": "london", "year": "2025"}, seed_pack="minimal")
+    # Ensure shared language so social roll isn't hard-gated by language barrier.
+    st_sm.setdefault("player", {})["language"] = "en"
+    st_sm.setdefault("player", {}).setdefault("languages", {})["en"] = 90
+    st_sm.setdefault("npcs", {})["GrudgeNPC"] = {"name": "GrudgeNPC", "alive": True, "belief_tags": ["Deep_Grudge"], "belief_summary": {"suspicion": 90, "respect": 10}}
+    from engine.core.modifiers import compute_roll_package
+
+    pkg = compute_roll_package(st_sm, {"domain": "social", "action_type": "talk", "social_mode": "conflict", "targets": ["GrudgeNPC"], "trained": True})
+    mods = pkg.get("mods", []) or []
+    assert any(isinstance(m, (list, tuple)) and "NPC beliefs" in str(m[0]) for m in mods)
+
     from engine.systems.scenes import advance_scene
 
     r1 = advance_scene(st_del, {"scene_action": "approach"})

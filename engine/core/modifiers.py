@@ -443,6 +443,28 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
                         if rep_mod != 0:
                             mods.append(("NPC respect", rep_mod))
 
+                    # Belief tags -> social coefficients (deterministic).
+                    try:
+                        from engine.npc.memory import get_npc_social_modifiers
+
+                        sm = get_npc_social_modifiers(state, str(t0))
+                        if isinstance(sm, dict):
+                            trust = int(sm.get("trust", 0) or 0)
+                            respect2 = int(sm.get("respect", 0) or 0)
+                            suspicion2 = int(sm.get("suspicion", 0) or 0)
+                            fear = int(sm.get("fear", 0) or 0)
+                            # Convert coefficients to a roll modifier (positive = easier).
+                            # Trust/respect help; suspicion/fear hinder.
+                            mod = int(round(trust * 0.10 + respect2 * 0.08 - suspicion2 * 0.10 - fear * 0.06))
+                            mod = max(-25, min(25, mod))
+                            if mod != 0:
+                                mods.append(("NPC beliefs", mod))
+                                state.setdefault("world_notes", []).append(
+                                    f"[SocialMods] target={t0} trust={trust} respect={respect2} susp={suspicion2} fear={fear} => {mod:+d}%"
+                                )
+                    except Exception:
+                        pass
+
                     # Relationship edge modifier (player <-> NPC) from world.social_graph
                     world = state.get("world", {}) or {}
                     g = world.get("social_graph", {}) or {}

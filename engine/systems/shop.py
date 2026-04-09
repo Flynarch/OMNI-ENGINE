@@ -234,6 +234,38 @@ def _apply_player_price_mods(state: dict[str, Any], *, buy: int, sell: int) -> t
     sell_mult = max(0.40, min(0.95, (1.0 - outsider_premium * 0.5) * (1.0 + sw_bonus * 0.5)))
     b2 = max(1, int(round(b * buy_mult)))
     s2 = max(1, int(round(s * sell_mult)))
+
+    # NPC beliefs (optional): if an offer NPC is the vendor, apply small trust/suspicion pricing effect.
+    try:
+        world = state.get("world", {}) or {}
+        econ = world.get("npc_economy", {}) or {}
+        offers = econ.get("offers", {}) if isinstance(econ, dict) else {}
+        npc_id = ""
+        if isinstance(offers, dict) and offers:
+            # Prefer merchant/vendor/shopkeeper offers as the active counterparty.
+            for _k in sorted(list(offers.keys()))[:20]:
+                v = offers.get(_k)
+                if not isinstance(v, dict):
+                    continue
+                role = str(v.get("role", "") or "").strip().lower()
+                if role in ("merchant", "vendor", "shopkeeper"):
+                    npc_id = str(v.get("npc", _k) or _k).strip()
+                    break
+        if npc_id:
+            from engine.npc.memory import get_npc_social_modifiers
+
+            sm = get_npc_social_modifiers(state, npc_id)
+            trust = int(sm.get("trust", 0) or 0)
+            susp = int(sm.get("suspicion", 0) or 0)
+            # Trust discounts buys, improves sells. Suspicion does the opposite. Keep small and bounded.
+            trust_disc = max(-0.06, min(0.06, trust / 1000.0))  # -6%..+6%
+            susp_prem = max(-0.06, min(0.06, susp / 1000.0))
+            # buy price multiplier: suspicion raises, trust lowers
+            b2 = max(1, int(round(b2 * (1.0 + susp_prem - trust_disc))))
+            # sell price multiplier: trust raises, suspicion lowers
+            s2 = max(1, int(round(s2 * (1.0 + trust_disc - susp_prem))))
+    except Exception:
+        pass
     return (b2, s2)
 
 
