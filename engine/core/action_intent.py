@@ -297,6 +297,14 @@ def parse_action_intent(player_input: str) -> dict[str, Any]:
         # Vehicle hints (best-effort): "pakai mobil", "naik motor", "drive ... car_standard", etc.
         # This does not validate ownership; engine will ignore if not owned/active.
         try:
+            def _contains_term(hay: str, needle: str) -> bool:
+                n = str(needle or "").strip().lower()
+                if not n:
+                    return False
+                # Match whole term boundaries to avoid false positives like:
+                # "sedang" -> mistakenly matching "sedan".
+                return re.search(rf"(?<![a-z0-9_]){re.escape(n)}(?![a-z0-9_])", hay) is not None
+
             veh_map = {
                 "sepeda": "bicycle",
                 "bicycle": "bicycle",
@@ -315,12 +323,12 @@ def parse_action_intent(player_input: str) -> dict[str, Any]:
             }
             # Explicit engine ids if typed.
             for vid in ("bicycle", "motorcycle", "car_standard", "car_sports", "car_van"):
-                if vid in t:
+                if _contains_term(t, vid):
                     ctx["vehicle_id"] = vid
                     break
             if "vehicle_id" not in ctx:
                 for k, vid in veh_map.items():
-                    if k in t:
+                    if _contains_term(t, k):
                         ctx["vehicle_id"] = vid
                         break
             if "vehicle_id" in ctx:

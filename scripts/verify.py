@@ -665,6 +665,12 @@ def _smoke() -> None:
     assert shoot.get("action_type") == "combat"
     assert shoot.get("combat_style") == "ranged"
 
+    # Travel parser should not infer vehicle_id from substring collisions (e.g., "sedang" != "sedan").
+    tr_no_vehicle = parse_action_intent("sedang di kafe dan laptop di meja aku akan balik ke kos")
+    assert tr_no_vehicle.get("action_type") == "travel"
+    assert tr_no_vehicle.get("travel_destination") == "kos"
+    assert tr_no_vehicle.get("vehicle_id") is None
+
     # Social conflict should roll and incorporate social_stats (non-zero)
     st2 = initialize_state(
         {"name": "Verify2", "occupation": "operator", "background": "smoke2", "location": "london", "year": "2025", "language": "en"},
