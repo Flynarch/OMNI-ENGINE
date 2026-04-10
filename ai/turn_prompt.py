@@ -1016,7 +1016,7 @@ def build_turn_package(
     rep_corporate = _rep_score(rep_scores.get("corporate"), rep.get("corporate_label"))
     rep_political = _rep_score(rep_scores.get("political"), rep.get("political_label"))
     rep_street = _rep_score(rep_scores.get("street"), rep.get("civilian_label"))
-    rep_underground = _rep_score(rep_scores.get("underground"), rep.get("criminal_label"))
+    rep_underground = _rep_score(rep_scores.get("underground"), rep.get("underground_label", rep.get("global_label", "Neutral")))
     rep_global_raw = rep.get("global_score")
     rep_global = _rep_score(rep_global_raw, rep.get("global_label"))
     if rep_global_raw is None:

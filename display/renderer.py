@@ -368,7 +368,7 @@ def _build_compact_monitor_vm(state: dict[str, Any]) -> dict[str, Any]:
         "corporate": _rep_score(rep_scores.get("corporate"), rep.get("corporate_label")),
         "political": _rep_score(rep_scores.get("political"), rep.get("political_label")),
         "street": _rep_score(rep_scores.get("street"), rep.get("civilian_label")),
-        "underground": _rep_score(rep_scores.get("underground"), rep.get("criminal_label")),
+        "underground": _rep_score(rep_scores.get("underground"), rep.get("underground_label", rep.get("global_label", "Neutral"))),
     }
     rep_top_key, rep_top_val = max(rep_map.items(), key=lambda kv: kv[1])
     rep_emoji = "🏆" if rep_top_val >= 80 else "⭐" if rep_top_val >= 65 else "•"
