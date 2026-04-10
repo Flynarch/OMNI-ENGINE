@@ -574,10 +574,15 @@ def _scene_blocks_command(state: dict[str, Any], up_cmd: str) -> bool:
             return False
         if not isinstance(state.get("active_scene"), dict):
             return False
+        sc = state.get("active_scene") or {}
+        stype = str((sc.get("scene_type", "") if isinstance(sc, dict) else "") or "").strip().lower()
         if up_cmd == "SCENE" or up_cmd.startswith("SCENE "):
             return False
         if up_cmd in ("HELP", "QUIT", "EXIT"):
             return False
+        if up_cmd == "EAT" or up_cmd.startswith("EAT "):
+            # Survival exception: allow only on explicitly safe scene types.
+            return stype not in {"drop_pickup"}
         return True
     except Exception:
         return False
@@ -625,6 +630,7 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             sell_item_n=sell_item_n,
             quote_item=quote_item,
             get_capacity_status=get_capacity_status,
+            run_pipeline=run_pipeline,
         ):
             return True
         if handle_session(
@@ -851,6 +857,9 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         return True
     # Single blocking gatekeeper for scenes (ONE place).
     if _scene_blocks_command(state, up):
+        if up == "EAT" or up.startswith("EAT "):
+            console.print("[yellow]Situasi tidak memungkinkan untuk makan sekarang.[/yellow]")
+            return True
         console.print("[yellow]Scene active. Use: SCENE | SCENE OPTIONS | SCENE <action>[/yellow]")
         return True
 
@@ -2463,6 +2472,9 @@ def main() -> None:
         # Global scene blocker (non-special path).
         up0 = cmd.upper()
         if _scene_blocks_command(state, up0):
+            if up0 == "EAT" or up0.startswith("EAT "):
+                console.print("[yellow]Situasi tidak memungkinkan untuk makan sekarang.[/yellow]")
+                continue
             console.print("[yellow]Scene active. Use: SCENE | SCENE OPTIONS | SCENE <action>[/yellow]")
             continue
         if handle_special(state, cmd):

@@ -475,6 +475,10 @@ def command_allowed_for_active_scene(state: dict[str, Any], raw_cmd: str) -> boo
     sc = state.get("active_scene")
     if not isinstance(sc, dict) or not sc:
         return True
+    stype = str(sc.get("scene_type", "") or "").strip().lower()
+    if u == "EAT" or u.startswith("EAT "):
+        # Keep command lock in sync with main scene gate.
+        return stype in {"drop_pickup"}
     opts = sc.get("next_options") or []
     if not isinstance(opts, list) or not opts:
         return False

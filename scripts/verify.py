@@ -3016,6 +3016,93 @@ def _smoke() -> None:
     st_bio["bio"]["mood_score"] = 95.0
     update_mood(st_bio, {"action_type": "instant", "instant_minutes": 1, "time_breakdown": [{"label": "instant", "minutes": 1}]})
     assert bool((st_bio.get("bio", {}) or {}).get("mental_spiral", True)) is False
+    # Scene gate policy: EAT allowed only on safe scenes while active_scene lock is present.
+    from main import _scene_blocks_command
+    from engine.core.action_intent import command_allowed_for_active_scene
+
+    st_sc = initialize_state({"name": "SceneEat", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_sc["active_scene"] = {"scene_type": "drop_pickup", "next_options": ["SCENE WAIT", "SCENE RUN"]}
+    assert _scene_blocks_command(st_sc, "EAT") is False
+    assert command_allowed_for_active_scene(st_sc, "EAT") is True
+    st_sc["active_scene"] = {"scene_type": "safehouse_raid", "next_options": ["SCENE RUN", "SCENE FIGHT"]}
+    assert _scene_blocks_command(st_sc, "EAT") is True
+    assert command_allowed_for_active_scene(st_sc, "EAT") is False
+    # EAT command: consume inventory edible, lower hunger, and sync via pipeline callback.
+    from engine.commands.commerce import handle_commerce
+    from engine.systems.shop import buy_item, get_capacity_status, list_shop_quotes, quote_item, sell_item, sell_item_all, sell_item_n
+    from rich.table import Table
+    from display.renderer import console as _cons
+
+    st_eat = initialize_state({"name": "EatInv", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_eat.setdefault("bio", {}).update({"hunger": 80.0, "hunger_label": "starving"})
+    st_eat.setdefault("world", {})["content_index"] = {
+        "items": {
+            "meal_box": {"name": "Meal Box", "base_price": 120, "tags": ["food", "meal"]},
+            "water_bottle": {"name": "Water Bottle", "base_price": 40, "tags": ["drink", "water"]},
+        }
+    }
+    st_eat.setdefault("inventory", {}).setdefault("pocket_contents", []).append("meal_box")
+    _rp_called = {"n": 0}
+
+    def _rp_stub(st: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
+        _rp_called["n"] += 1
+        update_mood(st, ctx)
+        return {"outcome": "No Roll", "mods": [], "net_threshold": 50, "roll": 50}
+
+    ok_eat = handle_commerce(
+        st_eat,
+        "EAT",
+        console=_cons,
+        table_cls=Table,
+        list_shop_quotes=list_shop_quotes,
+        buy_item=buy_item,
+        sell_item=sell_item,
+        sell_item_all=sell_item_all,
+        sell_item_n=sell_item_n,
+        quote_item=quote_item,
+        get_capacity_status=get_capacity_status,
+        run_pipeline=_rp_stub,
+    )
+    assert bool(ok_eat) is True
+    assert "meal_box" not in ((st_eat.get("inventory", {}) or {}).get("pocket_contents", []) or [])
+    assert float((st_eat.get("bio", {}) or {}).get("hunger", 100.0) or 100.0) < 80.0
+    assert int(_rp_called.get("n", 0) or 0) == 1
+    # EAT market fallback should keep hunger unchanged when purchase fails.
+    st_eat_fail = initialize_state({"name": "EatFail", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_eat_fail.setdefault("bio", {}).update({"hunger": 70.0, "hunger_label": "starving"})
+    st_eat_fail.setdefault("economy", {})["cash"] = 0
+    st_eat_fail.setdefault("world", {})["content_index"] = {
+        "items": {"meal_box": {"name": "Meal Box", "base_price": 120, "tags": ["food", "meal"]}}
+    }
+    _h_before = float((st_eat_fail.get("bio", {}) or {}).get("hunger", 0.0) or 0.0)
+    handle_commerce(
+        st_eat_fail,
+        "EAT meal_box",
+        console=_cons,
+        table_cls=Table,
+        list_shop_quotes=list_shop_quotes,
+        buy_item=buy_item,
+        sell_item=sell_item,
+        sell_item_all=sell_item_all,
+        sell_item_n=sell_item_n,
+        quote_item=quote_item,
+        get_capacity_status=get_capacity_status,
+        run_pipeline=_rp_stub,
+    )
+    _h_after = float((st_eat_fail.get("bio", {}) or {}).get("hunger", 0.0) or 0.0)
+    assert abs(_h_before - _h_after) < 0.0001
+    # WORK hunger-critical should not mutate mood score directly in execute_gig.
+    from engine.systems.jobs import execute_gig, generate_gigs
+
+    st_jobs = initialize_state({"name": "JobHunger", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_jobs.setdefault("bio", {}).update({"hunger": 95.0, "mood_score": 73.0})
+    gigs = generate_gigs(st_jobs)
+    assert isinstance(gigs, list) and gigs
+    gid = str((gigs[0] or {}).get("id", "") or "")
+    mood0 = float((st_jobs.get("bio", {}) or {}).get("mood_score", 0.0) or 0.0)
+    rj = execute_gig(st_jobs, gid)
+    assert bool(rj.get("ok")) is False and str(rj.get("reason", "")) == "hunger_critical"
+    assert abs(float((st_jobs.get("bio", {}) or {}).get("mood_score", 0.0) or 0.0) - mood0) < 0.0001
 
     # Intimacy: consensual path parses; aftermath sets satisfaction + partner mood (fade-to-black is LLM prompt).
     from engine.core.action_intent import parse_action_intent

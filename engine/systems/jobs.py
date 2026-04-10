@@ -148,12 +148,6 @@ def execute_gig(state: dict[str, Any], gig_id: str) -> dict[str, Any]:
         state.setdefault("world_notes", []).append(
             "[Bio] You are too hungry to work. Eat first before attempting another gig."
         )
-        try:
-            b = state.setdefault("bio", {})
-            cur = float(b.get("mood_score", 50.0) or 50.0)
-            b["mood_score"] = max(0.0, round(cur - 15.0, 2))
-        except Exception:
-            pass
         return {
             "ok": False,
             "reason": "hunger_critical",
@@ -161,12 +155,6 @@ def execute_gig(state: dict[str, Any], gig_id: str) -> dict[str, Any]:
         }
     if hunger >= 66.0:
         hunger_penalty = 20
-        try:
-            b = state.setdefault("bio", {})
-            cur = float(b.get("mood_score", 50.0) or 50.0)
-            b["mood_score"] = max(0.0, round(cur - 6.0, 2))
-        except Exception:
-            pass
     elif hunger >= 41.0:
         hunger_penalty = 8
 

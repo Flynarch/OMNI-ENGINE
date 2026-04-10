@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+_EDIBLE_TAGS = {"food", "ration", "snack", "meal", "drink", "water"}
+
 
 def _shop_item_row(state: dict[str, Any], item_id: str) -> dict[str, Any] | None:
     world = state.get("world", {}) or {}
@@ -26,12 +28,16 @@ def _item_tags(row: dict[str, Any]) -> list[str]:
     return out
 
 
+def _is_edible_tags(tags: list[str]) -> bool:
+    return any(t in _EDIBLE_TAGS for t in tags)
+
+
 def _is_food_item(state: dict[str, Any], item_id: str) -> bool:
     row = _shop_item_row(state, item_id)
     if not isinstance(row, dict):
         return False
     tags = _item_tags(row)
-    return "food" in tags or "ration" in tags or "snack" in tags
+    return _is_edible_tags(tags)
 
 
 def _food_restore_value(state: dict[str, Any], item_id: str) -> float:
@@ -108,6 +114,7 @@ def handle_commerce(
     sell_item_n: Callable[..., dict[str, Any]],
     quote_item: Callable[..., Any],
     get_capacity_status: Callable[[dict[str, Any]], Any],
+    run_pipeline: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]] | None = None,
 ) -> bool:
     up = cmd.upper()
     if up == "EAT" or up.startswith("EAT "):
@@ -124,34 +131,67 @@ def handle_commerce(
         food_in_inv = [iid for iid in candidates if _is_food_item(state, iid)]
         chosen = ""
         source = ""
+        buy_fail_reason = ""
+
+        def _buy_fail_text(res: dict[str, Any]) -> str:
+            reason = str(res.get("reason", "error") or "error")
+            if reason == "not_enough_cash":
+                return f"cash kurang (need={res.get('need')}, cash={res.get('cash')})"
+            if reason == "no_capacity":
+                return "kapasitas inventory penuh"
+            if reason == "sold_out":
+                return "stok habis"
+            if reason == "unknown_item":
+                return "item tidak dikenal"
+            return reason
+
         if want_iid:
             if any(iid == want_iid for iid in food_in_inv):
                 chosen = want_iid
                 source = "inventory"
             else:
                 q = quote_item(state, want_iid)
-                if q and q.category == "food" and bool(q.available):
+                if q and bool(q.available) and _is_food_item(state, want_iid):
                     b = buy_item(state, want_iid, prefer="pocket", delivery="counter")
                     if bool(b.get("ok")):
                         chosen = want_iid
                         source = "market"
+                    else:
+                        buy_fail_reason = _buy_fail_text(b if isinstance(b, dict) else {})
+                elif q and not bool(q.available):
+                    buy_fail_reason = "stok habis"
+                elif q:
+                    buy_fail_reason = "item bukan makanan/minuman"
+                else:
+                    buy_fail_reason = "item tidak ditemukan"
         else:
             if food_in_inv:
                 chosen = food_in_inv[0]
                 source = "inventory"
             else:
                 for q in list_shop_quotes(state, limit=20):
-                    if q.category == "food" and bool(q.available):
+                    if not bool(q.available):
+                        continue
+                    if not _is_food_item(state, str(q.item_id)):
+                        continue
+                    if bool(q.available):
                         b = buy_item(state, q.item_id, prefer="pocket", delivery="counter")
                         if bool(b.get("ok")):
                             chosen = q.item_id
                             source = "market"
                             break
+                        buy_fail_reason = _buy_fail_text(b if isinstance(b, dict) else {})
         if not chosen:
-            console.print("[yellow]EAT: tidak ada makanan di inventory/market.[/yellow]")
+            if buy_fail_reason:
+                console.print(f"[yellow]EAT gagal: {buy_fail_reason}.[/yellow]")
+            else:
+                console.print("[yellow]EAT: tidak ada makanan di inventory/market.[/yellow]")
             return True
         if not _remove_item_once_from_inventory(state, chosen):
-            console.print("[red]EAT failed: item tidak ditemukan di inventory.[/red]")
+            if source == "market":
+                console.print("[red]EAT failed: makanan tidak masuk inventory setelah pembelian.[/red]")
+            else:
+                console.print("[red]EAT failed: item tidak ditemukan di inventory.[/red]")
             return True
         restore = _food_restore_value(state, chosen)
         before, after, hlabel = _apply_hunger_reduction(state, restore)
@@ -161,6 +201,20 @@ def handle_commerce(
         console.print(
             f"[green]EAT OK[/green] {chosen} ({source}) hunger {before:.1f} -> {after:.1f} [{hlabel}]"
         )
+        if callable(run_pipeline):
+            try:
+                run_pipeline(
+                    state,
+                    {
+                        "action_type": "instant",
+                        "domain": "other",
+                        "normalized_input": f"eat {chosen}",
+                        "instant_minutes": 0,
+                        "stakes": "low",
+                    },
+                )
+            except Exception:
+                pass
         return True
     if up == "MARKET":
         eco = state.get("economy", {}) or {}
