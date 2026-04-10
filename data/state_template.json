@@ -5,12 +5,18 @@
     "time_min": 480,
     "memory_hash_raw": "",
     "schema_version": 1,
-    "world_seed": ""
+    "world_seed": "",
+    "sim_year": 2025,
+    "tech_epoch": {},
+    "last_turn_diff": {},
+    "last_turn_audit": {},
+    "npc_sim_last_counts": {}
   },
   "player": {
     "cc": 50,
     "location": "",
     "year": 2025,
+    "econ_tier": "-",
     "language": "id",
     "languages": { "id": 70 },
     "disguise": { "active": false, "persona": "", "until_day": 0, "until_time": 0, "risk": 0 },

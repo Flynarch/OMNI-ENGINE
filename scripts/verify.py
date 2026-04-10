@@ -90,6 +90,15 @@ def _smoke() -> None:
     )
     assert st["meta"].get("seed_pack") == "minimal"
     assert st["economy"].get("daily_burn", 0) > 0
+    # Telemetry defaults should exist on fresh state (no fallback-only fields).
+    meta0 = st.get("meta", {}) or {}
+    player0 = st.get("player", {}) or {}
+    assert "sim_year" in meta0
+    assert "tech_epoch" in meta0 and isinstance(meta0.get("tech_epoch"), dict)
+    assert "last_turn_diff" in meta0 and isinstance(meta0.get("last_turn_diff"), dict)
+    assert "last_turn_audit" in meta0 and isinstance(meta0.get("last_turn_audit"), dict)
+    assert "npc_sim_last_counts" in meta0 and isinstance(meta0.get("npc_sim_last_counts"), dict)
+    assert "econ_tier" in player0
 
     # Seed pack should merge `world` content (nearby items).
     st_seed = initialize_state(

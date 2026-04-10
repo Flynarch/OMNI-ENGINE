@@ -23,8 +23,21 @@ def _read(path: Path) -> dict[str, Any]:
 
 def _defaults() -> dict[str, Any]:
     return {
-        "meta": {"turn": 0, "day": 1, "time_min": 8 * 60, "memory_hash_raw": "", "schema_version": SCHEMA_VERSION, "world_seed": ""},
+        "meta": {
+            "turn": 0,
+            "day": 1,
+            "time_min": 8 * 60,
+            "memory_hash_raw": "",
+            "schema_version": SCHEMA_VERSION,
+            "world_seed": "",
+            "sim_year": 2025,
+            "tech_epoch": {},
+            "last_turn_diff": {},
+            "last_turn_audit": {},
+            "npc_sim_last_counts": {},
+        },
         "player": {
+            "econ_tier": "-",
             "social_stats": {
                 "looks": 0,
                 "outfit": 0,
