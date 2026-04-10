@@ -124,6 +124,746 @@ def _dispatch_registered_event_handler(
         return False
 
 
+def _handle_event_legacy_by_type(
+    state: dict[str, Any],
+    *,
+    et: str,
+    payload: dict[str, Any],
+    day: int,
+    time_min: int,
+) -> bool:
+    if et == "social_diffusion_hop":
+        try:
+            from engine.social.social_diffusion import propagate_rumor
+        except Exception:
+            return True
+        frm = str(payload.get("from_npc", "") or "").strip()
+        to = str(payload.get("to_npc", "") or "").strip()
+        rumor = str(payload.get("rumor", "") or "").strip()
+        cat = str(payload.get("category", "") or "").strip()
+        try:
+            hop = int(payload.get("hop", 0) or 0)
+        except Exception:
+            hop = 0
+        if not (frm and to and rumor and cat):
+            return True
+        try:
+            meta2 = state.get("meta", {}) or {}
+            turn2 = int(meta2.get("turn", 0) or 0)
+        except Exception:
+            turn2 = 0
+        world2 = state.setdefault("world", {})
+        sd = world2.setdefault("social_diffusion", {})
+        if not isinstance(sd, dict):
+            sd = {}
+            world2["social_diffusion"] = sd
+        try:
+            sd_day = int(sd.get("day", 0) or 0)
+        except Exception:
+            sd_day = 0
+        try:
+            sd_turn = int(sd.get("turn", -1) or -1)
+        except Exception:
+            sd_turn = -1
+        if sd_day != day:
+            sd["day"] = int(day)
+            sd["used_today"] = 0
+        if sd_turn != turn2:
+            sd["turn"] = int(turn2)
+            sd["used_turn"] = 0
+        max_today = int(sd.get("max_hops_per_day", 12) or 12)
+        max_turn = int(sd.get("max_hops_per_turn", 3) or 3)
+        used_today = int(sd.get("used_today", 0) or 0)
+        used_turn = int(sd.get("used_turn", 0) or 0)
+        if used_today >= max_today or used_turn >= max_turn:
+            state.setdefault("world_notes", []).append("[SocialDiffusion] throttled (budget reached).")
+            return True
+        sd["used_today"] = used_today + 1
+        sd["used_turn"] = used_turn + 1
+        propagated = []
+        try:
+            propagated = propagate_rumor(state, frm, rumor, cat, hop=hop)
+        except Exception:
+            propagated = []
+        if propagated:
+            pending = state.setdefault("pending_events", [])
+            if isinstance(pending, list):
+                for p in propagated[:10]:
+                    if not isinstance(p, dict):
+                        continue
+                    pending.append(
+                        {
+                            "event_type": "social_diffusion_hop",
+                            "due_day": day,
+                            "due_time": min(1439, time_min + 1),
+                            "triggered": False,
+                            "payload": {
+                                "from_npc": p.get("from", frm),
+                                "to_npc": p.get("to", ""),
+                                "rumor": p.get("distorted", ""),
+                                "category": cat,
+                                "hop": int(p.get("hop", hop + 1) or (hop + 1)),
+                            },
+                        }
+                    )
+        try:
+            from engine.social.informants import maybe_queue_informant_tip
+
+            maybe_queue_informant_tip(
+                state,
+                from_npc=frm,
+                to_npc=to,
+                rumor=rumor,
+                category=cat,
+                hop=hop,
+            )
+        except Exception:
+            pass
+        state.setdefault("world_notes", []).append(f"[SocialDiffusion] {to} mendengar: {rumor[:90]}")
+        return True
+
+    if et == "informant_tip":
+        try:
+            from engine.social.investigation_chains import handle_informant_tip
+
+            if isinstance(payload, dict):
+                handle_informant_tip(state, payload)
+        except Exception:
+            pass
+        return True
+
+    if et == "npc_report":
+        reporter = str(payload.get("reporter", "unknown") or "unknown")
+        aff = str(payload.get("affiliation", "") or "").strip().lower()
+        try:
+            sus = int(payload.get("suspicion", 50) or 50)
+        except Exception:
+            sus = 50
+        sus = max(0, min(100, sus))
+        tr = state.setdefault("trace", {})
+        try:
+            tp = int(tr.get("trace_pct", 0) or 0)
+        except Exception:
+            tp = 0
+        before_tp = tp
+        bump = 1 + int((sus - 50) / 20)
+        if aff == "police":
+            bump += 1
+        tp = max(0, min(100, tp + max(1, min(5, bump))))
+        tr["trace_pct"] = tp
+        trace_delta = tp - before_tp
+        try:
+            from engine.core.factions import sync_faction_statuses_from_trace
+
+            sync_faction_statuses_from_trace(state)
+        except Exception:
+            pass
+        _push_news(state, text=f"Tip masuk: pihak berwenang menerima laporan anon tentang player ({reporter}).", source="broadcast")
+        try:
+            from engine.world.heat import bump_heat, bump_suspicion
+
+            loc0 = str(payload.get("origin_location", "") or str((state.get("player", {}) or {}).get("location", "") or "")).strip().lower()
+            if loc0:
+                bump_suspicion(state, loc=loc0, delta=2 + (1 if aff == "police" else 0), reason="npc_report", ttl_days=2)
+                bump_heat(state, loc=loc0, delta=1, reason="npc_report", ttl_days=5)
+        except Exception:
+            pass
+        _queue_ripple(
+            state,
+            {
+                "kind": "npc_report",
+                "text": f"{reporter} mengontak otoritas (sus={sus}).",
+                "triggered_day": day,
+                "surface_day": day,
+                "surface_time": min(1439, time_min + 10),
+                "surfaced": False,
+                "propagation": "faction_network" if aff in ("police", "corporate") else "contacts",
+                "origin_location": str(payload.get("origin_location", "") or "").strip().lower(),
+                "origin_faction": aff,
+                "witnesses": [],
+                "surface_attempts": 0,
+                "meta": {"reporter": reporter, "suspicion": sus, "affiliation": aff},
+                "impact": {"trace_delta": trace_delta},
+            },
+        )
+        return True
+
+    if et == "paper_trail_ping":
+        reporter = str(payload.get("reporter", "unknown") or "unknown")
+        aff = str(payload.get("affiliation", "police") or "police").strip().lower()
+        try:
+            sus = int(payload.get("suspicion", 55) or 55)
+        except Exception:
+            sus = 55
+        origin_location = str(payload.get("origin_location", "") or "").strip().lower()
+        delivery_id = str(payload.get("delivery_id", "") or "").strip()
+        item_id = str(payload.get("item_id", "") or "").strip()
+        pend = state.setdefault("pending_events", [])
+        if isinstance(pend, list):
+            pend.append(
+                {
+                    "event_type": "npc_report",
+                    "due_day": day,
+                    "due_time": min(1439, time_min + 1),
+                    "triggered": False,
+                    "payload": {
+                        "reporter": reporter,
+                        "affiliation": aff,
+                        "suspicion": max(0, min(100, sus)),
+                        "origin_location": origin_location,
+                        "meta": {"delivery_id": delivery_id, "item_id": item_id, "source": "paper_trail"},
+                    },
+                }
+            )
+        state.setdefault("world_notes", []).append(f"[PaperTrail] ping reporter={reporter} sus={sus} delivery_id={delivery_id} item={item_id}")
+        try:
+            from engine.world.heat import bump_heat, bump_suspicion
+
+            loc0 = str(origin_location or str((state.get("player", {}) or {}).get("location", "") or "")).strip().lower()
+            if loc0:
+                bump_suspicion(state, loc=loc0, delta=2, reason="paper_trail", ttl_days=2)
+                bump_heat(state, loc=loc0, delta=1, reason="paper_trail", ttl_days=6)
+        except Exception:
+            pass
+        return True
+
+    if et == "npc_offer":
+        npc = str(payload.get("npc", "unknown") or "unknown")
+        role = str(payload.get("role", "civilian") or "civilian")
+        service = str(payload.get("service", "offer") or "offer")
+        world = state.setdefault("world", {})
+        econ = world.setdefault("npc_economy", {"offers": {}, "last_refresh_day": 0})
+        if not isinstance(econ, dict):
+            econ = {"offers": {}, "last_refresh_day": 0}
+            world["npc_economy"] = econ
+        offers = econ.setdefault("offers", {})
+        if not isinstance(offers, dict):
+            offers = {}
+            econ["offers"] = offers
+        offers[npc] = {"npc": npc, "role": role, "service": service, "day": day, "expires_day": day + 2, "payload": dict(payload)}
+        econ["offers"] = offers
+        try:
+            econ2 = state.setdefault("economy", {})
+            market = econ2.get("market", {}) or {}
+            if isinstance(market, dict) and isinstance(service, str) and service.startswith("trade:"):
+                cat = service.split(":", 1)[1].strip().lower()
+                if cat in market and isinstance(market.get(cat), dict):
+                    row = market.get(cat) or {}
+                    try:
+                        sc = int(row.get("scarcity", 0) or 0)
+                    except Exception:
+                        sc = 0
+                    try:
+                        px = int(row.get("price_idx", 100) or 100)
+                    except Exception:
+                        px = 100
+                    row["scarcity"] = max(0, sc - 1)
+                    row["price_idx"] = max(60, min(180, px - 1))
+                    market[cat] = row
+                    econ2["market"] = market
+        except Exception:
+            pass
+        _queue_ripple(
+            state,
+            {
+                "kind": "npc_offer",
+                "text": f"{npc} ({role}) menawarkan: {service}.",
+                "triggered_day": day,
+                "surface_day": day,
+                "surface_time": min(1439, time_min + 5),
+                "surfaced": False,
+                "propagation": "contacts",
+                "origin_location": str(payload.get("origin_location", "") or "").strip().lower(),
+                "origin_faction": str(payload.get("origin_faction", "") or "").strip().lower(),
+                "witnesses": [],
+                "surface_attempts": 0,
+                "meta": {"npc": npc, "role": role, "service": service, "expires_day": day + 2},
+            },
+        )
+        return True
+
+    if et == "delivery_drop":
+        loc = str(payload.get("location", "") or str((state.get("player", {}) or {}).get("location", "") or "")).strip().lower()
+        drop_district = str(payload.get("drop_district", "") or "").strip().lower()
+        iid = str(payload.get("item_id", "") or "").strip()
+        nm = str(payload.get("item_name", iid) or iid)
+        delivery = str(payload.get("delivery", "dead_drop") or "dead_drop").strip().lower()
+        prefer = str(payload.get("prefer", "bag") or "bag").strip().lower()
+        pp = int(payload.get("district_police_presence", 0) or 0)
+        sting_bias = str(payload.get("sting_bias", "") or "").strip().lower()
+        delivery_id = str(payload.get("delivery_id", "") or "").strip()
+        world = state.setdefault("world", {})
+        pd = world.setdefault("pending_deliveries", [])
+        if not isinstance(pd, list):
+            pd = []
+            world["pending_deliveries"] = pd
+        pd.append(
+            {
+                "delivery_id": delivery_id,
+                "location": loc,
+                "drop_district": drop_district,
+                "item_id": iid,
+                "item_name": nm,
+                "delivery": delivery,
+                "prefer": prefer,
+                "ready_day": day,
+                "ready_time": time_min,
+                "expire_day": int(payload.get("expire_day", day) or day),
+                "expire_time": int(payload.get("expire_time", min(1439, time_min + 60)) or min(1439, time_min + 60)),
+                "sting_bias": sting_bias,
+                "delivered": False,
+                "expired": False,
+            }
+        )
+        world["pending_deliveries"] = pd
+        tr = state.setdefault("trace", {})
+        try:
+            tp = int(tr.get("trace_pct", 0) or 0)
+        except Exception:
+            tp = 0
+        bump = 1 if delivery == "dead_drop" else 2
+        if pp >= 4:
+            bump += 1
+        tr["trace_pct"] = max(0, min(100, tp + bump))
+        try:
+            from engine.core.factions import sync_faction_statuses_from_trace
+
+            sync_faction_statuses_from_trace(state)
+        except Exception:
+            pass
+        text = "Paketmu sudah siap diambil."
+        if delivery == "dead_drop":
+            text = "Dead drop aktif: paket sudah ditaruh di titik yang kamu sepakati."
+        elif delivery == "courier":
+            text = "Courier meet: paket sudah siap—handoff singkat sudah lewat."
+        if iid:
+            text += f" (item={iid})"
+        if drop_district:
+            text += f" drop_district={drop_district}"
+        _push_news(state, text=text, source="contacts")
+        _queue_ripple(
+            state,
+            {
+                "kind": "delivery_drop",
+                "text": text,
+                "triggered_day": day,
+                "surface_day": day,
+                "surface_time": min(1439, time_min + 2),
+                "surfaced": False,
+                "propagation": "contacts",
+                "origin_location": str(loc).strip().lower(),
+                "origin_faction": "black_market",
+                "witnesses": [],
+                "surface_attempts": 0,
+                "meta": {"item_id": iid, "delivery": delivery, "sting_bias": sting_bias},
+            },
+        )
+        return True
+
+    if et == "delivery_expire":
+        loc = str(payload.get("location", "") or "").strip().lower()
+        drop_district = str(payload.get("drop_district", "") or "").strip().lower()
+        iid = str(payload.get("item_id", "") or "").strip()
+        delivery = str(payload.get("delivery", "dead_drop") or "dead_drop").strip().lower()
+        did0 = str(payload.get("delivery_id", "") or "").strip()
+        world = state.setdefault("world", {})
+        pd = world.get("pending_deliveries", []) or []
+        if isinstance(pd, list) and pd:
+            for row in pd:
+                if not isinstance(row, dict):
+                    continue
+                if did0 and str(row.get("delivery_id", "") or "") != did0:
+                    continue
+                if not did0:
+                    if str(row.get("item_id", "") or "") != iid:
+                        continue
+                    if str(row.get("location", "") or "").strip().lower() != loc:
+                        continue
+                    if drop_district and str(row.get("drop_district", "") or "").strip().lower() != drop_district:
+                        continue
+                if bool(row.get("delivered", False)):
+                    continue
+                row["expired"] = True
+        nearby = (world.get("nearby_items", []) or []) if isinstance(world, dict) else []
+        if isinstance(nearby, list) and nearby:
+            kept = []
+            for x in nearby:
+                if isinstance(x, dict):
+                    if did0 and str(x.get("delivery_id", "") or "") == did0:
+                        continue
+                    if (not did0) and str(x.get("id", "") or "") == iid and str(x.get("delivery", "") or "") == delivery:
+                        continue
+                kept.append(x)
+            world["nearby_items"] = kept
+        text = "Dead drop expired: paketmu keburu diambil orang."
+        if iid:
+            text += f" (item={iid})"
+        _push_news(state, text=text, source="contacts")
+        _queue_ripple(
+            state,
+            {
+                "kind": "delivery_expire",
+                "text": text,
+                "triggered_day": day,
+                "surface_day": day,
+                "surface_time": min(1439, time_min + 2),
+                "surfaced": False,
+                "propagation": "contacts",
+                "origin_location": str(loc).strip().lower(),
+                "origin_faction": "black_market",
+                "witnesses": [],
+                "surface_attempts": 0,
+                "meta": {"item_id": iid, "delivery": delivery, "delivery_id": did0},
+            },
+        )
+        return True
+
+    if et == "npc_sell_info":
+        npc = str(payload.get("npc", "unknown") or "unknown")
+        buyer = str(payload.get("buyer_faction", "black_market") or "black_market").strip().lower()
+        try:
+            sus = int(payload.get("suspicion", 50) or 50)
+        except Exception:
+            sus = 50
+        sus = max(0, min(100, sus))
+        world = state.setdefault("world", {})
+        factions = world.get("factions", {}) or {}
+        if isinstance(factions, dict) and buyer in factions and isinstance(factions.get(buyer), dict):
+            f = factions.get(buyer) or {}
+            try:
+                pw = int(f.get("power", 50) or 50)
+            except Exception:
+                pw = 50
+            try:
+                st = int(f.get("stability", 50) or 50)
+            except Exception:
+                st = 50
+            bump = 1 + int((sus - 50) / 25)
+            f["power"] = max(0, min(100, pw + max(1, min(3, bump))))
+            f["stability"] = max(0, min(100, st + 1))
+            factions[buyer] = f
+            world["factions"] = factions
+        try:
+            econ3 = state.setdefault("economy", {})
+            market2 = econ3.get("market", {}) or {}
+            if isinstance(market2, dict):
+                if buyer == "black_market":
+                    cat = "weapons"
+                    if cat in market2 and isinstance(market2.get(cat), dict):
+                        row = market2.get(cat) or {}
+                        try:
+                            sc2 = int(row.get("scarcity", 0) or 0)
+                        except Exception:
+                            sc2 = 0
+                        try:
+                            px2 = int(row.get("price_idx", 100) or 100)
+                        except Exception:
+                            px2 = 100
+                        row["scarcity"] = max(0, sc2 - 1)
+                        row["price_idx"] = max(60, min(200, px2 - 1))
+                        market2[cat] = row
+                else:
+                    cat = "electronics"
+                    if cat in market2 and isinstance(market2.get(cat), dict):
+                        row = market2.get(cat) or {}
+                        try:
+                            sc2 = int(row.get("scarcity", 0) or 0)
+                        except Exception:
+                            sc2 = 0
+                        try:
+                            px2 = int(row.get("price_idx", 100) or 100)
+                        except Exception:
+                            px2 = 100
+                        row["scarcity"] = max(0, sc2 + 1)
+                        row["price_idx"] = max(60, min(220, px2 + 2))
+                        market2[cat] = row
+                econ3["market"] = market2
+        except Exception:
+            pass
+        _push_news(state, text=f"Intel diperdagangkan di bawah tanah (sumber: {npc}).", source="faction_network")
+        _queue_ripple(
+            state,
+            {
+                "kind": "npc_sell_info",
+                "text": f"{npc} menjual intel ke jaringan ({buyer}).",
+                "triggered_day": day,
+                "surface_day": day,
+                "surface_time": min(1439, time_min + 15),
+                "surfaced": False,
+                "propagation": "contacts" if buyer == "black_market" else "faction_network",
+                "origin_location": str(payload.get("origin_location", "") or "").strip().lower(),
+                "origin_faction": str(payload.get("origin_faction", "") or "").strip().lower(),
+                "witnesses": [],
+                "surface_attempts": 0,
+                "meta": {"npc": npc, "buyer_faction": buyer, "suspicion": sus},
+                "impact": {"factions": {buyer: {"power": +1}}},
+            },
+        )
+        return True
+
+    if et == "police_sweep":
+        return True
+
+    if et == "corporate_lockdown":
+        loc = str(payload.get("location", "") or str(state.get("player", {}).get("location", "") or "")).strip().lower()
+        world = state.setdefault("world", {})
+        locs = world.setdefault("locations", {})
+        if isinstance(locs, dict) and loc:
+            locs.setdefault(loc, {})
+            slot = locs.get(loc)
+            if isinstance(slot, dict):
+                r = slot.setdefault("restrictions", {})
+                if isinstance(r, dict):
+                    r["corporate_lockdown_until_day"] = day + 2
+                slot.setdefault("areas", {})
+                if isinstance(slot.get("areas"), dict):
+                    a = slot.get("areas") or {}
+                    a["corporate_district"] = {"restricted": True, "until_day": day + 2, "reason": "corporate_lockdown"}
+                    slot["areas"] = a
+                m = slot.get("market")
+                if not isinstance(m, dict) or not m:
+                    base = (state.get("economy", {}) or {}).get("market", {}) or {}
+                    m = {}
+                    if isinstance(base, dict):
+                        for k in ("electronics", "medical", "weapons", "food", "transport"):
+                            row = base.get(k) if isinstance(base.get(k), dict) else {"price_idx": 100, "scarcity": 0}
+                            m[k] = {"price_idx": int((row or {}).get("price_idx", 100) or 100), "scarcity": int((row or {}).get("scarcity", 0) or 0)}
+                    slot["market"] = m
+                if isinstance(m, dict) and isinstance(m.get("electronics"), dict):
+                    e = m.get("electronics") or {}
+                    try:
+                        e_sc = int(e.get("scarcity", 0) or 0)
+                    except Exception:
+                        e_sc = 0
+                    try:
+                        e_px = int(e.get("price_idx", 100) or 100)
+                    except Exception:
+                        e_px = 100
+                    e["scarcity"] = max(0, min(100, e_sc + 3))
+                    e["price_idx"] = max(60, min(300, e_px + 5))
+                    m["electronics"] = e
+                    slot["market"] = m
+                locs[loc] = slot
+        _push_news(state, text=f"Korporasi lockdown di {loc}: akses & keamanan diperketat.", source="broadcast")
+        _queue_ripple(
+            state,
+            {
+                "kind": "corporate_lockdown",
+                "text": f"Akses corporate di {loc} makin ketat (lockdown).",
+                "triggered_day": day,
+                "surface_day": day,
+                "surface_time": min(1439, time_min + 10),
+                "surfaced": False,
+                "propagation": "broadcast",
+                "origin_location": loc,
+                "origin_faction": "corporate",
+                "witnesses": [],
+                "surface_attempts": 0,
+                "meta": {"location": loc, "until_day": day + 2},
+            },
+        )
+        return True
+
+    if et == "black_market_offer":
+        loc = str(payload.get("location", "") or str(state.get("player", {}).get("location", "") or "")).strip().lower()
+        try:
+            bm_pw = int(payload.get("bm_power", 65) or 65)
+        except Exception:
+            bm_pw = 65
+        try:
+            bm_st = int(payload.get("bm_stability", 35) or 35)
+        except Exception:
+            bm_st = 35
+        try:
+            from engine.systems.quests import create_black_market_delivery_quest
+
+            q = create_black_market_delivery_quest(state, origin_location=loc, bm_power=bm_pw, bm_stability=bm_st)
+            _push_news(state, text=f"Rumor: offer pasar gelap muncul di {loc} (quest {q.get('id','?')}).", source="faction_network")
+            _queue_ripple(
+                state,
+                {
+                    "kind": "quest_offer",
+                    "text": f"Pasar gelap: job baru tersedia (lihat quest {q.get('id','?')}).",
+                    "triggered_day": day,
+                    "surface_day": day,
+                    "surface_time": min(1439, time_min + 5),
+                    "surfaced": False,
+                    "propagation": "contacts",
+                    "origin_location": loc,
+                    "origin_faction": "black_market",
+                    "witnesses": [],
+                    "surface_attempts": 0,
+                    "meta": {"quest_id": q.get("id", ""), "location": loc},
+                },
+            )
+        except Exception:
+            pass
+        return True
+
+    if et == "investigation_sweep":
+        loc = str(payload.get("location", "") or str(state.get("player", {}).get("location", "") or "")).strip().lower()
+        try:
+            trsnap = int(payload.get("trace_snapshot", 0) or 0)
+        except Exception:
+            trsnap = 0
+        world = state.setdefault("world", {})
+        locs = world.setdefault("locations", {})
+        if isinstance(locs, dict) and loc:
+            locs.setdefault(loc, {})
+            slot = locs.get(loc)
+            if isinstance(slot, dict):
+                r = slot.setdefault("restrictions", {})
+                if isinstance(r, dict):
+                    r["police_sweep_until_day"] = max(int(r.get("police_sweep_until_day", 0) or 0), day + 1)
+                    r["police_sweep_attention"] = "investigated"
+                slot.setdefault("areas", {})
+                if isinstance(slot.get("areas"), dict):
+                    a = slot.get("areas") or {}
+                    a["downtown"] = {"restricted": True, "until_day": day + 1, "reason": "investigation_sweep"}
+                    slot["areas"] = a
+                locs[loc] = slot
+        _push_news(state, text=f"Penyelidikan diperluas di {loc} (trace={trsnap}%).", source="broadcast")
+        _queue_ripple(
+            state,
+            {
+                "kind": "police_sweep",
+                "text": f"Razia investigasi meningkat di {loc}.",
+                "triggered_day": day,
+                "surface_day": day,
+                "surface_time": min(1439, time_min + 10),
+                "surfaced": False,
+                "propagation": "broadcast",
+                "origin_location": loc,
+                "origin_faction": "police",
+                "witnesses": [],
+                "surface_attempts": 0,
+                "meta": {"location": loc, "source": "investigation_sweep"},
+            },
+        )
+        return True
+
+    if et == "manhunt_lockdown":
+        loc = str(payload.get("location", "") or str(state.get("player", {}).get("location", "") or "")).strip().lower()
+        try:
+            trsnap = int(payload.get("trace_snapshot", 0) or 0)
+        except Exception:
+            trsnap = 0
+        try:
+            tr = state.setdefault("trace", {})
+            tp = int(tr.get("trace_pct", 0) or 0)
+            tr["trace_pct"] = max(0, min(100, tp + 2))
+        except Exception:
+            pass
+        world = state.setdefault("world", {})
+        locs = world.setdefault("locations", {})
+        if isinstance(locs, dict) and loc:
+            locs.setdefault(loc, {})
+            slot = locs.get(loc)
+            if isinstance(slot, dict):
+                r = slot.setdefault("restrictions", {})
+                if isinstance(r, dict):
+                    r["police_sweep_until_day"] = max(int(r.get("police_sweep_until_day", 0) or 0), day + 2)
+                    r["police_sweep_attention"] = "manhunt"
+                slot.setdefault("areas", {})
+                if isinstance(slot.get("areas"), dict):
+                    a = slot.get("areas") or {}
+                    a["transit_hubs"] = {"restricted": True, "until_day": day + 2, "reason": "manhunt_lockdown"}
+                    slot["areas"] = a
+                locs[loc] = slot
+        _push_news(state, text=f"Manhunt checkpoint lockdown di {loc} (trace={trsnap}%).", source="broadcast")
+        _queue_ripple(
+            state,
+            {
+                "kind": "police_sweep",
+                "text": f"Lockdown checkpoint (manhunt) aktif di {loc}.",
+                "triggered_day": day,
+                "surface_day": day,
+                "surface_time": min(1439, time_min + 5),
+                "surfaced": False,
+                "propagation": "broadcast",
+                "origin_location": loc,
+                "origin_faction": "police",
+                "witnesses": [],
+                "surface_attempts": 0,
+                "meta": {"location": loc, "source": "manhunt_lockdown"},
+                "impact": {"trace_delta": +2},
+            },
+        )
+        return True
+
+    if et == "debt_collection_ping":
+        try:
+            debt = int(payload.get("debt", 0) or 0)
+        except Exception:
+            debt = 0
+        try:
+            econ = state.setdefault("economy", {})
+            burn = int(econ.get("daily_burn", 0) or 0)
+            if debt > 0:
+                econ["daily_burn"] = burn + 1
+        except Exception:
+            pass
+        try:
+            tr = state.setdefault("trace", {})
+            tp = int(tr.get("trace_pct", 0) or 0)
+            tr["trace_pct"] = max(0, min(100, tp + (1 if debt > 0 else 0)))
+        except Exception:
+            pass
+        _push_news(state, text="Penagih utang mencari jejakmu (tekanan finansial naik).", source="contacts")
+        _queue_ripple(
+            state,
+            {
+                "kind": "debt_pressure",
+                "text": "Penagih utang mulai menanyakan keberadaanmu.",
+                "triggered_day": day,
+                "surface_day": day,
+                "surface_time": min(1439, time_min + 20),
+                "surfaced": False,
+                "propagation": "contacts",
+                "origin_location": str(state.get("player", {}).get("location", "") or "").strip().lower(),
+                "origin_faction": "",
+                "witnesses": [],
+                "surface_attempts": 0,
+                "meta": {"debt": debt},
+            },
+        )
+        return True
+
+    return False
+
+
+def _register_event_handlers() -> None:
+    # Conservative migration: keep behavior by reusing legacy handlers per event.
+    for et in (
+        "social_diffusion_hop",
+        "informant_tip",
+        "npc_report",
+        "paper_trail_ping",
+        "npc_offer",
+        "delivery_drop",
+        "delivery_expire",
+        "npc_sell_info",
+        "police_sweep",
+        "corporate_lockdown",
+        "black_market_offer",
+        "investigation_sweep",
+        "manhunt_lockdown",
+        "debt_collection_ping",
+    ):
+        EVENT_HANDLERS[et] = (
+            lambda state, ev, day, time_min, _et=et: _handle_event_legacy_by_type(
+                state,
+                et=_et,
+                payload=(ev.get("payload") if isinstance(ev.get("payload"), dict) else {}),
+                day=day,
+                time_min=time_min,
+            )
+        )
+
+
+_register_event_handlers()
+
+
 def _apply_triggered_events(state: dict[str, Any], triggered: list[dict[str, Any]]) -> None:
     """Apply deterministic effects for known event types."""
     if not triggered:
@@ -139,9 +879,6 @@ def _apply_triggered_events(state: dict[str, Any], triggered: list[dict[str, Any
         payload = ev.get("payload") or {}
         if not isinstance(payload, dict):
             payload = {}
-        if _dispatch_registered_event_handler(state, ev, day=day, time_min=time_min):
-            continue
-
         # Router audit trail (casefile) for high-signal events.
         try:
             from engine.systems.encounter_router import audit_casefile_for_event
@@ -181,745 +918,16 @@ def _apply_triggered_events(state: dict[str, Any], triggered: list[dict[str, Any
         except Exception:
             pass
 
-        if et == "social_diffusion_hop":
-            try:
-                from engine.social.social_diffusion import propagate_rumor
-            except Exception:
-                continue
-            frm = str(payload.get("from_npc", "") or "").strip()
-            to = str(payload.get("to_npc", "") or "").strip()
-            rumor = str(payload.get("rumor", "") or "").strip()
-            cat = str(payload.get("category", "") or "").strip()
-            try:
-                hop = int(payload.get("hop", 0) or 0)
-            except Exception:
-                hop = 0
-            if not (frm and to and rumor and cat):
-                continue
-            # Social diffusion rate control (budget per turn/day) to prevent runaway queues.
-            try:
-                meta2 = state.get("meta", {}) or {}
-                turn2 = int(meta2.get("turn", 0) or 0)
-            except Exception:
-                turn2 = 0
-            world2 = state.setdefault("world", {})
-            sd = world2.setdefault("social_diffusion", {})
-            if not isinstance(sd, dict):
-                sd = {}
-                world2["social_diffusion"] = sd
-            try:
-                sd_day = int(sd.get("day", 0) or 0)
-            except Exception:
-                sd_day = 0
-            try:
-                sd_turn = int(sd.get("turn", -1) or -1)
-            except Exception:
-                sd_turn = -1
-            if sd_day != day:
-                sd["day"] = int(day)
-                sd["used_today"] = 0
-            if sd_turn != turn2:
-                sd["turn"] = int(turn2)
-                sd["used_turn"] = 0
-            max_today = int(sd.get("max_hops_per_day", 12) or 12)
-            max_turn = int(sd.get("max_hops_per_turn", 3) or 3)
-            used_today = int(sd.get("used_today", 0) or 0)
-            used_turn = int(sd.get("used_turn", 0) or 0)
-            if used_today >= max_today or used_turn >= max_turn:
-                state.setdefault("world_notes", []).append("[SocialDiffusion] throttled (budget reached).")
-                continue
-            sd["used_today"] = used_today + 1
-            sd["used_turn"] = used_turn + 1
-            propagated = []
-            try:
-                propagated = propagate_rumor(state, frm, rumor, cat, hop=hop)
-            except Exception:
-                propagated = []
-            # Queue next hops if any.
-            if propagated:
-                pending = state.setdefault("pending_events", [])
-                if isinstance(pending, list):
-                    for p in propagated[:10]:
-                        if not isinstance(p, dict):
-                            continue
-                        pending.append(
-                            {
-                                "event_type": "social_diffusion_hop",
-                                "due_day": day,
-                                "due_time": min(1439, time_min + 1),
-                                "triggered": False,
-                                "payload": {
-                                    "from_npc": p.get("from", frm),
-                                    "to_npc": p.get("to", ""),
-                                    "rumor": p.get("distorted", ""),
-                                    "category": cat,
-                                    "hop": int(p.get("hop", hop + 1) or (hop + 1)),
-                                },
-                            }
-                        )
-            # Informant network hook: a rumor reaching an NPC can generate a deterministic tip.
-            try:
-                from engine.social.informants import maybe_queue_informant_tip
-
-                maybe_queue_informant_tip(
-                    state,
-                    from_npc=frm,
-                    to_npc=to,
-                    rumor=rumor,
-                    category=cat,
-                    hop=hop,
-                )
-            except Exception:
-                pass
-            # Lightweight note (bounded by update_timers cap anyway).
-            state.setdefault("world_notes", []).append(f"[SocialDiffusion] {to} mendengar: {rumor[:90]}")
+        handled_by_registry = _dispatch_registered_event_handler(state, ev, day=day, time_min=time_min)
+        if handled_by_registry:
+            continue
+        if et in EVENT_HANDLERS:
+            # Registered handler failed unexpectedly; avoid double-applying side effects.
+            state.setdefault("world_notes", []).append(f"[Timers] registered handler failed for event_type={et}")
             continue
 
-        if et == "informant_tip":
-            # Convert tip into investigation chain actions (npc_report, sweep/stop, etc.).
-            try:
-                from engine.social.investigation_chains import handle_informant_tip
-
-                if isinstance(payload, dict):
-                    handle_informant_tip(state, payload)
-            except Exception:
-                pass
+        if _handle_event_legacy_by_type(state, et=et, payload=payload, day=day, time_min=time_min):
             continue
-
-        if et == "npc_report":
-            reporter = str(payload.get("reporter", "unknown") or "unknown")
-            aff = str(payload.get("affiliation", "") or "").strip().lower()
-            try:
-                sus = int(payload.get("suspicion", 50) or 50)
-            except Exception:
-                sus = 50
-            sus = max(0, min(100, sus))
-
-            # Trace pressure bump (bounded).
-            tr = state.setdefault("trace", {})
-            try:
-                tp = int(tr.get("trace_pct", 0) or 0)
-            except Exception:
-                tp = 0
-            before_tp = tp
-            bump = 1 + int((sus - 50) / 20)
-            if aff == "police":
-                bump += 1
-            tp = max(0, min(100, tp + max(1, min(5, bump))))
-            tr["trace_pct"] = tp
-            trace_delta = tp - before_tp
-
-            # Sync attention from trace.
-            try:
-                from engine.core.factions import sync_faction_statuses_from_trace
-
-                sync_faction_statuses_from_trace(state)
-            except Exception:
-                pass
-
-            _push_news(state, text=f"Tip masuk: pihak berwenang menerima laporan anon tentang player ({reporter}).", source="broadcast")
-            # Local suspicion bump (short-horizon), tied to origin_location when available.
-            try:
-                from engine.world.heat import bump_heat, bump_suspicion
-
-                loc0 = str(payload.get("origin_location", "") or str((state.get("player", {}) or {}).get("location", "") or "")).strip().lower()
-                if loc0:
-                    bump_suspicion(state, loc=loc0, delta=2 + (1 if aff == "police" else 0), reason="npc_report", ttl_days=2)
-                    bump_heat(state, loc=loc0, delta=1, reason="npc_report", ttl_days=5)
-            except Exception:
-                pass
-            _queue_ripple(
-                state,
-                {
-                    "kind": "npc_report",
-                    "text": f"{reporter} mengontak otoritas (sus={sus}).",
-                    "triggered_day": day,
-                    "surface_day": day,
-                    "surface_time": min(1439, time_min + 10),
-                    "surfaced": False,
-                    "propagation": "faction_network" if aff in ("police", "corporate") else "contacts",
-                    "origin_location": str(payload.get("origin_location", "") or "").strip().lower(),
-                    "origin_faction": aff,
-                    "witnesses": [],
-                    "surface_attempts": 0,
-                    "meta": {"reporter": reporter, "suspicion": sus, "affiliation": aff},
-                    "impact": {"trace_delta": trace_delta},
-                },
-            )
-            continue
-
-        if et == "paper_trail_ping":
-            # Convert to a structured npc_report (delayed leakage from courier/permit/etc.).
-            reporter = str(payload.get("reporter", "unknown") or "unknown")
-            aff = str(payload.get("affiliation", "police") or "police").strip().lower()
-            try:
-                sus = int(payload.get("suspicion", 55) or 55)
-            except Exception:
-                sus = 55
-            origin_location = str(payload.get("origin_location", "") or "").strip().lower()
-            delivery_id = str(payload.get("delivery_id", "") or "").strip()
-            item_id = str(payload.get("item_id", "") or "").strip()
-            # Schedule an npc_report immediately (so it uses the existing handler + ripple format).
-            pend = state.setdefault("pending_events", [])
-            if isinstance(pend, list):
-                pend.append(
-                    {
-                        "event_type": "npc_report",
-                        "due_day": day,
-                        "due_time": min(1439, time_min + 1),
-                        "triggered": False,
-                        "payload": {
-                            "reporter": reporter,
-                            "affiliation": aff,
-                            "suspicion": max(0, min(100, sus)),
-                            "origin_location": origin_location,
-                            "meta": {"delivery_id": delivery_id, "item_id": item_id, "source": "paper_trail"},
-                        },
-                    }
-                )
-            state.setdefault("world_notes", []).append(
-                f"[PaperTrail] ping reporter={reporter} sus={sus} delivery_id={delivery_id} item={item_id}"
-            )
-            # Local suspicion bump (paper trail increases scrutiny).
-            try:
-                from engine.world.heat import bump_heat, bump_suspicion
-
-                loc0 = str(origin_location or str((state.get("player", {}) or {}).get("location", "") or "")).strip().lower()
-                if loc0:
-                    bump_suspicion(state, loc=loc0, delta=2, reason="paper_trail", ttl_days=2)
-                    bump_heat(state, loc=loc0, delta=1, reason="paper_trail", ttl_days=6)
-            except Exception:
-                pass
-            continue
-
-        if et == "npc_offer":
-            npc = str(payload.get("npc", "unknown") or "unknown")
-            role = str(payload.get("role", "civilian") or "civilian")
-            service = str(payload.get("service", "offer") or "offer")
-            world = state.setdefault("world", {})
-            econ = world.setdefault("npc_economy", {"offers": {}, "last_refresh_day": 0})
-            if not isinstance(econ, dict):
-                econ = {"offers": {}, "last_refresh_day": 0}
-                world["npc_economy"] = econ
-            offers = econ.setdefault("offers", {})
-            if not isinstance(offers, dict):
-                offers = {}
-                econ["offers"] = offers
-            offers[npc] = {
-                "npc": npc,
-                "role": role,
-                "service": service,
-                "day": day,
-                "expires_day": day + 2,
-                "payload": dict(payload),
-            }
-            econ["offers"] = offers
-
-            # Economy market hook: trade offers influence scarcity/price in that category.
-            try:
-                econ2 = state.setdefault("economy", {})
-                market = econ2.get("market", {}) or {}
-                if isinstance(market, dict) and isinstance(service, str) and service.startswith("trade:"):
-                    cat = service.split(":", 1)[1].strip().lower()
-                    if cat in market and isinstance(market.get(cat), dict):
-                        row = market.get(cat) or {}
-                        try:
-                            sc = int(row.get("scarcity", 0) or 0)
-                        except Exception:
-                            sc = 0
-                        try:
-                            px = int(row.get("price_idx", 100) or 100)
-                        except Exception:
-                            px = 100
-                        # Trade implies supply increases: scarcity down, price pressure down slightly.
-                        row["scarcity"] = max(0, sc - 1)
-                        row["price_idx"] = max(60, min(180, px - 1))
-                        market[cat] = row
-                        econ2["market"] = market
-            except Exception:
-                pass
-
-            _queue_ripple(
-                state,
-                {
-                    "kind": "npc_offer",
-                    "text": f"{npc} ({role}) menawarkan: {service}.",
-                    "triggered_day": day,
-                    "surface_day": day,
-                    "surface_time": min(1439, time_min + 5),
-                    "surfaced": False,
-                    "propagation": "contacts",
-                    "origin_location": str(payload.get("origin_location", "") or "").strip().lower(),
-                    "origin_faction": str(payload.get("origin_faction", "") or "").strip().lower(),
-                    "witnesses": [],
-                    "surface_attempts": 0,
-                    "meta": {"npc": npc, "role": role, "service": service, "expires_day": day + 2},
-                },
-            )
-
-        # police_weapon_check / undercover_sting / safehouse_raid are now handled by the router-first section above.
-
-        if et == "delivery_drop":
-            loc = str(payload.get("location", "") or str((state.get("player", {}) or {}).get("location", "") or "")).strip().lower()
-            drop_district = str(payload.get("drop_district", "") or "").strip().lower()
-            iid = str(payload.get("item_id", "") or "").strip()
-            nm = str(payload.get("item_name", iid) or iid)
-            delivery = str(payload.get("delivery", "dead_drop") or "dead_drop").strip().lower()
-            prefer = str(payload.get("prefer", "bag") or "bag").strip().lower()
-            pp = int(payload.get("district_police_presence", 0) or 0)
-            sting_bias = str(payload.get("sting_bias", "") or "").strip().lower()
-            delivery_id = str(payload.get("delivery_id", "") or "").strip()
-
-            world = state.setdefault("world", {})
-            pd = world.setdefault("pending_deliveries", [])
-            if not isinstance(pd, list):
-                pd = []
-                world["pending_deliveries"] = pd
-            pd.append(
-                {
-                    "delivery_id": delivery_id,
-                    "location": loc,
-                    "drop_district": drop_district,
-                    "item_id": iid,
-                    "item_name": nm,
-                    "delivery": delivery,
-                    "prefer": prefer,
-                    "ready_day": day,
-                    "ready_time": time_min,
-                    "expire_day": int(payload.get("expire_day", day) or day),
-                    "expire_time": int(payload.get("expire_time", min(1439, time_min + 60)) or min(1439, time_min + 60)),
-                    "sting_bias": sting_bias,
-                    "delivered": False,
-                    "expired": False,
-                }
-            )
-            world["pending_deliveries"] = pd
-
-            # Small trace nudge: courier handoffs are more visible than dead drops.
-            tr = state.setdefault("trace", {})
-            try:
-                tp = int(tr.get("trace_pct", 0) or 0)
-            except Exception:
-                tp = 0
-            bump = 1 if delivery == "dead_drop" else 2
-            if pp >= 4:
-                bump += 1
-            tr["trace_pct"] = max(0, min(100, tp + bump))
-            try:
-                from engine.core.factions import sync_faction_statuses_from_trace
-
-                sync_faction_statuses_from_trace(state)
-            except Exception:
-                pass
-
-            text = "Paketmu sudah siap diambil."
-            if delivery == "dead_drop":
-                text = "Dead drop aktif: paket sudah ditaruh di titik yang kamu sepakati."
-            elif delivery == "courier":
-                text = "Courier meet: paket sudah siap—handoff singkat sudah lewat."
-            if iid:
-                text += f" (item={iid})"
-            if drop_district:
-                text += f" drop_district={drop_district}"
-            _push_news(state, text=text, source="contacts")
-            _queue_ripple(
-                state,
-                {
-                    "kind": "delivery_drop",
-                    "text": text,
-                    "triggered_day": day,
-                    "surface_day": day,
-                    "surface_time": min(1439, time_min + 2),
-                    "surfaced": False,
-                    "propagation": "contacts",
-                    "origin_location": str(loc).strip().lower(),
-                    "origin_faction": "black_market",
-                    "witnesses": [],
-                    "surface_attempts": 0,
-                    "meta": {"item_id": iid, "delivery": delivery, "sting_bias": sting_bias},
-                },
-            )
-
-        if et == "delivery_expire":
-            loc = str(payload.get("location", "") or "").strip().lower()
-            drop_district = str(payload.get("drop_district", "") or "").strip().lower()
-            iid = str(payload.get("item_id", "") or "").strip()
-            delivery = str(payload.get("delivery", "dead_drop") or "dead_drop").strip().lower()
-            did0 = str(payload.get("delivery_id", "") or "").strip()
-            world = state.setdefault("world", {})
-            pd = world.get("pending_deliveries", []) or []
-            if isinstance(pd, list) and pd:
-                for row in pd:
-                    if not isinstance(row, dict):
-                        continue
-                    if did0 and str(row.get("delivery_id", "") or "") != did0:
-                        continue
-                    if not did0:
-                        if str(row.get("item_id", "") or "") != iid:
-                            continue
-                        if str(row.get("location", "") or "").strip().lower() != loc:
-                            continue
-                        if drop_district and str(row.get("drop_district", "") or "").strip().lower() != drop_district:
-                            continue
-                    if bool(row.get("delivered", False)):
-                        continue
-                    row["expired"] = True
-            # Also remove from nearby_items if it was already spawned but not picked.
-            nearby = (world.get("nearby_items", []) or []) if isinstance(world, dict) else []
-            if isinstance(nearby, list) and nearby:
-                kept = []
-                for x in nearby:
-                    if isinstance(x, dict):
-                        if did0 and str(x.get("delivery_id", "") or "") == did0:
-                            continue
-                        if (not did0) and str(x.get("id", "") or "") == iid and str(x.get("delivery", "") or "") == delivery:
-                            continue
-                    kept.append(x)
-                world["nearby_items"] = kept
-
-            text = "Dead drop expired: paketmu keburu diambil orang."
-            if iid:
-                text += f" (item={iid})"
-            _push_news(state, text=text, source="contacts")
-            _queue_ripple(
-                state,
-                {
-                    "kind": "delivery_expire",
-                    "text": text,
-                    "triggered_day": day,
-                    "surface_day": day,
-                    "surface_time": min(1439, time_min + 2),
-                    "surfaced": False,
-                    "propagation": "contacts",
-                    "origin_location": str(loc).strip().lower(),
-                    "origin_faction": "black_market",
-                    "witnesses": [],
-                    "surface_attempts": 0,
-                    "meta": {"item_id": iid, "delivery": delivery, "delivery_id": did0},
-                },
-            )
-
-        # safehouse_raid is now handled by the router-first section above.
-
-        if et == "npc_sell_info":
-            npc = str(payload.get("npc", "unknown") or "unknown")
-            buyer = str(payload.get("buyer_faction", "black_market") or "black_market").strip().lower()
-            try:
-                sus = int(payload.get("suspicion", 50) or 50)
-            except Exception:
-                sus = 50
-            sus = max(0, min(100, sus))
-            # Small faction aftershock (no player cash change here).
-            world = state.setdefault("world", {})
-            factions = world.get("factions", {}) or {}
-            if isinstance(factions, dict) and buyer in factions and isinstance(factions.get(buyer), dict):
-                f = factions.get(buyer) or {}
-                try:
-                    pw = int(f.get("power", 50) or 50)
-                except Exception:
-                    pw = 50
-                try:
-                    st = int(f.get("stability", 50) or 50)
-                except Exception:
-                    st = 50
-                bump = 1 + int((sus - 50) / 25)
-                f["power"] = max(0, min(100, pw + max(1, min(3, bump))))
-                f["stability"] = max(0, min(100, st + 1))
-                factions[buyer] = f
-                world["factions"] = factions
-
-            # Economy market hook: intel trade moves markets (demand shocks).
-            try:
-                econ3 = state.setdefault("economy", {})
-                market2 = econ3.get("market", {}) or {}
-                if isinstance(market2, dict):
-                    # black_market intel tends to loosen supply in illicit goods; corp/police intel tightens electronics.
-                    if buyer == "black_market":
-                        cat = "weapons"
-                        if cat in market2 and isinstance(market2.get(cat), dict):
-                            row = market2.get(cat) or {}
-                            try:
-                                sc2 = int(row.get("scarcity", 0) or 0)
-                            except Exception:
-                                sc2 = 0
-                            try:
-                                px2 = int(row.get("price_idx", 100) or 100)
-                            except Exception:
-                                px2 = 100
-                            row["scarcity"] = max(0, sc2 - 1)
-                            row["price_idx"] = max(60, min(200, px2 - 1))
-                            market2[cat] = row
-                    else:
-                        cat = "electronics"
-                        if cat in market2 and isinstance(market2.get(cat), dict):
-                            row = market2.get(cat) or {}
-                            try:
-                                sc2 = int(row.get("scarcity", 0) or 0)
-                            except Exception:
-                                sc2 = 0
-                            try:
-                                px2 = int(row.get("price_idx", 100) or 100)
-                            except Exception:
-                                px2 = 100
-                            row["scarcity"] = max(0, sc2 + 1)
-                            row["price_idx"] = max(60, min(220, px2 + 2))
-                            market2[cat] = row
-                    econ3["market"] = market2
-            except Exception:
-                pass
-
-            _push_news(state, text=f"Intel diperdagangkan di bawah tanah (sumber: {npc}).", source="faction_network")
-            _queue_ripple(
-                state,
-                {
-                    "kind": "npc_sell_info",
-                    "text": f"{npc} menjual intel ke jaringan ({buyer}).",
-                    "triggered_day": day,
-                    "surface_day": day,
-                    "surface_time": min(1439, time_min + 15),
-                    "surfaced": False,
-                    "propagation": "contacts" if buyer == "black_market" else "faction_network",
-                    "origin_location": str(payload.get("origin_location", "") or "").strip().lower(),
-                    "origin_faction": str(payload.get("origin_faction", "") or "").strip().lower(),
-                    "witnesses": [],
-                    "surface_attempts": 0,
-                    "meta": {"npc": npc, "buyer_faction": buyer, "suspicion": sus},
-                    "impact": {"factions": {buyer: {"power": +1}}},
-                },
-            )
-
-        # Quest/event resolver: police sweep (location-specific restrictions).
-        if et == "police_sweep":
-            # Now scene-backed via router-first section above (checkpoint_sweep).
-            pass
-
-        # Quest/event resolver: corporate lockdown (location-specific restriction + local economy shock).
-        if et == "corporate_lockdown":
-            loc = str(payload.get("location", "") or str(state.get("player", {}).get("location", "") or "")).strip().lower()
-            world = state.setdefault("world", {})
-            locs = world.setdefault("locations", {})
-            if isinstance(locs, dict) and loc:
-                locs.setdefault(loc, {})
-                slot = locs.get(loc)
-                if isinstance(slot, dict):
-                    r = slot.setdefault("restrictions", {})
-                    if isinstance(r, dict):
-                        r["corporate_lockdown_until_day"] = day + 2
-                    # Simple area model: corporate_district is restricted.
-                    slot.setdefault("areas", {})
-                    if isinstance(slot.get("areas"), dict):
-                        a = slot.get("areas") or {}
-                        a["corporate_district"] = {"restricted": True, "until_day": day + 2, "reason": "corporate_lockdown"}
-                        slot["areas"] = a
-                    # Local market shock: electronics scarcity/price up (only this city).
-                    m = slot.get("market")
-                    if not isinstance(m, dict) or not m:
-                        # Lazy snapshot from global market.
-                        base = (state.get("economy", {}) or {}).get("market", {}) or {}
-                        m = {}
-                        if isinstance(base, dict):
-                            for k in ("electronics", "medical", "weapons", "food", "transport"):
-                                row = base.get(k) if isinstance(base.get(k), dict) else {"price_idx": 100, "scarcity": 0}
-                                m[k] = {"price_idx": int((row or {}).get("price_idx", 100) or 100), "scarcity": int((row or {}).get("scarcity", 0) or 0)}
-                        slot["market"] = m
-                    if isinstance(m, dict) and isinstance(m.get("electronics"), dict):
-                        e = m.get("electronics") or {}
-                        try:
-                            e_sc = int(e.get("scarcity", 0) or 0)
-                        except Exception:
-                            e_sc = 0
-                        try:
-                            e_px = int(e.get("price_idx", 100) or 100)
-                        except Exception:
-                            e_px = 100
-                        e["scarcity"] = max(0, min(100, e_sc + 3))
-                        e["price_idx"] = max(60, min(300, e_px + 5))
-                        m["electronics"] = e
-                        slot["market"] = m
-                    locs[loc] = slot
-            _push_news(state, text=f"Korporasi lockdown di {loc}: akses & keamanan diperketat.", source="broadcast")
-            _queue_ripple(
-                state,
-                {
-                    "kind": "corporate_lockdown",
-                    "text": f"Akses corporate di {loc} makin ketat (lockdown).",
-                    "triggered_day": day,
-                    "surface_day": day,
-                    "surface_time": min(1439, time_min + 10),
-                    "surfaced": False,
-                    "propagation": "broadcast",
-                    "origin_location": loc,
-                    "origin_faction": "corporate",
-                    "witnesses": [],
-                    "surface_attempts": 0,
-                    "meta": {"location": loc, "until_day": day + 2},
-                },
-            )
-
-        # Quest/event resolver: black market offer -> quest chain instance.
-        if et == "black_market_offer":
-            loc = str(payload.get("location", "") or str(state.get("player", {}).get("location", "") or "")).strip().lower()
-            try:
-                bm_pw = int(payload.get("bm_power", 65) or 65)
-            except Exception:
-                bm_pw = 65
-            try:
-                bm_st = int(payload.get("bm_stability", 35) or 35)
-            except Exception:
-                bm_st = 35
-            try:
-                from engine.systems.quests import create_black_market_delivery_quest
-
-                q = create_black_market_delivery_quest(state, origin_location=loc, bm_power=bm_pw, bm_stability=bm_st)
-                _push_news(state, text=f"Rumor: offer pasar gelap muncul di {loc} (quest {q.get('id','?')}).", source="faction_network")
-                _queue_ripple(
-                    state,
-                    {
-                        "kind": "quest_offer",
-                        "text": f"Pasar gelap: job baru tersedia (lihat quest {q.get('id','?')}).",
-                        "triggered_day": day,
-                        "surface_day": day,
-                        "surface_time": min(1439, time_min + 5),
-                        "surfaced": False,
-                        "propagation": "contacts",
-                        "origin_location": loc,
-                        "origin_faction": "black_market",
-                        "witnesses": [],
-                        "surface_attempts": 0,
-                        "meta": {"quest_id": q.get("id", ""), "location": loc},
-                    },
-                )
-            except Exception:
-                pass
-
-        # Legacy event resolver: map older world_tick events into the newer restriction system.
-        if et == "investigation_sweep":
-            loc = str(payload.get("location", "") or str(state.get("player", {}).get("location", "") or "")).strip().lower()
-            try:
-                trsnap = int(payload.get("trace_snapshot", 0) or 0)
-            except Exception:
-                trsnap = 0
-            world = state.setdefault("world", {})
-            locs = world.setdefault("locations", {})
-            if isinstance(locs, dict) and loc:
-                locs.setdefault(loc, {})
-                slot = locs.get(loc)
-                if isinstance(slot, dict):
-                    r = slot.setdefault("restrictions", {})
-                    if isinstance(r, dict):
-                        r["police_sweep_until_day"] = max(int(r.get("police_sweep_until_day", 0) or 0), day + 1)
-                        r["police_sweep_attention"] = "investigated"
-                    slot.setdefault("areas", {})
-                    if isinstance(slot.get("areas"), dict):
-                        a = slot.get("areas") or {}
-                        a["downtown"] = {"restricted": True, "until_day": day + 1, "reason": "investigation_sweep"}
-                        slot["areas"] = a
-                    locs[loc] = slot
-            _push_news(state, text=f"Penyelidikan diperluas di {loc} (trace={trsnap}%).", source="broadcast")
-            _queue_ripple(
-                state,
-                {
-                    "kind": "police_sweep",
-                    "text": f"Razia investigasi meningkat di {loc}.",
-                    "triggered_day": day,
-                    "surface_day": day,
-                    "surface_time": min(1439, time_min + 10),
-                    "surfaced": False,
-                    "propagation": "broadcast",
-                    "origin_location": loc,
-                    "origin_faction": "police",
-                    "witnesses": [],
-                    "surface_attempts": 0,
-                    "meta": {"location": loc, "source": "investigation_sweep"},
-                },
-            )
-
-        if et == "manhunt_lockdown":
-            loc = str(payload.get("location", "") or str(state.get("player", {}).get("location", "") or "")).strip().lower()
-            try:
-                trsnap = int(payload.get("trace_snapshot", 0) or 0)
-            except Exception:
-                trsnap = 0
-            # Stronger sweep + trace pressure bump.
-            try:
-                tr = state.setdefault("trace", {})
-                tp = int(tr.get("trace_pct", 0) or 0)
-                tr["trace_pct"] = max(0, min(100, tp + 2))
-            except Exception:
-                pass
-            world = state.setdefault("world", {})
-            locs = world.setdefault("locations", {})
-            if isinstance(locs, dict) and loc:
-                locs.setdefault(loc, {})
-                slot = locs.get(loc)
-                if isinstance(slot, dict):
-                    r = slot.setdefault("restrictions", {})
-                    if isinstance(r, dict):
-                        r["police_sweep_until_day"] = max(int(r.get("police_sweep_until_day", 0) or 0), day + 2)
-                        r["police_sweep_attention"] = "manhunt"
-                    slot.setdefault("areas", {})
-                    if isinstance(slot.get("areas"), dict):
-                        a = slot.get("areas") or {}
-                        a["transit_hubs"] = {"restricted": True, "until_day": day + 2, "reason": "manhunt_lockdown"}
-                        slot["areas"] = a
-                    locs[loc] = slot
-            _push_news(state, text=f"Manhunt checkpoint lockdown di {loc} (trace={trsnap}%).", source="broadcast")
-            _queue_ripple(
-                state,
-                {
-                    "kind": "police_sweep",
-                    "text": f"Lockdown checkpoint (manhunt) aktif di {loc}.",
-                    "triggered_day": day,
-                    "surface_day": day,
-                    "surface_time": min(1439, time_min + 5),
-                    "surfaced": False,
-                    "propagation": "broadcast",
-                    "origin_location": loc,
-                    "origin_faction": "police",
-                    "witnesses": [],
-                    "surface_attempts": 0,
-                    "meta": {"location": loc, "source": "manhunt_lockdown"},
-                    "impact": {"trace_delta": +2},
-                },
-            )
-
-        if et == "debt_collection_ping":
-            try:
-                debt = int(payload.get("debt", 0) or 0)
-            except Exception:
-                debt = 0
-            # Soft consequence: increase daily burn slightly + add a small risk to trace (pressure).
-            try:
-                econ = state.setdefault("economy", {})
-                burn = int(econ.get("daily_burn", 0) or 0)
-                if debt > 0:
-                    econ["daily_burn"] = burn + 1
-            except Exception:
-                pass
-            try:
-                tr = state.setdefault("trace", {})
-                tp = int(tr.get("trace_pct", 0) or 0)
-                tr["trace_pct"] = max(0, min(100, tp + (1 if debt > 0 else 0)))
-            except Exception:
-                pass
-            _push_news(state, text="Penagih utang mencari jejakmu (tekanan finansial naik).", source="contacts")
-            _queue_ripple(
-                state,
-                {
-                    "kind": "debt_pressure",
-                    "text": "Penagih utang mulai menanyakan keberadaanmu.",
-                    "triggered_day": day,
-                    "surface_day": day,
-                    "surface_time": min(1439, time_min + 20),
-                    "surfaced": False,
-                    "propagation": "contacts",
-                    "origin_location": str(state.get("player", {}).get("location", "") or "").strip().lower(),
-                    "origin_faction": "",
-                    "witnesses": [],
-                    "surface_attempts": 0,
-                    "meta": {"debt": debt},
-                },
-            )
 
 
 def _collect_due_items(
