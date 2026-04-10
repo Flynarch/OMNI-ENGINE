@@ -309,24 +309,20 @@ def _condition_parts(state: dict[str, Any]) -> tuple[int, int, int, str]:
     return gigs_done, hacks_attempted, penalty, style
 
 
-def _render_monitor_compact(state: dict[str, Any]) -> None:
-    """Vertical tagged HUD (one line per category); type UI FULL for the wide panel."""
-    bio = state.get("bio", {})
-    tr = state.get("trace", {}) or {}
+def _build_compact_monitor_vm(state: dict[str, Any]) -> dict[str, Any]:
+    meta = state.get("meta", {}) or {}
     eco = state.get("economy", {}) or {}
     player = state.get("player", {}) or {}
-    meta = state.get("meta", {}) or {}
-    world = state.get("world", {}) or {}
-    day = int(meta.get("day", 1))
-    clock = _fmt_clock(int(meta.get("time_min", 0)))
-
+    tr = state.get("trace", {}) or {}
+    bio = state.get("bio", {}) or {}
+    day = int(meta.get("day", 1) or 1)
+    clock = _fmt_clock(int(meta.get("time_min", 0) or 0))
     loc_raw = str(player.get("location", "-") or "-").strip()
     loc_display = loc_raw.replace("_", " ").title() if loc_raw and loc_raw != "-" else loc_raw
-
     cash = int(eco.get("cash", 0) or 0)
     bank = int(eco.get("bank", 0) or 0)
     burn = int(eco.get("daily_burn", 0) or 0)
-
+    bp = str(bio.get("bp_state", "Stable") or "Stable")
     try:
         from engine.core.trace import get_trace_tier
 
@@ -336,7 +332,68 @@ def _render_monitor_compact(state: dict[str, Any]) -> None:
     except Exception:
         trace_pct = int(tr.get("trace_pct", 0) or 0)
         tier_lbl = str(tr.get("trace_status", "Ghost") or "Ghost")
-    bp = str(bio.get("bp_state", "Stable") or "Stable")
+    return {
+        "day": day,
+        "clock": clock,
+        "loc_display": loc_display,
+        "cash": cash,
+        "bank": bank,
+        "burn": burn,
+        "bp": bp,
+        "trace_pct": trace_pct,
+        "tier_lbl": tier_lbl,
+    }
+
+
+def _build_full_monitor_vm(state: dict[str, Any]) -> dict[str, Any]:
+    meta = state.get("meta", {}) or {}
+    player = state.get("player", {}) or {}
+    tr = state.get("trace", {}) or {}
+    day = int(meta.get("day", 1) or 1)
+    clock = _fmt_clock(int(meta.get("time_min", 0) or 0))
+    turn = int(meta.get("turn", 0) or 0)
+    seed = meta.get("seed_pack") or "-"
+    try:
+        from engine.core.trace import get_trace_tier
+
+        _tier = get_trace_tier(state)
+        trace_pct = int(_tier.get("trace_pct", 0) or 0)
+        tier_lbl = str(_tier.get("tier_id", "Ghost") or "Ghost")
+    except Exception:
+        trace_pct = int(tr.get("trace_pct", 0) or 0)
+        tier_lbl = str(tr.get("trace_status", "Ghost") or "Ghost")
+    return {
+        "day": day,
+        "clock": clock,
+        "turn": turn,
+        "seed": seed,
+        "player_name": player.get("name", "?"),
+        "player_lang": str(player.get("language", "id")).lower(),
+        "player_loc": player.get("location", "-"),
+        "player_year": player.get("year", "-"),
+        "trace_pct": trace_pct,
+        "tier_lbl": tier_lbl,
+    }
+
+
+def _render_monitor_compact(state: dict[str, Any]) -> None:
+    """Vertical tagged HUD (one line per category); type UI FULL for the wide panel."""
+    bio = state.get("bio", {})
+    tr = state.get("trace", {}) or {}
+    eco = state.get("economy", {}) or {}
+    player = state.get("player", {}) or {}
+    meta = state.get("meta", {}) or {}
+    world = state.get("world", {}) or {}
+    vm = _build_compact_monitor_vm(state)
+    day = int(vm["day"])
+    clock = str(vm["clock"])
+    loc_display = str(vm["loc_display"])
+    cash = int(vm["cash"])
+    bank = int(vm["bank"])
+    burn = int(vm["burn"])
+    trace_pct = int(vm["trace_pct"])
+    tier_lbl = str(vm["tier_lbl"])
+    bp = str(vm["bp"])
     if trace_pct > 75:
         trace_val_style = "bold red"
     elif trace_pct > 50:
@@ -439,10 +496,11 @@ def _render_monitor_full(state: dict[str, Any]) -> None:
             tr.get("trace_status", "Ghost"), "yellow"
         )
 
-    day = int(meta.get("day", 1))
-    clock = _fmt_clock(int(meta.get("time_min", 0)))
-    turn = int(meta.get("turn", 0))
-    seed = meta.get("seed_pack") or "-"
+    vm = _build_full_monitor_vm(state)
+    day = int(vm["day"])
+    clock = str(vm["clock"])
+    turn = int(vm["turn"])
+    seed = vm["seed"]
 
     left = Text()
     mid = Text()
@@ -451,11 +509,8 @@ def _render_monitor_full(state: dict[str, Any]) -> None:
 
     left.append("OMNI-ENGINE v6.9\n", style="bold black on cyan")
     lang = str(player.get("language", "id")).lower()
-    left.append(
-        f"{player.get('name', '?')} | Day {day} {clock} | Turn {turn} | Lang: {lang} | Seed: {seed}\n",
-        style="bold white",
-    )
-    left.append(f"Loc: {player.get('location', '-')} | Year: {player.get('year', '-')}\n", style="dim")
+    left.append(f"{vm['player_name']} | Day {day} {clock} | Turn {turn} | Lang: {lang} | Seed: {seed}\n", style="bold white")
+    left.append(f"Loc: {vm['player_loc']} | Year: {vm['player_year']}\n", style="dim")
     # Sim year / tech epoch (translation tech realism).
     try:
         sy = int((meta.get("sim_year", 0) or 0))

@@ -348,6 +348,14 @@ def run_pipeline(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[str,
         from engine.core.modifiers import compute_roll_package
 
         return compute_roll_package(state, action_ctx)
+    _pipeline_pre_roll(state, action_ctx)
+    roll_pkg = _pipeline_roll(state, action_ctx)
+    _pipeline_post_roll(state, action_ctx, roll_pkg)
+    return roll_pkg
+
+
+def _pipeline_pre_roll(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
+    """Pre-roll mutation stages. Keep ordering stable for deterministic behavior."""
     world_tick(state, action_ctx)
     apply_inventory_ops(state, action_ctx)
     update_timers(state, action_ctx)
@@ -359,7 +367,12 @@ def run_pipeline(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[str,
     update_inventory(state, action_ctx)
     apply_combat_gates(state, action_ctx)
 
-    roll_pkg = compute_roll_package(state, action_ctx)
+
+def _pipeline_roll(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[str, Any]:
+    return compute_roll_package(state, action_ctx)
+
+
+def _pipeline_post_roll(state: dict[str, Any], action_ctx: dict[str, Any], roll_pkg: dict[str, Any]) -> None:
     # Skill progression happens after roll resolution (deterministic).
     try:
         from engine.player.skills import apply_skill_xp_after_roll
@@ -368,28 +381,23 @@ def run_pipeline(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[str,
     except Exception:
         pass
 
-    # Domain-specific effects after roll (e.g., hacking consequences).
     apply_hacking_after_roll(state, action_ctx, roll_pkg)
-
-    # NPC emotion/relationship consequences (informant/betrayal, romance, etc).
     apply_npc_emotion_after_roll(state, action_ctx, roll_pkg)
-
     apply_intimacy_aftermath(state, action_ctx, roll_pkg)
 
     # Social diffusion: gossip about player spreads through NPC network.
     try:
         from engine.npc.npc_rumor_system import trigger_rumor_from_action
+
         trigger_rumor_from_action(state, action_ctx, roll_pkg)
-        # Apply social memory decay.
         from engine.social.social_diffusion import apply_social_decays
+
         apply_social_decays(state)
     except Exception:
         pass
 
     resolve_combat_after_roll(state, action_ctx, roll_pkg)
-
     stop_sequence_check(state, action_ctx)
-    return roll_pkg
 
 
 def log_turn_outcome(state: dict[str, Any], action_ctx: dict[str, Any], roll_pkg: dict[str, Any]) -> None:
@@ -568,6 +576,24 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             console.print(f"[bold yellow][!][/bold yellow] ACCESS DENIED: {msg}")
         else:
             console.print(f"[bold red][!][/bold red] ERROR: {msg}")
+
+    # Refactor batch: command dispatch modules (behavior-preserving extraction).
+    try:
+        from engine.commands.misc import handle_misc
+        from engine.commands.underworld import handle_underworld
+        from engine.commands.economy import handle_economy
+        from engine.commands.scene import handle_scene_commands
+
+        if handle_misc(state, cmd, fmt_clock=_fmt_clock):
+            return True
+        if handle_underworld(state, cmd, run_pipeline=run_pipeline, ui_err=_ui_err):
+            return True
+        if handle_economy(state, cmd, run_pipeline=run_pipeline):
+            return True
+        if handle_scene_commands(state, cmd, run_pipeline=run_pipeline, scene_blocks_command=_scene_blocks_command):
+            return True
+    except Exception:
+        pass
 
     if up == "UI FULL":
         state.setdefault("meta", {})["monitor_mode"] = "full"

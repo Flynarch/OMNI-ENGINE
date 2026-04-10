@@ -102,6 +102,28 @@ def _queue_ripple(state: dict[str, Any], rp: dict[str, Any]) -> None:
     enqueue_ripple(state, rp)
 
 
+EventHandler = Any
+EVENT_HANDLERS: dict[str, EventHandler] = {}
+
+
+def _dispatch_registered_event_handler(
+    state: dict[str, Any],
+    ev: dict[str, Any],
+    *,
+    day: int,
+    time_min: int,
+) -> bool:
+    """Registry hook for incremental event-handler refactors."""
+    et = str(ev.get("event_type", "") or "")
+    h = EVENT_HANDLERS.get(et)
+    if not callable(h):
+        return False
+    try:
+        return bool(h(state, ev, day=day, time_min=time_min))
+    except Exception:
+        return False
+
+
 def _apply_triggered_events(state: dict[str, Any], triggered: list[dict[str, Any]]) -> None:
     """Apply deterministic effects for known event types."""
     if not triggered:
@@ -117,6 +139,8 @@ def _apply_triggered_events(state: dict[str, Any], triggered: list[dict[str, Any
         payload = ev.get("payload") or {}
         if not isinstance(payload, dict):
             payload = {}
+        if _dispatch_registered_event_handler(state, ev, day=day, time_min=time_min):
+            continue
 
         # Router audit trail (casefile) for high-signal events.
         try:
@@ -898,6 +922,35 @@ def _apply_triggered_events(state: dict[str, Any], triggered: list[dict[str, Any
             )
 
 
+def _collect_due_items(
+    state: dict[str, Any],
+    *,
+    cur_day: int,
+    cur_min: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[tuple[tuple[int, int], str, dict[str, Any]]]]:
+    due_events: list[dict[str, Any]] = []
+    for ev in state.get("pending_events", []):
+        if not isinstance(ev, dict) or ev.get("triggered"):
+            continue
+        if (int(ev.get("due_day", 99999)), int(ev.get("due_time", 99999))) <= (cur_day, cur_min):
+            due_events.append(ev)
+
+    due_ripples: list[dict[str, Any]] = []
+    for rp in state.get("active_ripples", []):
+        if not isinstance(rp, dict) or rp.get("surfaced"):
+            continue
+        if (int(rp.get("surface_day", 99999)), int(rp.get("surface_time", 99999))) <= (cur_day, cur_min):
+            due_ripples.append(rp)
+
+    items: list[tuple[tuple[int, int], str, dict[str, Any]]] = []
+    for ev in due_events:
+        items.append(((int(ev.get("due_day", 99999)), int(ev.get("due_time", 99999))), "event", ev))
+    for rp in due_ripples:
+        items.append(((int(rp.get("surface_day", 99999)), int(rp.get("surface_time", 99999))), "ripple", rp))
+    items.sort(key=lambda x: (x[0][0], x[0][1], x[1]))
+    return due_events, due_ripples, items
+
+
 def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
     from engine.core.balance import BALANCE, get_balance_snapshot
 
@@ -1155,27 +1208,7 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
     # IMPORTANT: we do NOT change scheduling logic or sim clock; we simply defer overflow to next turn.
     cap = 3
 
-    due_events: list[dict[str, Any]] = []
-    for ev in state.get("pending_events", []):
-        if not isinstance(ev, dict) or ev.get("triggered"):
-            continue
-        if (int(ev.get("due_day", 99999)), int(ev.get("due_time", 99999))) <= (cur_day, cur_min):
-            due_events.append(ev)
-
-    due_ripples: list[dict[str, Any]] = []
-    for rp in state.get("active_ripples", []):
-        if not isinstance(rp, dict) or rp.get("surfaced"):
-            continue
-        if (int(rp.get("surface_day", 99999)), int(rp.get("surface_time", 99999))) <= (cur_day, cur_min):
-            due_ripples.append(rp)
-
-    # Merge by (day,time) so ordering is stable.
-    items: list[tuple[tuple[int, int], str, dict[str, Any]]] = []
-    for ev in due_events:
-        items.append(((int(ev.get("due_day", 99999)), int(ev.get("due_time", 99999))), "event", ev))
-    for rp in due_ripples:
-        items.append(((int(rp.get("surface_day", 99999)), int(rp.get("surface_time", 99999))), "ripple", rp))
-    items.sort(key=lambda x: (x[0][0], x[0][1], x[1]))
+    due_events, due_ripples, items = _collect_due_items(state, cur_day=cur_day, cur_min=cur_min)
 
     triggered: list[dict[str, Any]] = []
     surfaced: list[dict[str, Any]] = []

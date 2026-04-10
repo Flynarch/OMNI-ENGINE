@@ -3,6 +3,11 @@ from __future__ import annotations
 from typing import Any
 import hashlib
 
+from engine.systems.scenes_delivery import dispatch_delivery_advance
+from engine.systems.scenes_police import dispatch_police_advance, dispatch_police_auto
+from engine.systems.scenes_raid import dispatch_raid_advance, dispatch_raid_auto
+from engine.systems.scenes_sting import dispatch_sting_advance, dispatch_sting_auto
+
 
 def _now(state: dict[str, Any]) -> tuple[int, int]:
     meta = state.get("meta", {}) or {}
@@ -229,24 +234,34 @@ def auto_resolve_scene_if_needed(state: dict[str, Any], *, cur_day: int, cur_tim
 
     # Scene-specific timeout behavior (matang: never silently drop consequences).
     st = str(sc.get("scene_type", "") or "").strip().lower()
-    if st == "sting_setup":
-        return _auto_resolve_sting_setup(state, sc, phase_before=str(sc.get("phase", "") or ""))
-    if st == "safehouse_raid":
-        return _auto_resolve_safehouse_raid(state, sc, phase_before=str(sc.get("phase", "") or ""))
-    if st == "raid_response":
-        return _auto_resolve_raid_response(state, sc, phase_before=str(sc.get("phase", "") or ""))
-    if st == "police_stop":
-        return _auto_resolve_police_stop(state, sc, phase_before=str(sc.get("phase", "") or ""))
-    if st == "checkpoint_sweep":
-        return _auto_resolve_checkpoint_sweep(state, sc, phase_before=str(sc.get("phase", "") or ""))
-    if st == "traffic_stop":
-        return _auto_resolve_traffic_stop(state, sc, phase_before=str(sc.get("phase", "") or ""))
-    if st == "vehicle_search":
-        return _auto_resolve_vehicle_search(state, sc, phase_before=str(sc.get("phase", "") or ""))
-    if st == "border_control":
-        return _auto_resolve_border_control(state, sc, phase_before=str(sc.get("phase", "") or ""))
-
     phase_before = str(sc.get("phase", "") or "")
+    r_sting = dispatch_sting_auto(st, state=state, sc=sc, phase_before=phase_before, auto_sting_setup=_auto_resolve_sting_setup)
+    if isinstance(r_sting, dict):
+        return r_sting
+    r_raid = dispatch_raid_auto(
+        st,
+        state=state,
+        sc=sc,
+        phase_before=phase_before,
+        auto_safehouse_raid=_auto_resolve_safehouse_raid,
+        auto_raid_response=_auto_resolve_raid_response,
+    )
+    if isinstance(r_raid, dict):
+        return r_raid
+    r_pol = dispatch_police_auto(
+        st,
+        state=state,
+        sc=sc,
+        phase_before=phase_before,
+        auto_police_stop=_auto_resolve_police_stop,
+        auto_checkpoint_sweep=_auto_resolve_checkpoint_sweep,
+        auto_traffic_stop=_auto_resolve_traffic_stop,
+        auto_vehicle_search=_auto_resolve_vehicle_search,
+        auto_border_control=_auto_resolve_border_control,
+    )
+    if isinstance(r_pol, dict):
+        return r_pol
+
     clear_active_scene(state)
     msg = "Scene expired and auto-resolved."
     state.setdefault("world_notes", []).append(f"[Scene] auto_resolve expired (phase={phase_before})")
@@ -277,26 +292,42 @@ def advance_scene(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[str
             messages=["No active scene."],
         )
     st = str(sc.get("scene_type", "") or "").strip().lower()
-    if st == "drop_pickup":
-        return _advance_drop_pickup(state, sc, action_ctx)
-    if st == "police_stop":
-        return _advance_police_stop(state, sc, action_ctx)
-    if st == "sting_setup":
-        return _advance_sting_setup(state, sc, action_ctx)
-    if st == "sting_operation":
-        return _advance_sting_operation(state, sc, action_ctx)
-    if st == "safehouse_raid":
-        return _advance_safehouse_raid(state, sc, action_ctx)
-    if st == "raid_response":
-        return _advance_raid_response(state, sc, action_ctx)
-    if st == "checkpoint_sweep":
-        return _advance_checkpoint_sweep(state, sc, action_ctx)
-    if st == "traffic_stop":
-        return _advance_traffic_stop(state, sc, action_ctx)
-    if st == "vehicle_search":
-        return _advance_vehicle_search(state, sc, action_ctx)
-    if st == "border_control":
-        return _advance_border_control(state, sc, action_ctx)
+    r_delivery = dispatch_delivery_advance(st, state=state, sc=sc, action_ctx=action_ctx, advance_drop_pickup=_advance_drop_pickup)
+    if isinstance(r_delivery, dict):
+        return r_delivery
+    r_sting = dispatch_sting_advance(
+        st,
+        state=state,
+        sc=sc,
+        action_ctx=action_ctx,
+        advance_sting_setup=_advance_sting_setup,
+        advance_sting_operation=_advance_sting_operation,
+    )
+    if isinstance(r_sting, dict):
+        return r_sting
+    r_raid = dispatch_raid_advance(
+        st,
+        state=state,
+        sc=sc,
+        action_ctx=action_ctx,
+        advance_safehouse_raid=_advance_safehouse_raid,
+        advance_raid_response=_advance_raid_response,
+    )
+    if isinstance(r_raid, dict):
+        return r_raid
+    r_pol = dispatch_police_advance(
+        st,
+        state=state,
+        sc=sc,
+        action_ctx=action_ctx,
+        advance_police_stop=_advance_police_stop,
+        advance_checkpoint_sweep=_advance_checkpoint_sweep,
+        advance_traffic_stop=_advance_traffic_stop,
+        advance_vehicle_search=_advance_vehicle_search,
+        advance_border_control=_advance_border_control,
+    )
+    if isinstance(r_pol, dict):
+        return r_pol
     return _scene_return(
         ok=False,
         reason="unsupported_scene_type",
