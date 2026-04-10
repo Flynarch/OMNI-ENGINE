@@ -507,6 +507,90 @@ def _scene_blocks_command(state: dict[str, Any], up_cmd: str) -> bool:
         return False
 
 
+def _special_turn_profile(cmd: str) -> dict[str, Any]:
+    up = str(cmd or "").strip().upper()
+    if not up:
+        return {"consume": False, "action_type": "instant", "domain": "other"}
+
+    # Scene info commands are utility; scene actions consume turn.
+    if up == "SCENE" or up == "SCENE OPTIONS":
+        return {"consume": False, "action_type": "instant", "domain": "other"}
+    if up.startswith("SCENE "):
+        return {"consume": True, "action_type": "scene", "domain": "other"}
+
+    # Utility/info/session commands (non-turn).
+    non_turn_exact = {
+        "UI FULL",
+        "UI COMPACT",
+        "STATUS",
+        "INFO",
+        "MARKET",
+        "DISTRICTS",
+        "DISTRICT",
+        "MYCAR",
+        "MYVEHICLE",
+        "VEHICLES",
+        "WHEREAMI",
+        "HEAT",
+        "UNDO",
+        "MODE",
+        "SAVE STATE",
+        "WORLD_BRIEF",
+        "LANG",
+        "NARRATION",
+    }
+    if up in non_turn_exact:
+        return {"consume": False, "action_type": "instant", "domain": "other"}
+    if up.startswith("OFFERS"):
+        return {"consume": False, "action_type": "instant", "domain": "other"}
+    if up.startswith("SHOP"):
+        return {"consume": False, "action_type": "instant", "domain": "other"}
+    if up.startswith("PRICE"):
+        return {"consume": False, "action_type": "instant", "domain": "other"}
+    if up.startswith("BANK") and " " not in up:
+        return {"consume": False, "action_type": "instant", "domain": "other"}
+
+    # Mutating or time-consuming special commands.
+    if up.startswith("HACK"):
+        return {"consume": True, "action_type": "instant", "domain": "hacking"}
+    if up.startswith("WORK"):
+        return {"consume": True, "action_type": "work", "domain": "other"}
+    if up.startswith("DRIVE") or up.startswith("TRAVELTO"):
+        return {"consume": True, "action_type": "travel", "domain": "evasion"}
+    if up.startswith("EAT"):
+        return {"consume": True, "action_type": "instant", "domain": "other"}
+    if up.startswith("BUY") or up.startswith("SELL"):
+        return {"consume": True, "action_type": "instant", "domain": "other"}
+    if up.startswith("BUY_DARK") or up.startswith("BM_BUY"):
+        return {"consume": True, "action_type": "instant", "domain": "other"}
+    if up.startswith("STAY"):
+        return {"consume": True, "action_type": "rest", "domain": "other"}
+    if up.startswith("BUYVEHICLE") or up.startswith("SELLVEHICLE") or up.startswith("REFUEL") or up.startswith("REPAIR") or up.startswith("STEALVEHICLE") or up.startswith("USEVEHICLE"):
+        return {"consume": True, "action_type": "instant", "domain": "other"}
+
+    return {"consume": False, "action_type": "instant", "domain": "other"}
+
+
+def _finalize_special_turn(state: dict[str, Any], cmd: str, metrics_before: dict[str, Any]) -> None:
+    metrics_after = _snapshot_metrics(state)
+    diff = _compute_diff(metrics_before, metrics_after)
+    prof = _special_turn_profile(cmd)
+    meta = state.setdefault("meta", {})
+    meta["last_turn_diff"] = diff
+    meta["last_turn_audit"] = {
+        "turn": int(meta.get("turn", 0) or 0),
+        "action_type": str(prof.get("action_type", "instant") or "instant"),
+        "domain": str(prof.get("domain", "other") or "other"),
+        "special_command": True,
+        "command": str(cmd or ""),
+        "diff": diff,
+        "time_elapsed_min": int(diff.get("time_elapsed_min", 0) or 0),
+    }
+    meta["turn"] = int(meta.get("turn", 0) or 0) + 1
+    backup_state()
+    save_state(state)
+
+
 def handle_special(state: dict[str, Any], cmd: str) -> bool:
     up = cmd.upper()
     def _ui_err(kind: str, msg: str) -> None:
@@ -2396,10 +2480,11 @@ def main() -> None:
                 continue
             console.print("[yellow]Scene active. Use: SCENE | SCENE OPTIONS | SCENE <action>[/yellow]")
             continue
-        if handle_special(state, cmd):
-            continue
-
         metrics_before = _snapshot_metrics(state)
+        if handle_special(state, cmd):
+            if bool(_special_turn_profile(cmd).get("consume", False)):
+                _finalize_special_turn(state, cmd, metrics_before)
+            continue
 
         # 1) Intent resolution: prefer LLM, fallback to heuristic parser.
         intent = resolve_intent(state, cmd)

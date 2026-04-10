@@ -169,11 +169,11 @@ def handle_mobility(state: dict[str, Any], cmd: str, *, console: Any, run_pipeli
         return True
     if up == "DRIVE" or up.startswith("DRIVE "):
         try:
-            parts = cmd.split(maxsplit=2)
+            parts = cmd.split(maxsplit=1)
             if len(parts) < 2:
                 console.print("[yellow]Usage: DRIVE <dest> [vehicle_type][/yellow]")
                 return True
-            tail = parts[1].strip() if len(parts) == 2 else parts[2].strip()
+            tail = parts[1].strip()
             toks = tail.split()
             dest = tail
             vid = ""

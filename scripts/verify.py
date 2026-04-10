@@ -3281,6 +3281,47 @@ def _smoke() -> None:
     assert after_decay <= 0 and after_decay != before_decay
     assert after_cycle >= before_cycle
 
+    # DRIVE parser should preserve multi-word destination and optional vehicle suffix.
+    captured_drive_ctx: list[dict[str, Any]] = []
+    def _fake_drive_pipeline(_state: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        captured_drive_ctx.append(dict(_ctx))
+        return {"outcome": "N/A"}
+
+    assert handle_mobility(st_tv, "DRIVE old town car_standard", console=_console, run_pipeline=_fake_drive_pipeline) is True
+    assert captured_drive_ctx
+    dctx = captured_drive_ctx[-1]
+    assert str(dctx.get("travel_destination", "")) == "old town"
+    assert str(dctx.get("vehicle_id", "")) == "car_standard"
+
+    # Special command turn profile/finalization (strict turn unify).
+    import main as _main_mod
+    assert bool((_main_mod._special_turn_profile("HACK atm") or {}).get("consume", False)) is True
+    assert bool((_main_mod._special_turn_profile("STATUS") or {}).get("consume", False)) is False
+    st_sp = initialize_state({"name": "SpecialTurn", "location": "tokyo", "year": "2025"}, seed_pack="minimal")
+    m_before = _main_mod._snapshot_metrics(st_sp)
+    t_before = int((st_sp.get("meta", {}) or {}).get("turn", 0) or 0)
+    _main_mod._finalize_special_turn(st_sp, "HACK atm", m_before)
+    t_after = int((st_sp.get("meta", {}) or {}).get("turn", 0) or 0)
+    assert t_after == t_before + 1
+    aud = ((st_sp.get("meta", {}) or {}).get("last_turn_audit", {}) or {})
+    assert bool(aud.get("special_command", False)) is True
+
+    # Location preset schema should accept and expose city_stats.
+    from engine.world.location_presets import load_location_preset
+    p_jkt = load_location_preset("jakarta") or {}
+    cs = p_jkt.get("city_stats", {})
+    assert isinstance(cs, dict)
+    assert "daily_food_cost_usd" in cs
+
+    # Timers queue hardening: malformed entries should not crash and should be sanitized.
+    from engine.world.timers import update_timers as _update_timers
+    st_q = initialize_state({"name": "QueueHard", "location": "tokyo", "year": "2025"}, seed_pack="minimal")
+    st_q["pending_events"] = [{"event_type": "x", "due_day": 1, "due_time": 0}, "bad", 12, None]
+    st_q["active_ripples"] = [{"text": "ok", "surface_day": 1, "surface_time": 0}, "bad", 7]
+    _update_timers(st_q, {"action_type": "instant", "instant_minutes": 1})
+    assert all(isinstance(x, dict) for x in (st_q.get("pending_events", []) or []))
+    assert all(isinstance(x, dict) for x in (st_q.get("active_ripples", []) or []))
+
     # Turn package should expose normalized reputation block for narrator context.
     from ai.turn_prompt import build_turn_package
     from engine.npc.relationship import get_relationship

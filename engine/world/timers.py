@@ -994,6 +994,16 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
 
     meta = state.setdefault("meta", {"day": 1, "time_min": 480})
     prev_day = int(meta.get("day", 1) or 1)
+    # Queue hardening: keep only dict entries so malformed rows never crash tick cleanup.
+    pe0 = state.get("pending_events", [])
+    if not isinstance(pe0, list):
+        pe0 = []
+    state["pending_events"] = [ev for ev in pe0 if isinstance(ev, dict)]
+    rp0 = state.get("active_ripples", [])
+    if not isinstance(rp0, list):
+        rp0 = []
+    state["active_ripples"] = [rp for rp in rp0 if isinstance(rp, dict)]
+
     kind = action_ctx.get("action_type", "instant")
     if kind != "combat":
         try:
@@ -1419,11 +1429,11 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
     # Archive completed items to keep active queues clean.
     if triggered:
         state.setdefault("resolved_events", []).extend(triggered)
-    state["pending_events"] = [ev for ev in state.get("pending_events", []) if not ev.get("triggered")]
+    state["pending_events"] = [ev for ev in state.get("pending_events", []) if isinstance(ev, dict) and not bool(ev.get("triggered", False))]
 
     if surfaced:
         state.setdefault("resolved_ripples", []).extend(surfaced)
-    state["active_ripples"] = [rp for rp in state.get("active_ripples", []) if not rp.get("surfaced")]
+    state["active_ripples"] = [rp for rp in state.get("active_ripples", []) if isinstance(rp, dict) and not bool(rp.get("surfaced", False))]
 
     # Unified cleanup (lightweight, deterministic).
     try:

@@ -36,7 +36,7 @@ def load_location_preset(loc_key: str) -> dict[str, Any] | None:
     doc = _read_json(path)
     _require(isinstance(doc, dict), f"Location preset must be an object: {path}")
     # Allowed keys (strict enough to avoid wild state injection).
-    allowed = {"notes", "nearby_items", "npcs", "tags"}
+    allowed = {"notes", "nearby_items", "npcs", "tags", "city_stats"}
     for k in doc.keys():
         _require(k in allowed, f"Unknown key '{k}' in {path} (allowed: {sorted(list(allowed))})")
 
@@ -96,6 +96,18 @@ def load_location_preset(loc_key: str) -> dict[str, Any] | None:
             entry["disposition_label"] = str(n.get("disposition_label", "Neutral") or "Neutral")
         cleaned_npcs[nm] = entry
     out["npcs"] = cleaned_npcs
+    city_stats = doc.get("city_stats", {})
+    _require(isinstance(city_stats, dict), f"{path}: city_stats must be an object (dict)")
+    cleaned_stats: dict[str, float] = {}
+    for k, v in city_stats.items():
+        if not isinstance(k, str):
+            continue
+        kk = str(k).strip()
+        if not kk:
+            continue
+        if isinstance(v, (int, float)):
+            cleaned_stats[kk] = float(v)
+    out["city_stats"] = cleaned_stats
     return out
 
 
@@ -132,6 +144,8 @@ def apply_location_preset_if_first_visit(state: dict[str, Any], loc_key: str) ->
         slot["nearby_items"] = list(preset.get("nearby_items") or [])
     if "npcs" not in slot:
         slot["npcs"] = dict(preset.get("npcs") or {})
+    if "city_stats" not in slot:
+        slot["city_stats"] = dict(preset.get("city_stats") or {})
     notes = preset.get("notes") or []
     if isinstance(notes, list) and notes:
         state.setdefault("world_notes", []).extend([f"[LocationPreset:{lk}] {x}" for x in notes[:6]])
