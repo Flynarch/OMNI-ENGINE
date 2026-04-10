@@ -34,6 +34,7 @@ If you want a “grown-up” sandbox where actions have persistent, systemic con
 - **Hacking heat** per target + inventory tooling hooks.
 - **Reactive economy**: global → country → city baselines; geopolitical pressure + local restrictions.
 - **Structured ripples** tied to impact and stealth.
+- **Underworld consequences**: Black Market sting ambush scenes, arrest outcomes, and faction heat escalation from targeted hacks.
 
 ### Lodging, bank, shop, disguise
 - **Shop / bank / prepaid stay** (hotel / boarding / suite) wired into `world_notes` and turn audit.
@@ -52,6 +53,13 @@ If you want a “grown-up” sandbox where actions have persistent, systemic con
 - **Intent schema v2 (plan-based)**: the LLM can return `version=2` with `plan.steps[]` + `preconditions`. The engine selects the first valid step for this turn (not always `steps[0]`) and overlays it into `action_ctx` for execution.
 - **“Facts changed this turn”** line in the narration package (`ai/turn_prompt.py`) + **`commerce_notes`** in `meta.last_turn_audit` (Shop / Bank / Stay).
 - **Hygiene commands**: `SHOWER` / `HYGIENE` / `MANDI` (reset hygiene clock, ~15 engine minutes).
+- **Phase 3.5 systems integration**:
+  - Security scene chain: `police_stop`, `safehouse_raid`, `sting_operation` with deterministic outcomes.
+  - Underworld economy: `BLACKMARKET` + `BUY_DARK` with deterministic daily stock and sting risk.
+  - Targeted hacking command: `HACK atm|corp_server|police_archive` with faction heat impact.
+  - Daily attrition balancing: `daily_gigs_done` cap and `daily_hacks_attempted` fatigue penalty (resets on day rollover).
+  - HUD polish: `[CONDITION]` monitor line + `STATUS` / `INFO` capacity indicators.
+  - Master E2E verification path in `scripts/verify.py` covering gigs, hacking, stay rollover reset, and black market purchase.
 - **Save migration**: `python scripts/migrate_save.py` (writes `.bak`, merges new fields).
 - **Validators**: `python scripts/validate_all.py` (packs + all location presets).
 - **Data**: city presets, extra seeds, `core` pack (occupations), balance snapshot in saves.
@@ -117,12 +125,14 @@ On first boot you fill a profile and pick a **seed pack** (`default`, `minimal`,
 |---------|---------|
 | `HELP` | Full command list |
 | `SHOWER` / `HYGIENE` / `MANDI` | Reset hygiene clock (engine, ~15 min) |
+| `STATUS` / `INFO` | Current condition: daily gigs cap + hack fatigue penalty |
 | `WHEREAMI` | Location + short profile |
 | `BANK …` / `STAY …` | Banking & prepaid lodging |
-| `MARKET` / `QUEST` | Local market & quests |
+| `MARKET` / `BLACKMARKET` / `BUY_DARK …` / `QUEST` | Legal + underworld market and quests |
 | `ATLAS [country]` / `COUNTRIES` / `CITIES [country]` | Atlas & cities |
 | `WHO` / `NPC <name>` | NPCs |
 | `HEAT` / `OFFERS` | Hacking heat & NPC offers |
+| `GIGS` / `WORK <gig_id>` / `HACK <target>` | Contracts and targeted hacking loop |
 | `DISGUISE …` / `SAFEHOUSE …` / `WEATHER` / `SKILLS` | Disguise, safehouse, weather, skills |
 | `MODE NORMAL\|IRONMAN` / `UNDO` | Mode & undo |
 
