@@ -270,6 +270,68 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
                 bonus = min(cap, max(0, (lvl - 1) * per))
                 if bonus:
                     mods.append(("Skill level", bonus))
+        # Career progression subskills (contextual overlays; small bounded bonuses).
+        try:
+            skills = state.get("skills", {}) or {}
+            if isinstance(skills, dict):
+                note = str(action_ctx.get("intent_note", "") or "").lower()
+                norm = str(action_ctx.get("normalized_input", "") or "").lower()
+
+                def _lvl(k: str) -> int:
+                    row = skills.get(k)
+                    if not isinstance(row, dict):
+                        return 1
+                    try:
+                        return max(1, min(20, int(row.get("level", 1) or 1)))
+                    except Exception:
+                        return 1
+
+                if str(domain).lower() == "social":
+                    if any(k in note for k in ("negotiat", "deal", "contract", "lobby")) or any(
+                        k in norm for k in ("negosiasi", "deal", "kontrak", "lobi")
+                    ):
+                        b = min(14, max(0, (_lvl("negotiation") - 1) * per))
+                        if b:
+                            mods.append(("Negotiation skill", b))
+                    if any(k in note for k in ("intimid", "threat", "pressure")) or any(
+                        k in norm for k in ("intimidasi", "ancam", "paksa", "pressure")
+                    ):
+                        b = min(12, max(0, (_lvl("intimidation") - 1) * per))
+                        if b:
+                            mods.append(("Intimidation skill", b))
+                    if any(k in note for k in ("investigat", "intel", "case")) or any(
+                        k in norm for k in ("investigasi", "intel", "case", "kasus", "interogasi")
+                    ):
+                        b = min(12, max(0, (_lvl("investigation") - 1) * per))
+                        if b:
+                            mods.append(("Investigation skill", b))
+                if str(domain).lower() == "other":
+                    if any(k in note for k in ("bank", "finance", "investment", "launder")) or any(
+                        k in norm for k in ("bank", "investasi", "finance", "launder", "cuci uang")
+                    ):
+                        b = min(10, max(0, (_lvl("finance") - 1) * per))
+                        if b:
+                            mods.append(("Finance skill", b))
+                    if any(k in note for k in ("legal", "law", "court", "audit")) or any(
+                        k in norm for k in ("legal", "hukum", "court", "audit", "izin")
+                    ):
+                        b = min(10, max(0, (_lvl("legal") - 1) * per))
+                        if b:
+                            mods.append(("Legal skill", b))
+                    if any(k in note for k in ("operations", "logistics", "supply")) or any(
+                        k in norm for k in ("operasi", "logistik", "supply", "rantai pasok")
+                    ):
+                        b = min(10, max(0, (_lvl("operations") - 1) * per))
+                        if b:
+                            mods.append(("Operations skill", b))
+                    if any(k in note for k in ("management", "team")) or any(
+                        k in norm for k in ("manajemen", "kelola tim", "manage team")
+                    ):
+                        b = min(10, max(0, (_lvl("management") - 1) * per))
+                        if b:
+                            mods.append(("Management skill", b))
+        except Exception:
+            pass
     except Exception:
         pass
     # 2. Trauma debuff

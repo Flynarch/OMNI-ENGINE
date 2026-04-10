@@ -2,6 +2,26 @@
 
 from typing import Any
 
+_SKILL_KEYS = (
+    "hacking",
+    "social",
+    "social_engineering",
+    "combat",
+    "stealth",
+    "evasion",
+    "driving",
+    "medical",
+    "streetwise",
+    "languages",
+    "negotiation",
+    "management",
+    "finance",
+    "legal",
+    "investigation",
+    "operations",
+    "intimidation",
+)
+
 
 def _ensure_skill(state: dict[str, Any], key: str) -> dict[str, Any]:
     skills = state.setdefault("skills", {})
@@ -24,7 +44,9 @@ def _ensure_skill(state: dict[str, Any], key: str) -> dict[str, Any]:
 def update_skills(state: dict, action_ctx: dict) -> None:
     """Passive maintenance: decay + compute current (progression is applied after roll)."""
     day = int(state.get("meta", {}).get("day", 1))
-    for key in ("hacking", "social", "social_engineering", "combat", "stealth", "evasion", "driving", "medical", "streetwise", "languages"):
+    total_decay_penalty = 0
+    any_mastery_active = False
+    for key in _SKILL_KEYS:
         s = _ensure_skill(state, key)
         base = float(s.get("base", 10))
         last = int(s.get("last_used_day", day))
@@ -36,16 +58,59 @@ def update_skills(state: dict, action_ctx: dict) -> None:
         # Level contributes small permanent base bonus.
         s["current"] = max(10, base + penalty + min(25, (lvl - 1) * 2))
         s["mastery_active"] = int(s.get("mastery_streak", 0) or 0) >= 3
+        total_decay_penalty += int(penalty)
+        any_mastery_active = any_mastery_active or bool(s["mastery_active"])
+    action_ctx["skill_decay_penalty"] = int(total_decay_penalty)
+    action_ctx["mastery_active"] = bool(any_mastery_active)
+
+
+def _resolve_xp_skill_key(action_ctx: dict[str, Any]) -> str | None:
+    domain = str(action_ctx.get("domain", "") or "").lower()
+    note = str(action_ctx.get("intent_note", "") or "").lower()
+    norm = str(action_ctx.get("normalized_input", "") or "").lower()
+    if domain in _SKILL_KEYS:
+        if domain == "social":
+            if any(k in note for k in ("negotiat", "deal", "contract", "lobby")) or any(
+                k in norm for k in ("negosiasi", "deal", "kontrak", "lobi")
+            ):
+                return "negotiation"
+            if any(k in note for k in ("intimid", "threat", "pressure")) or any(
+                k in norm for k in ("intimidasi", "ancam", "paksa", "pressure")
+            ):
+                return "intimidation"
+            if any(k in note for k in ("investigat", "intel", "case")) or any(
+                k in norm for k in ("investigasi", "intel", "case", "kasus", "interogasi")
+            ):
+                return "investigation"
+        return domain
+    if domain == "other":
+        if any(k in note for k in ("bank", "finance", "investment", "launder")) or any(
+            k in norm for k in ("bank", "investasi", "finance", "launder", "cuci uang")
+        ):
+            return "finance"
+        if any(k in note for k in ("legal", "law", "court", "audit")) or any(
+            k in norm for k in ("legal", "hukum", "court", "audit", "izin")
+        ):
+            return "legal"
+        if any(k in note for k in ("operations", "logistics", "supply")) or any(
+            k in norm for k in ("operasi", "logistik", "supply", "rantai pasok")
+        ):
+            return "operations"
+        if any(k in note for k in ("management", "team")) or any(
+            k in norm for k in ("manajemen", "kelola tim", "manage team")
+        ):
+            return "management"
+    return None
 
 
 def apply_skill_xp_after_roll(state: dict[str, Any], action_ctx: dict[str, Any], roll_pkg: dict[str, Any]) -> None:
     """Progression: award XP to domain skill after a resolved action."""
-    domain = str(action_ctx.get("domain", "") or "").lower()
-    if domain not in ("hacking", "social", "social_engineering", "combat", "stealth", "evasion", "driving", "medical", "streetwise", "languages"):
+    skill_key = _resolve_xp_skill_key(action_ctx)
+    if skill_key not in _SKILL_KEYS:
         return
     meta = state.get("meta", {}) or {}
     day = int(meta.get("day", 1) or 1)
-    s = _ensure_skill(state, domain)
+    s = _ensure_skill(state, str(skill_key))
     s["last_used_day"] = day
 
     stakes = str(action_ctx.get("stakes", "") or "").lower()

@@ -138,6 +138,38 @@ def _safe_parse_json_blob(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _sleep_fastpath(player_input: str) -> Optional[Dict[str, Any]]:
+    t = str(player_input or "").strip().lower()
+    if not t:
+        return None
+    hrs: int | None = None
+    if t in ("sleep", "tidur", "aku mau tidur", "saya mau tidur"):
+        hrs = 8
+    else:
+        import re
+
+        m = re.search(r"\b(?:sleep|tidur)\s+(\d{1,2})(?:\s*(?:jam|hours?|h))?\b", t)
+        if not m:
+            m = re.search(r"\b(\d{1,2})\s*(?:jam|hours?|h)\b", t)
+            if not m or ("sleep" not in t and "tidur" not in t):
+                return None
+        try:
+            hrs = int(m.group(1))
+        except Exception:
+            hrs = 8
+    hrs = max(1, min(12, int(hrs)))
+    return {
+        "version": 1,
+        "confidence": 0.95,
+        "action_type": "sleep",
+        "domain": "other",
+        "intent_note": "sleep",
+        "stakes": "none",
+        "risk_level": "low",
+        "time_cost_min": int(hrs) * 60,
+    }
+
+
 def resolve_intent(state: Dict[str, Any], player_input: str) -> Optional[Dict[str, Any]]:
     """Best-effort LLM intent resolution. Returns dict or None if unusable."""
     meta = state.get("meta", {}) or {}
@@ -160,6 +192,9 @@ def resolve_intent(state: Dict[str, Any], player_input: str) -> Optional[Dict[st
         f"active_weapon_id={inv.get('active_weapon_id','')} weapon_ids={weapon_ids}\n"
         f"nearby_items={nearby_preview}"
     )
+    fast = _sleep_fastpath(player_input)
+    if isinstance(fast, dict):
+        return fast
     user = f"[ENGINE_SNAPSHOT]\n{summary}\n[PLAYER_INPUT]\n{player_input}\n"
     try:
         raw = _invoke_llm_for_intent({"user": user})

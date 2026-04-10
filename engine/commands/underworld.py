@@ -107,7 +107,7 @@ def handle_underworld(
                     state,
                     {
                         "action_type": "instant",
-                        "domain": "other",
+                        "domain": "hacking",
                         "normalized_input": f"hack {tgt}",
                         "instant_minutes": mins,
                         "stakes": "medium",

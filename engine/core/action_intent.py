@@ -226,6 +226,24 @@ def _is_social_scan(t: str) -> bool:
     return False
 
 
+def _parse_sleep_hours(t: str) -> int | None:
+    txt = str(t or "").strip().lower()
+    if not txt:
+        return None
+    if txt in ("sleep", "tidur", "aku mau tidur", "saya mau tidur"):
+        return 8
+    m = re.search(r"\b(?:sleep|tidur)\s+(\d{1,2})(?:\s*(?:jam|hours?|h))?\b", txt)
+    if not m:
+        m = re.search(r"\b(\d{1,2})\s*(?:jam|hours?|h)\b", txt)
+        if not m or "tidur" not in txt and "sleep" not in txt:
+            return None
+    try:
+        h = int(m.group(1))
+    except Exception:
+        return 8
+    return max(1, min(12, h))
+
+
 def parse_action_intent(player_input: str) -> dict[str, Any]:
     t = player_input.strip().lower()
     ctx: dict[str, Any] = {
@@ -335,9 +353,15 @@ def parse_action_intent(player_input: str) -> dict[str, Any]:
                 ctx.setdefault("intent_note", "travel_by_vehicle")
         except Exception:
             pass
-    elif t.startswith("sleep "):
+    elif (sleep_h := _parse_sleep_hours(t)) is not None:
         ctx["action_type"] = "sleep"
-        ctx["rested_minutes"] = 8 * 60
+        ctx["rested_minutes"] = int(sleep_h) * 60
+        ctx["sleep_duration_h"] = int(sleep_h)
+        ctx["domain"] = "other"
+        ctx["stakes"] = "none"
+        ctx["risk_level"] = "low"
+        ctx["has_stakes"] = False
+        ctx["uncertain"] = False
     elif t.startswith("rest "):
         ctx["action_type"] = "rest"
         ctx["rested_minutes"] = 60

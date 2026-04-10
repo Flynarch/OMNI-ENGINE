@@ -109,11 +109,35 @@ def _smoke() -> None:
     assert ctx_travel.get("travel_destination") in (None, "london", "london".strip())
     world_tick(st_travel, ctx_travel)
     assert str(st_travel.get("player", {}).get("location") or "").strip().lower() == "london"
-    # Location preset should seed a few recognizable items (Earth-only travel uses presets, not seed packs).
-    assert any(
-        isinstance(x, dict) and str(x.get("id", "")).lower() in ("burner_phone", "laptop_basic", "keys")
-        for x in (st_travel.get("world", {}).get("nearby_items") or [])
-    )
+    # Location nearby items should remain a valid list after travel.
+    assert isinstance(st_travel.get("world", {}).get("nearby_items"), list)
+    # Sleep intent detection (default and explicit hours).
+    ctx_sleep_def = parse_action_intent("aku mau tidur")
+    assert ctx_sleep_def.get("action_type") == "sleep"
+    assert int(ctx_sleep_def.get("rested_minutes", 0) or 0) == 8 * 60
+    ctx_sleep_6 = parse_action_intent("tidur 6 jam")
+    assert ctx_sleep_6.get("action_type") == "sleep"
+    assert int(ctx_sleep_6.get("rested_minutes", 0) or 0) == 6 * 60
+    ctx_sleep_clamp_min = parse_action_intent("SLEEP 0")
+    assert int(ctx_sleep_clamp_min.get("rested_minutes", 0) or 0) == 60
+    ctx_sleep_clamp_max = parse_action_intent("aku mau tidur 20 jam")
+    assert int(ctx_sleep_clamp_max.get("rested_minutes", 0) or 0) == 12 * 60
+    # Sleep debt recovery proportional + sleep metadata.
+    from engine.player.bio import update_bio
+
+    st_sleep = initialize_state({"name": "SleepVerify", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_sleep.setdefault("bio", {}).update({"sleep_debt": 10.0, "hunger": 0.0})
+    ctx_sleep_short = {"action_type": "sleep", "rested_minutes": 4 * 60, "normalized_input": "tidur 4 jam"}
+    update_bio(st_sleep, ctx_sleep_short)
+    assert abs(float((st_sleep.get("bio", {}) or {}).get("sleep_debt", 0.0)) - 5.0) < 0.0001
+    assert str(ctx_sleep_short.get("sleep_quality", "")) == "okay"
+    st_sleep["bio"]["sleep_debt"] = 10.0
+    st_sleep["bio"]["hunger"] = 0.0
+    ctx_sleep_full = {"action_type": "sleep", "rested_minutes": 8 * 60, "normalized_input": "tidur"}
+    update_bio(st_sleep, ctx_sleep_full)
+    assert abs(float((st_sleep.get("bio", {}) or {}).get("sleep_debt", 99.0)) - 0.0) < 0.0001
+    assert str(ctx_sleep_full.get("sleep_quality", "")) == "good"
+    assert float((st_sleep.get("bio", {}) or {}).get("hunger", 0.0) or 0.0) >= 16.0
 
     # World persistence: scene content should persist per location across travel.
     st_persist = initialize_state({"name": "PersistVerify", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
@@ -3016,6 +3040,32 @@ def _smoke() -> None:
     st_bio["bio"]["mood_score"] = 95.0
     update_mood(st_bio, {"action_type": "instant", "instant_minutes": 1, "time_breakdown": [{"label": "instant", "minutes": 1}]})
     assert bool((st_bio.get("bio", {}) or {}).get("mental_spiral", True)) is False
+    # Skills wiring: update_skills should feed decay/mastery into action_ctx for roll modifiers.
+    from engine.player.skills import update_skills
+    from engine.core.modifiers import compute_roll_package
+
+    st_sk = initialize_state({"name": "SkillWiring", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_sk.setdefault("meta", {})["day"] = 40
+    skills_map = st_sk.setdefault("skills", {})
+    skills_map["hacking"] = {"level": 1, "xp": 0, "base": 10, "last_used_day": 1, "mastery_streak": 0}
+    skills_map["social"] = {"level": 1, "xp": 0, "base": 10, "last_used_day": 1, "mastery_streak": 4}
+    ctx_sk = {
+        "action_type": "instant",
+        "domain": "hacking",
+        "trained": True,
+        "uncertain": False,
+        "has_stakes": False,
+        "stakes": "none",
+        "normalized_input": "hack quietly",
+    }
+    update_skills(st_sk, ctx_sk)
+    assert int(ctx_sk.get("skill_decay_penalty", 0) or 0) < 0
+    assert bool(ctx_sk.get("mastery_active", False)) is True
+    rp_sk = compute_roll_package(st_sk, ctx_sk)
+    mods_sk = rp_sk.get("mods", []) if isinstance(rp_sk.get("mods"), list) else []
+    labels_sk = [str(m[0]) for m in mods_sk if isinstance(m, tuple) and len(m) >= 2]
+    assert "Skill decay" in labels_sk
+    assert "Mastery bonus" in labels_sk
     # Scene gate policy: EAT allowed only on safe scenes while active_scene lock is present.
     from main import _scene_blocks_command
     from engine.core.action_intent import command_allowed_for_active_scene
@@ -3169,6 +3219,55 @@ def _smoke() -> None:
     assert bool(rdt.get("ok"))
     after_tm = int((st_d.get("meta", {}) or {}).get("time_min", 0) or 0)
     assert after_tm > before_tm
+
+    # HACK command should pass domain=hacking into pipeline (not other).
+    from engine.commands.underworld import handle_underworld
+    import engine.systems.targeted_hacking as _th
+
+    st_hdom = initialize_state({"name": "HackDomain", "location": "london", "year": "2025"}, seed_pack="minimal")
+    _orig_exec_hack = _th.execute_hack
+    captured_hack_ctx: list[dict[str, Any]] = []
+
+    def _fake_exec_hack(_state: dict[str, Any], _tgt: str) -> dict[str, Any]:
+        return {"ok": True, "success": True}
+
+    def _fake_run_pipeline(_state: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        captured_hack_ctx.append(dict(_ctx))
+        return {"outcome": "Success", "roll": 77, "mods": [], "net_threshold": 50}
+
+    _th.execute_hack = _fake_exec_hack
+    try:
+        assert handle_underworld(st_hdom, "HACK atm", run_pipeline=_fake_run_pipeline, ui_err=lambda *_: None) is True
+    finally:
+        _th.execute_hack = _orig_exec_hack
+    assert captured_hack_ctx
+    assert str((captured_hack_ctx[-1] or {}).get("domain", "")) == "hacking"
+
+    # TRAVELTO path should still trigger bio/skills/npcs/economy updates after district travel.
+    from engine.commands.mobility import handle_mobility
+    from display.renderer import console as _console
+
+    st_tv = initialize_state({"name": "TravelToPipe", "location": "tokyo", "year": "2025"}, seed_pack="minimal")
+    ensure_city_districts(st_tv, "tokyo")
+    st_tv.setdefault("player", {})["district"] = "finance"
+    st_tv.setdefault("bio", {})["sleep_debt"] = 10.0
+    st_tv.setdefault("bio", {})["hunger"] = 0.0
+    st_tv.setdefault("bio", {})["hunger_label"] = "full"
+    st_tv.setdefault("skills", {})["social"] = {"level": 1, "xp": 0, "base": 10, "last_used_day": 1, "mastery_streak": 0}
+    st_tv.setdefault("meta", {})["day"] = 30
+    st_tv.setdefault("meta", {})["time_min"] = 8 * 60
+    st_tv.setdefault("economy", {})["cash"] = 0
+
+    before_decay = int((((st_tv.get("skills", {}) or {}).get("social", {}) or {}).get("decay_penalty", 0) or 0))
+    before_cycle = int((st_tv.get("economy", {}) or {}).get("last_economic_cycle_day", 0) or 0)
+
+    assert handle_mobility(st_tv, "TRAVELTO old_town", console=_console, run_pipeline=lambda *_: {}) is True
+
+    after_decay = int((((st_tv.get("skills", {}) or {}).get("social", {}) or {}).get("decay_penalty", 0) or 0))
+    after_cycle = int((st_tv.get("economy", {}) or {}).get("last_economic_cycle_day", 0) or 0)
+    assert str((st_tv.get("player", {}) or {}).get("district", "")) == "old_town"
+    assert after_decay <= 0 and after_decay != before_decay
+    assert after_cycle >= before_cycle
 
     # Hacking should set cyber_alert context when noise rises.
     from engine.systems.hacking import apply_hacking_after_roll

@@ -1042,6 +1042,8 @@ Burnout: {bio.get('burnout', 0)}/10 | Sanity Debt: {bio.get('sanity_debt', 0)}
 mood: {bio.get('mood_label', 'meh')} ({bio.get('mood_score', 50.0)})
 spiral: {bio.get('mental_spiral', False)}
 hunger: {bio.get('hunger_label', 'full')} ({bio.get('hunger', 0.0)})
+sleep_duration: {action_ctx.get('sleep_duration_h', 0)} jam
+sleep_quality: {action_ctx.get('sleep_quality', 'okay')}
 Cash: {eco.get('cash', 0)} | Bank: {eco.get('bank', 0)} | Debt: {eco.get('debt', 0)} | Daily Burn: {eco.get('daily_burn', 0)}
 FICO: {eco.get('fico', 600)} | AML: {eco.get('aml_status', 'CLEAR')}
 Trace: {trace_display} (tier={trace_tier_id})

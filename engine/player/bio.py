@@ -54,6 +54,39 @@ def _hunger_label(score: float) -> str:
     return "critical"
 
 
+def execute_sleep(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
+    bio = state.setdefault("bio", {})
+    if str(action_ctx.get("action_type", "") or "").lower() != "sleep":
+        return
+    try:
+        mins = int(action_ctx.get("rested_minutes", 8 * 60) or 8 * 60)
+    except Exception:
+        mins = 8 * 60
+    mins = max(60, min(12 * 60, mins))
+    hrs = mins / 60.0
+    action_ctx["rested_minutes"] = mins
+    action_ctx["sleep_duration_h"] = round(hrs, 2)
+    if hrs >= 7.0:
+        action_ctx["sleep_quality"] = "good"
+    elif hrs >= 4.0:
+        action_ctx["sleep_quality"] = "okay"
+    else:
+        action_ctx["sleep_quality"] = "poor"
+    action_ctx["hunger_rate_mult"] = 0.5
+
+    try:
+        debt = float(bio.get("sleep_debt", 0.0) or 0.0)
+    except Exception:
+        debt = 0.0
+    if hrs >= 8.0:
+        debt = 0.0
+        if hrs > 8.0:
+            action_ctx["sleep_mood_bonus"] = 4
+    else:
+        debt = max(0.0, round(debt * max(0.0, 1.0 - (hrs / 8.0)), 2))
+    bio["sleep_debt"] = max(0.0, round(debt, 2))
+
+
 def update_hunger(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
     bio = state.setdefault("bio", {})
     prev_label = str(bio.get("hunger_label", "full") or "full").strip().lower()
@@ -62,7 +95,12 @@ def update_hunger(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
     except Exception:
         hunger = 0.0
     elapsed = _elapsed_minutes_from_ctx(action_ctx)
-    hunger += (max(0, elapsed) / 60.0) * 4.0
+    try:
+        mult = float(action_ctx.get("hunger_rate_mult", 1.0) or 1.0)
+    except Exception:
+        mult = 1.0
+    mult = max(0.0, min(2.0, mult))
+    hunger += (max(0, elapsed) / 60.0) * 4.0 * mult
     hunger = max(0.0, min(100.0, round(hunger, 2)))
     label = _hunger_label(hunger)
     bio["hunger"] = hunger
@@ -129,6 +167,11 @@ def update_mood(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
         score -= 15
     elif hunger >= 41:
         score -= 5
+
+    try:
+        score += float(action_ctx.get("sleep_mood_bonus", 0) or 0)
+    except Exception:
+        pass
 
     _ = action_ctx
 
@@ -216,7 +259,7 @@ def update_bio(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
 
     rest_clear = _float_snap("bio_rest_debt_clear_per_90min", BALANCE.bio_rest_debt_clear_per_90min)
     rested = int(action_ctx.get("rested_minutes", 0) or 0)
-    if rested > 0:
+    if rested > 0 and str(action_ctx.get("action_type", "") or "").lower() != "sleep":
         debt = float(bio.get("sleep_debt", 0.0))
         debt -= (rested / 90.0) * rest_clear
         bio["sleep_debt"] = max(0.0, round(debt, 2))
@@ -249,5 +292,6 @@ def update_bio(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
     bio["hygiene_tax_active"] = float(bio.get("hours_since_shower", 0) or 0) > float(h_tax)
 
     state.setdefault("flags", {})["hallucination_active"] = hall != "none"
+    execute_sleep(state, action_ctx)
     update_hunger(state, action_ctx)
     update_mood(state, action_ctx)

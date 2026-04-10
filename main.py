@@ -772,14 +772,14 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             if not bool(r.get("ok")):
                 _ui_err("ERROR", f"HACK failed: {r.get('reason','error')}")
                 return True
-            # Always advance time even if detected (attempt took time). Keep domain=other to avoid double hack effects.
+            # Always advance time even if detected (attempt took time).
             mins = 60 if tgt in ("corp_server", "police_archive") else 30
             try:
                 run_pipeline(
                     state,
                     {
                         "action_type": "instant",
-                        "domain": "other",
+                        "domain": "hacking",
                         "normalized_input": f"hack {tgt}",
                         "instant_minutes": mins,
                         "stakes": "medium",

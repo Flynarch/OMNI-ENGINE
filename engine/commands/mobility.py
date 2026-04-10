@@ -216,6 +216,25 @@ def handle_mobility(state: dict[str, Any], cmd: str, *, console: Any, run_pipeli
             if not result.get("ok"):
                 console.print(f"[red]{result.get('message','Error')}[/red]")
             else:
+                # travel_within_city already advanced timers; only run non-timer pipeline stages here.
+                ctx_post: dict[str, Any] = {
+                    "action_type": "travel",
+                    "domain": "evasion",
+                    "normalized_input": f"travelto {target}",
+                    "stakes": "low",
+                }
+                try:
+                    from engine.player.bio import update_bio
+                    from engine.player.skills import update_skills
+                    from engine.npc.npcs import update_npcs
+                    from engine.player.economy import update_economy
+
+                    update_bio(state, ctx_post)
+                    update_skills(state, ctx_post)
+                    update_npcs(state, ctx_post)
+                    update_economy(state, ctx_post)
+                except Exception:
+                    pass
                 console.print(f"[green]{result.get('message','')}[/green]")
                 if result.get("encounter"):
                     enc = result["encounter"]
