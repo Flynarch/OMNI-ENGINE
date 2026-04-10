@@ -315,6 +315,7 @@ def _build_compact_monitor_vm(state: dict[str, Any]) -> dict[str, Any]:
     player = state.get("player", {}) or {}
     tr = state.get("trace", {}) or {}
     bio = state.get("bio", {}) or {}
+    rep = state.get("reputation", {}) or {}
     day = int(meta.get("day", 1) or 1)
     clock = _fmt_clock(int(meta.get("time_min", 0) or 0))
     loc_raw = str(player.get("location", "-") or "-").strip()
@@ -345,6 +346,32 @@ def _build_compact_monitor_vm(state: dict[str, Any]) -> dict[str, Any]:
     }
     mood_emoji = mood_emojis.get(mood_label, "😐")
     hunger_emoji = hunger_emojis.get(hunger_label, "🍽️")
+    rep_scores = rep.get("scores", {}) if isinstance(rep.get("scores"), dict) else {}
+    label_to_score = {
+        "hostile": 20.0,
+        "bad": 30.0,
+        "poor": 35.0,
+        "neutral": 50.0,
+        "good": 70.0,
+        "trusted": 85.0,
+        "ally": 90.0,
+    }
+    def _rep_score(raw: Any, label_raw: Any) -> float:
+        try:
+            if raw is not None:
+                return max(0.0, min(100.0, float(raw)))
+        except Exception:
+            pass
+        return float(label_to_score.get(str(label_raw or "Neutral").strip().lower(), 50.0))
+    rep_map = {
+        "criminal": _rep_score(rep_scores.get("criminal"), rep.get("criminal_label")),
+        "corporate": _rep_score(rep_scores.get("corporate"), rep.get("corporate_label")),
+        "political": _rep_score(rep_scores.get("political"), rep.get("political_label")),
+        "street": _rep_score(rep_scores.get("street"), rep.get("civilian_label")),
+        "underground": _rep_score(rep_scores.get("underground"), rep.get("criminal_label")),
+    }
+    rep_top_key, rep_top_val = max(rep_map.items(), key=lambda kv: kv[1])
+    rep_emoji = "🏆" if rep_top_val >= 80 else "⭐" if rep_top_val >= 65 else "•"
     if sleep_debt >= 8.0:
         energy_label = "Exhausted"
         energy_emoji = "😴"
@@ -377,6 +404,9 @@ def _build_compact_monitor_vm(state: dict[str, Any]) -> dict[str, Any]:
         "mood_emoji": mood_emoji,
         "hunger_label": hunger_label,
         "hunger_emoji": hunger_emoji,
+        "rep_top_key": rep_top_key,
+        "rep_top_val": rep_top_val,
+        "rep_emoji": rep_emoji,
         "energy_label": energy_label,
         "energy_emoji": energy_emoji,
     }
@@ -435,6 +465,9 @@ def _render_monitor_compact(state: dict[str, Any]) -> None:
     mood_emoji = str(vm.get("mood_emoji", "😐") or "😐")
     hunger_label = str(vm.get("hunger_label", "full") or "full")
     hunger_emoji = str(vm.get("hunger_emoji", "🍽️") or "🍽️")
+    rep_top_key = str(vm.get("rep_top_key", "street") or "street")
+    rep_top_val = float(vm.get("rep_top_val", 50.0) or 50.0)
+    rep_emoji = str(vm.get("rep_emoji", "•") or "•")
     energy_label = str(vm.get("energy_label", "Rested") or "Rested")
     energy_emoji = str(vm.get("energy_emoji", "💪") or "💪")
     if trace_pct > 75:
@@ -462,6 +495,8 @@ def _render_monitor_compact(state: dict[str, Any]) -> None:
     t.append(f"Mood: {mood_emoji} {mood_label.title()}\n", style="blue")
     t.append("[HUNGER] ", style="bold magenta")
     t.append(f"Hunger: {hunger_emoji} {hunger_label.title()}\n", style="magenta")
+    t.append("[REP] ", style="bold white")
+    t.append(f"Rep: {rep_emoji} {rep_top_key.title()} ({rep_top_val:.1f})\n", style="white")
     t.append("[ENERGY] ", style="bold cyan")
     t.append(f"Energy: {energy_emoji} {energy_label}\n", style="cyan")
 

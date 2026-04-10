@@ -3222,6 +3222,7 @@ def _smoke() -> None:
 
     # HACK command should pass domain=hacking into pipeline (not other).
     from engine.commands.underworld import handle_underworld
+    from engine.commands.scene import _scene_domain_for_action
     import engine.systems.targeted_hacking as _th
 
     st_hdom = initialize_state({"name": "HackDomain", "location": "london", "year": "2025"}, seed_pack="minimal")
@@ -3242,6 +3243,7 @@ def _smoke() -> None:
         _th.execute_hack = _orig_exec_hack
     assert captured_hack_ctx
     assert str((captured_hack_ctx[-1] or {}).get("domain", "")) == "hacking"
+    assert _scene_domain_for_action("drop_pickup", "talk") == "social"
 
     # TRAVELTO path should still trigger bio/skills/npcs/economy updates after district travel.
     from engine.commands.mobility import handle_mobility
@@ -3268,6 +3270,25 @@ def _smoke() -> None:
     assert str((st_tv.get("player", {}) or {}).get("district", "")) == "old_town"
     assert after_decay <= 0 and after_decay != before_decay
     assert after_cycle >= before_cycle
+
+    # Turn package should expose normalized reputation block for narrator context.
+    from ai.turn_prompt import build_turn_package
+
+    st_rep = initialize_state({"name": "RepPack", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_rep["reputation"] = {
+        "criminal_label": "Trusted",
+        "civilian_label": "Neutral",
+        "scores": {"criminal": 78, "corporate": 35, "political": 40, "street": 62, "underground": 81},
+    }
+    pkg_rep = build_turn_package(
+        st_rep,
+        "status",
+        {"outcome": "Success", "roll": 55, "mods": [], "net_threshold": 50},
+        {},
+    )
+    assert "[REPUTATION]" in pkg_rep
+    assert "criminal: 78.0" in pkg_rep
+    assert "underground: 81.0" in pkg_rep
 
     # Hacking should set cyber_alert context when noise rises.
     from engine.systems.hacking import apply_hacking_after_roll

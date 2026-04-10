@@ -959,6 +959,7 @@ def build_turn_package(
     eco = state.get("economy", {})
     tr = state.get("trace", {})
     flags = state.get("flags", {})
+    rep = state.get("reputation", {}) or {}
     world = state.get("world", {}) or {}
     nearby = world.get("nearby_items", []) or []
     nearby_str = "-"
@@ -991,6 +992,45 @@ def build_turn_package(
     beat_title = "[WORLD BEAT — resolved this turn]" if lang == "en" else "[BEAT DUNIA — terjadi di turn ini]"
     queue_title = "[WORLD QUEUE — background]" if lang == "en" else "[ANTREAN DUNIA — latar]"
     npc_title = "[NPCs — snapshot]" if lang == "en" else "[NPC — cuplikan]"
+
+    rep_scores = rep.get("scores", {}) if isinstance(rep.get("scores"), dict) else {}
+    label_to_score = {
+        "hostile": 20,
+        "bad": 30,
+        "poor": 35,
+        "neutral": 50,
+        "good": 70,
+        "trusted": 85,
+        "ally": 90,
+    }
+    def _rep_score(raw: Any, label_raw: Any) -> float:
+        try:
+            if raw is not None:
+                return max(0.0, min(100.0, float(raw)))
+        except Exception:
+            pass
+        lab = str(label_raw or "Neutral").strip().lower()
+        return float(label_to_score.get(lab, 50.0))
+
+    rep_criminal = _rep_score(rep_scores.get("criminal"), rep.get("criminal_label"))
+    rep_corporate = _rep_score(rep_scores.get("corporate"), rep.get("corporate_label"))
+    rep_political = _rep_score(rep_scores.get("political"), rep.get("political_label"))
+    rep_street = _rep_score(rep_scores.get("street"), rep.get("civilian_label"))
+    rep_underground = _rep_score(rep_scores.get("underground"), rep.get("criminal_label"))
+    rep_global_raw = rep.get("global_score")
+    rep_global = _rep_score(rep_global_raw, rep.get("global_label"))
+    if rep_global_raw is None:
+        rep_global = round((rep_criminal + rep_corporate + rep_political + rep_street + rep_underground) / 5.0, 1)
+    if rep_global >= 80:
+        rep_label = "legendary"
+    elif rep_global >= 65:
+        rep_label = "respected"
+    elif rep_global >= 45:
+        rep_label = "neutral"
+    elif rep_global >= 30:
+        rep_label = "shaky"
+    else:
+        rep_label = "notorious"
 
     return f"""[TURN PACKAGE - OMNI-ENGINE v6.9]
 [NARRATION LANGUAGE]
@@ -1044,6 +1084,13 @@ spiral: {bio.get('mental_spiral', False)}
 hunger: {bio.get('hunger_label', 'full')} ({bio.get('hunger', 0.0)})
 sleep_duration: {action_ctx.get('sleep_duration_h', 0)} jam
 sleep_quality: {action_ctx.get('sleep_quality', 'okay')}
+[REPUTATION]
+global: {rep_label} ({rep_global})
+criminal: {rep_criminal}
+corporate: {rep_corporate}
+political: {rep_political}
+street: {rep_street}
+underground: {rep_underground}
 Cash: {eco.get('cash', 0)} | Bank: {eco.get('bank', 0)} | Debt: {eco.get('debt', 0)} | Daily Burn: {eco.get('daily_burn', 0)}
 FICO: {eco.get('fico', 600)} | AML: {eco.get('aml_status', 'CLEAR')}
 Trace: {trace_display} (tier={trace_tier_id})

@@ -5,6 +5,35 @@ from typing import Any, Callable
 from display.renderer import console
 
 
+def _scene_domain_for_action(scene_type: str, scene_action: str) -> str:
+    st = str(scene_type or "").strip().lower()
+    act = str(scene_action or "").strip().lower()
+    social_actions = {"talk", "negotiate", "bribe", "convince", "persuade", "deescalate"}
+    conflict_actions = {"fight", "attack", "shoot", "resist", "flee", "run", "escape"}
+    if act in social_actions:
+        return "social"
+    if act in conflict_actions:
+        return "combat" if act in {"fight", "attack", "shoot", "resist"} else "evasion"
+
+    social_scene_types = {"drop_pickup"}
+    conflict_scene_types = {
+        "safehouse_raid",
+        "raid_response",
+        "police_stop",
+        "traffic_stop",
+        "vehicle_search",
+        "checkpoint_sweep",
+        "border_control",
+        "sting_setup",
+        "sting_operation",
+    }
+    if st in social_scene_types:
+        return "social"
+    if st in conflict_scene_types:
+        return "combat"
+    return "other"
+
+
 def handle_scene_commands(
     state: dict[str, Any],
     cmd: str,
@@ -45,9 +74,10 @@ def handle_scene_commands(
         act = sub
         from engine.systems.scenes import advance_scene
 
+        scene_type = str(sc.get("scene_type", "") or "")
         action_ctx: dict[str, Any] = {
             "action_type": "instant",
-            "domain": "other",
+            "domain": _scene_domain_for_action(scene_type, act),
             "normalized_input": f"scene {act}",
             "instant_minutes": 2,
             "stakes": "low",
