@@ -600,6 +600,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         from engine.commands.scene import handle_scene_commands
         from engine.commands.session import handle_session
         from engine.commands.social_intel import handle_social_intel
+        from engine.commands.mobility import handle_mobility
+        from engine.commands.commerce import handle_commerce
 
         if handle_misc(state, cmd, fmt_clock=_fmt_clock):
             return True
@@ -608,6 +610,22 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         if handle_economy(state, cmd, run_pipeline=run_pipeline):
             return True
         if handle_scene_commands(state, cmd, run_pipeline=run_pipeline, scene_blocks_command=_scene_blocks_command):
+            return True
+        if handle_mobility(state, cmd, console=console, run_pipeline=run_pipeline):
+            return True
+        if handle_commerce(
+            state,
+            cmd,
+            console=console,
+            table_cls=Table,
+            list_shop_quotes=list_shop_quotes,
+            buy_item=buy_item,
+            sell_item=sell_item,
+            sell_item_all=sell_item_all,
+            sell_item_n=sell_item_n,
+            quote_item=quote_item,
+            get_capacity_status=get_capacity_status,
+        ):
             return True
         if handle_session(
             state,
@@ -2419,28 +2437,6 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         c = meta.get("npc_sim_last_counts") or {}
         console.print("[bold]NPCSIM_STATS[/bold]")
         console.print(json.dumps(c, ensure_ascii=False, indent=2))
-        return True
-    if up == "WHEREAMI":
-        p = state.get("player", {}) or {}
-        world = state.get("world", {}) or {}
-        locs = world.get("locations", {}) or {}
-        known = sorted([str(k) for k in locs.keys()]) if isinstance(locs, dict) else []
-        console.print("[bold]WHEREAMI[/bold]")
-        console.print(f"- loc={p.get('location','-')} year={p.get('year','-')} seed={state.get('meta',{}).get('seed_pack','-')}")
-        # Location profile (culture/econ/law background).
-        try:
-            from engine.world.atlas import ensure_location_profile, fmt_profile_short
-
-            loc = str(p.get("location", "") or "").strip()
-            if loc:
-                prof = ensure_location_profile(state, loc)
-                console.print(f"- profile: {fmt_profile_short(prof)}")
-        except Exception:
-            pass
-        if known:
-            console.print(f"- known_locations({len(known)}): " + ", ".join(known[:12]) + (" ..." if len(known) > 12 else ""))
-        else:
-            console.print("- known_locations: (none)")
         return True
     if cmd.lower() in ("quit", "exit"):
         if _ask("Keluar? [Y/N]: ").lower() in ("y", "yes"):
