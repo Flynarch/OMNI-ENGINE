@@ -204,44 +204,33 @@ def handle_mobility(state: dict[str, Any], cmd: str, *, console: Any, run_pipeli
         return True
     if up == "TRAVELTO" or up.startswith("TRAVELTO "):
         try:
-            from engine.world.districts import travel_within_city
-
             parts = cmd.split(maxsplit=1)
             if len(parts) < 2:
                 console.print("[yellow]Usage: TRAVELTO <district_id>[/yellow]")
                 console.print("[dim]Use DISTRICTS to see available districts.[/dim]")
                 return True
             target = parts[1].strip().lower()
-            result = travel_within_city(state, target)
-            if not result.get("ok"):
-                console.print(f"[red]{result.get('message','Error')}[/red]")
-            else:
-                # travel_within_city already advanced timers; only run non-timer pipeline stages here.
-                ctx_post: dict[str, Any] = {
-                    "action_type": "travel",
-                    "domain": "evasion",
-                    "normalized_input": f"travelto {target}",
-                    "stakes": "low",
-                }
-                try:
-                    from engine.player.bio import update_bio
-                    from engine.player.skills import update_skills
-                    from engine.npc.npcs import update_npcs
-                    from engine.player.economy import update_economy
-
-                    update_bio(state, ctx_post)
-                    update_skills(state, ctx_post)
-                    update_npcs(state, ctx_post)
-                    update_economy(state, ctx_post)
-                except Exception:
-                    pass
-                console.print(f"[green]{result.get('message','')}[/green]")
-                if result.get("encounter"):
-                    enc = result["encounter"]
-                    if enc.get("type") == "crime":
-                        console.print(f"[yellow]Warning: Crime risk {enc.get('risk')}/5 in this area![/yellow]")
-                    elif enc.get("type") == "police":
-                        console.print("[yellow]Warning: Heavy police presence in this area![/yellow]")
+            ctx: dict[str, Any] = {
+                "action_type": "travel",
+                "domain": "evasion",
+                "normalized_input": f"travelto {target}",
+                "travel_mode": "district",
+                "travel_target_district": target,
+                "stakes": "low",
+            }
+            run_pipeline(state, ctx)
+            result = ctx.get("travel_result", {})
+            if not isinstance(result, dict) or not bool(result.get("ok")):
+                msg = str((result.get("message") if isinstance(result, dict) else "") or "Error")
+                console.print(f"[red]{msg}[/red]")
+                return True
+            console.print(f"[green]{result.get('message','')}[/green]")
+            if result.get("encounter"):
+                enc = result["encounter"]
+                if enc.get("type") == "crime":
+                    console.print(f"[yellow]Warning: Crime risk {enc.get('risk')}/5 in this area![/yellow]")
+                elif enc.get("type") == "police":
+                    console.print("[yellow]Warning: Heavy police presence in this area![/yellow]")
         except Exception:
             console.print("[red]TRAVELTO error.[/red]")
         return True

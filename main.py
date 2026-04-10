@@ -15,24 +15,10 @@ from ai.parser import apply_memory_hash_to_state, enforce_stop_sequence_output, 
 from ai.turn_prompt import build_system_prompt, build_turn_package, get_narration_lang
 from display.renderer import console, render_monitor, stream_render
 from engine.core.action_intent import apply_active_scene_intent_lock, parse_action_intent
+from engine.core.pipeline import run_pipeline
 from engine.player.boot_economy import format_boot_economy_preview
-from engine.player.bio import update_bio
-from engine.systems.combat import apply_combat_gates, resolve_combat_after_roll
-from engine.player.economy import update_economy
-from engine.player.inventory import update_inventory
-from engine.player.inventory_ops import apply_inventory_ops
-from engine.core.modifiers import compute_roll_package, stop_sequence_check
-from engine.npc.npcs import update_npcs
-from engine.player.skills import update_skills
 from engine.core.seeds import list_seed_names
 from engine.core.state import CURRENT, PREVIOUS, backup_state, initialize_state, load_state, save_state
-from engine.world.timers import update_timers
-from engine.core.trace import update_trace
-from engine.world.world import world_tick
-from engine.systems.hacking import apply_hacking_after_roll
-from engine.systems.intimacy import apply_intimacy_aftermath
-from engine.npc.npc_emotions import apply_npc_emotion_after_roll
-from engine.npc.npc_targeting import apply_npc_targeting
 from engine.systems.shop import buy_item, get_capacity_status, list_shop_quotes, sell_item, sell_item_all, sell_item_n, quote_item
 
 
@@ -341,73 +327,6 @@ def boot_sequence() -> dict[str, Any]:
     if "location" not in data:
         data["location"] = _bootstrap_location_input(seed_pack=seed_pack)
     return initialize_state(data, seed_pack=seed_pack)
-
-
-def run_pipeline(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[str, Any]:
-    if bool(action_ctx.get("scene_locked")):
-        from engine.core.modifiers import compute_roll_package
-
-        return compute_roll_package(state, action_ctx)
-    _pipeline_pre_roll(state, action_ctx)
-    roll_pkg = _pipeline_roll(state, action_ctx)
-    _pipeline_post_roll(state, action_ctx, roll_pkg)
-    return roll_pkg
-
-
-def _pipeline_pre_roll(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
-    """Pre-roll mutation stages. Keep ordering stable for deterministic behavior."""
-    world_tick(state, action_ctx)
-    apply_inventory_ops(state, action_ctx)
-    update_timers(state, action_ctx)
-    update_bio(state, action_ctx)
-    update_skills(state, action_ctx)
-    update_npcs(state, action_ctx)
-    update_economy(state, action_ctx)
-    update_trace(state, action_ctx)
-    update_inventory(state, action_ctx)
-    apply_combat_gates(state, action_ctx)
-
-
-def _pipeline_roll(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[str, Any]:
-    return compute_roll_package(state, action_ctx)
-
-
-def _pipeline_post_roll(state: dict[str, Any], action_ctx: dict[str, Any], roll_pkg: dict[str, Any]) -> None:
-    # Skill progression happens after roll resolution (deterministic).
-    try:
-        from engine.player.skills import apply_skill_xp_after_roll
-
-        apply_skill_xp_after_roll(state, action_ctx, roll_pkg)
-    except Exception as e:
-        try:
-            from engine.core.errors import record_error
-
-            record_error(state, "pipeline.post_roll.skill_xp", e)
-        except Exception:
-            pass
-
-    apply_hacking_after_roll(state, action_ctx, roll_pkg)
-    apply_npc_emotion_after_roll(state, action_ctx, roll_pkg)
-    apply_intimacy_aftermath(state, action_ctx, roll_pkg)
-
-    # Social diffusion: gossip about player spreads through NPC network.
-    try:
-        from engine.npc.npc_rumor_system import trigger_rumor_from_action
-
-        trigger_rumor_from_action(state, action_ctx, roll_pkg)
-        from engine.social.social_diffusion import apply_social_decays
-
-        apply_social_decays(state)
-    except Exception as e:
-        try:
-            from engine.core.errors import record_error
-
-            record_error(state, "pipeline.post_roll.social_diffusion", e)
-        except Exception:
-            pass
-
-    resolve_combat_after_roll(state, action_ctx, roll_pkg)
-    stop_sequence_check(state, action_ctx)
 
 
 def log_turn_outcome(state: dict[str, Any], action_ctx: dict[str, Any], roll_pkg: dict[str, Any]) -> None:
@@ -2595,7 +2514,12 @@ def main() -> None:
                 already_pickups.add(item_id)
 
         # NPC targeting enhancement (e.g. "orang itu" → npc_focus).
-        apply_npc_targeting(state, action_ctx, cmd)
+        try:
+            from engine.npc.npc_targeting import apply_npc_targeting
+
+            apply_npc_targeting(state, action_ctx, cmd)
+        except Exception:
+            pass
 
         # Optional: NL "menginap semalam" / "stay one night" → deterministic prepaid stay (OMNI_AUTO_STAY_INTENT=1).
         try:

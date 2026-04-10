@@ -3272,7 +3272,8 @@ def _smoke() -> None:
     before_decay = int((((st_tv.get("skills", {}) or {}).get("social", {}) or {}).get("decay_penalty", 0) or 0))
     before_cycle = int((st_tv.get("economy", {}) or {}).get("last_economic_cycle_day", 0) or 0)
 
-    assert handle_mobility(st_tv, "TRAVELTO old_town", console=_console, run_pipeline=lambda *_: {}) is True
+    from engine.core.pipeline import run_pipeline as _core_run_pipeline
+    assert handle_mobility(st_tv, "TRAVELTO old_town", console=_console, run_pipeline=_core_run_pipeline) is True
 
     after_decay = int((((st_tv.get("skills", {}) or {}).get("social", {}) or {}).get("decay_penalty", 0) or 0))
     after_cycle = int((st_tv.get("economy", {}) or {}).get("last_economic_cycle_day", 0) or 0)
