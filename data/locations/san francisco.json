@@ -4,6 +4,18 @@
   "npcs": {
     "Corp_Liaison_Park": { "role": "corporate_rep", "affiliation": "corporate", "disposition_score": 52, "disposition_label": "Neutral", "is_contact": true },
     "Fixer_Bay_Mara": { "role": "fixer", "affiliation": "black_market", "disposition_score": 56, "disposition_label": "Neutral", "is_contact": true }
+  },
+  "city_stats": {
+    "daily_food_cost_usd": 45.0,
+    "street_food_cost_usd": 14.0,
+    "cheap_meal_calories": 550,
+    "expensive_meal_calories": 1400,
+    "min_wage_monthly_usd": 3100.0,
+    "avg_salary_monthly_usd": 8200.0,
+    "avg_rent_monthly_usd": 2800.0,
+    "cost_of_living_index": 97.6,
+    "unemployment_rate_pct": 4.1,
+    "crime_index": 60.0
   }
 }
 

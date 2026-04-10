@@ -4,6 +4,18 @@
   "npcs": {
     "Fixer_Rahul": { "role": "fixer", "affiliation": "black_market", "disposition_score": 60, "disposition_label": "Neutral", "is_contact": true },
     "Officer_Patel": { "role": "cop", "affiliation": "police", "disposition_score": 46, "disposition_label": "Cold", "is_contact": true }
+  },
+  "city_stats": {
+    "daily_food_cost_usd": 10.0,
+    "street_food_cost_usd": 1.5,
+    "cheap_meal_calories": 350,
+    "expensive_meal_calories": 900,
+    "min_wage_monthly_usd": 64.0,
+    "avg_salary_monthly_usd": 600.0,
+    "avg_rent_monthly_usd": 500.0,
+    "cost_of_living_index": 28.0,
+    "unemployment_rate_pct": 7.0,
+    "crime_index": 45.0
   }
 }
 

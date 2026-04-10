@@ -6,6 +6,18 @@
   "npcs": {
     "Corp_Associate_Han": { "role": "corporate_rep", "affiliation": "corporate", "disposition_score": 53, "disposition_label": "Neutral", "is_contact": true },
     "Doc_Yuna": { "role": "doc", "affiliation": "civilian", "disposition_score": 56, "disposition_label": "Neutral", "is_contact": true }
+  },
+  "city_stats": {
+    "daily_food_cost_usd": 22.0,
+    "street_food_cost_usd": 5.0,
+    "cheap_meal_calories": 450,
+    "expensive_meal_calories": 1200,
+    "min_wage_monthly_usd": 1430.0,
+    "avg_salary_monthly_usd": 2600.0,
+    "avg_rent_monthly_usd": 800.0,
+    "cost_of_living_index": 66.6,
+    "unemployment_rate_pct": 2.9,
+    "crime_index": 25.0
   }
 }
 

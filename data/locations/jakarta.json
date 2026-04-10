@@ -6,6 +6,18 @@
     "Fixer_Cikini_Rara": { "role": "fixer", "affiliation": "black_market", "disposition_score": 57, "disposition_label": "Neutral", "is_contact": true },
     "Intel_Clerk_Dimas": { "role": "clerk", "affiliation": "corporate", "disposition_score": 52, "disposition_label": "Neutral", "is_contact": true },
     "Officer_Sutanto": { "role": "cop", "affiliation": "police", "disposition_score": 46, "disposition_label": "Cold" }
+  },
+  "city_stats": {
+    "daily_food_cost_usd": 18.0,
+    "street_food_cost_usd": 1.3,
+    "cheap_meal_calories": 315,
+    "expensive_meal_calories": 770,
+    "min_wage_monthly_usd": 341.0,
+    "avg_salary_monthly_usd": 477.0,
+    "avg_rent_monthly_usd": 374.0,
+    "cost_of_living_index": 30.1,
+    "unemployment_rate_pct": 5.3,
+    "crime_index": 53.0
   }
 }
 

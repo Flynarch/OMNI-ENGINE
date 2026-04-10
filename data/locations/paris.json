@@ -6,6 +6,18 @@
     "Journalist_Claire": { "role": "journalist", "affiliation": "civilian", "disposition_score": 59, "disposition_label": "Neutral", "is_contact": true },
     "Gendarme_Roux": { "role": "cop", "affiliation": "police", "disposition_score": 47, "disposition_label": "Cold", "is_contact": true },
     "Corp_Procurement_Dupont": { "role": "corporate_rep", "affiliation": "corporate", "disposition_score": 51, "disposition_label": "Neutral", "is_contact": true }
+  },
+  "city_stats": {
+    "daily_food_cost_usd": 35.0,
+    "street_food_cost_usd": 8.0,
+    "cheap_meal_calories": 450,
+    "expensive_meal_calories": 1300,
+    "min_wage_monthly_usd": 2000.0,
+    "avg_salary_monthly_usd": 3200.0,
+    "avg_rent_monthly_usd": 1400.0,
+    "cost_of_living_index": 80.0,
+    "unemployment_rate_pct": 7.5,
+    "crime_index": 55.0
   }
 }
 

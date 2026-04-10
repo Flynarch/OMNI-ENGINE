@@ -6,6 +6,18 @@
     "Broker_Lim": { "role": "broker", "affiliation": "corporate", "disposition_score": 60, "disposition_label": "Neutral", "is_contact": true },
     "Courier_Aisyah": { "role": "courier", "affiliation": "civilian", "disposition_score": 57, "disposition_label": "Neutral", "is_contact": true },
     "Enforcement_Ong": { "role": "cop", "affiliation": "police", "disposition_score": 47, "disposition_label": "Cold" }
+  },
+  "city_stats": {
+    "daily_food_cost_usd": 25.0,
+    "street_food_cost_usd": 4.5,
+    "cheap_meal_calories": 345,
+    "expensive_meal_calories": 854,
+    "min_wage_monthly_usd": 1631.0,
+    "avg_salary_monthly_usd": 4500.0,
+    "avg_rent_monthly_usd": 2500.0,
+    "cost_of_living_index": 80.9,
+    "unemployment_rate_pct": 2.0,
+    "crime_index": 20.0
   }
 }
 

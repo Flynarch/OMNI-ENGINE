@@ -4,6 +4,18 @@
   "npcs": {
     "Fixer_Sukhumvit_Pim": { "role": "fixer", "affiliation": "black_market", "disposition_score": 58, "disposition_label": "Neutral", "is_contact": true },
     "Doc_Somchai": { "role": "doc", "affiliation": "civilian", "disposition_score": 56, "disposition_label": "Neutral", "is_contact": true }
+  },
+  "city_stats": {
+    "daily_food_cost_usd": 12.0,
+    "street_food_cost_usd": 2.0,
+    "cheap_meal_calories": 450,
+    "expensive_meal_calories": 950,
+    "min_wage_monthly_usd": 252.6,
+    "avg_salary_monthly_usd": 700.0,
+    "avg_rent_monthly_usd": 600.0,
+    "cost_of_living_index": 41.2,
+    "unemployment_rate_pct": 0.7,
+    "crime_index": 40.0
   }
 }
 

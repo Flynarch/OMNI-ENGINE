@@ -6,6 +6,18 @@
     "Runner_Kai": { "role": "runner", "affiliation": "civilian", "disposition_score": 56, "disposition_label": "Neutral", "is_contact": true },
     "Detective_Morrow": { "role": "detective", "affiliation": "police", "disposition_score": 45, "disposition_label": "Cold", "is_contact": true },
     "Corp_Legal_Avery": { "role": "corporate_rep", "affiliation": "corporate", "disposition_score": 50, "disposition_label": "Cold", "is_contact": true }
+  },
+  "city_stats": {
+    "daily_food_cost_usd": 43.0,
+    "street_food_cost_usd": 12.0,
+    "cheap_meal_calories": 560,
+    "expensive_meal_calories": 1450,
+    "min_wage_monthly_usd": 2946.0,
+    "avg_salary_monthly_usd": 6000.0,
+    "avg_rent_monthly_usd": 2367.0,
+    "cost_of_living_index": 100.0,
+    "unemployment_rate_pct": 4.5,
+    "crime_index": 48.0
   }
 }
 

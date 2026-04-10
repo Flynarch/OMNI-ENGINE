@@ -4,6 +4,18 @@
   "npcs": {
     "Fixer_Sol_Lucia": { "role": "fixer", "affiliation": "black_market", "disposition_score": 57, "disposition_label": "Neutral", "is_contact": true },
     "Courier_Ivan": { "role": "runner", "affiliation": "civilian", "disposition_score": 54, "disposition_label": "Neutral", "is_contact": true }
+  },
+  "city_stats": {
+    "daily_food_cost_usd": 22.0,
+    "street_food_cost_usd": 6.0,
+    "cheap_meal_calories": 400,
+    "expensive_meal_calories": 1100,
+    "min_wage_monthly_usd": 1250.0,
+    "avg_salary_monthly_usd": 2200.0,
+    "avg_rent_monthly_usd": 1200.0,
+    "cost_of_living_index": 55.0,
+    "unemployment_rate_pct": 10.5,
+    "crime_index": 30.0
   }
 }
 
