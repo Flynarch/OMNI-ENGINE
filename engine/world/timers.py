@@ -11,6 +11,15 @@ def _advance(meta: dict[str, Any], minutes: int) -> None:
         meta["day"] = int(meta.get("day", 1)) + 1
 
 
+def _reset_daily_attrition_counters(state: dict[str, Any]) -> None:
+    meta = state.setdefault("meta", {})
+    if not isinstance(meta, dict):
+        meta = {}
+        state["meta"] = meta
+    meta["daily_gigs_done"] = 0
+    meta["daily_hacks_attempted"] = 0
+
+
 def _can_surface_ripple(state: dict[str, Any], rp: dict[str, Any]) -> bool:
     """Visibility/propagation gate: a ripple should only surface if player can logically know it."""
     propagation = str(rp.get("propagation", "local_witness") or "local_witness").lower()
@@ -893,7 +902,20 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
     from engine.core.balance import BALANCE, get_balance_snapshot
 
     meta = state.setdefault("meta", {"day": 1, "time_min": 480})
+    prev_day = int(meta.get("day", 1) or 1)
     kind = action_ctx.get("action_type", "instant")
+    if kind != "combat":
+        try:
+            from engine.systems.encounter_scheduler import evaluate_security_encounters
+
+            evaluate_security_encounters(state, action_ctx)
+        except Exception as e:
+            try:
+                from engine.core.errors import record_error
+
+                record_error(state, "timers.evaluate_security_encounters", e)
+            except Exception:
+                pass
     if kind == "combat":
         action_ctx.setdefault("time_breakdown", []).append({"label": "combat", "minutes": 1})
         _advance(meta, 1)
@@ -923,6 +945,32 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                 record_error(state, "timers.apply_vehicle_to_travel", e)
             except Exception:
                 pass
+        # Trace tier: multiply travel time (and optional cash estimate) when Wanted/Lockdown.
+        try:
+            from engine.core.trace import apply_trace_travel_friction, get_trace_tier
+
+            cur_tm = int(action_ctx.get("travel_minutes", 30) or 30)
+            new_tm, friction_applied = apply_trace_travel_friction(state, cur_tm)
+            if friction_applied:
+                action_ctx["travel_minutes"] = new_tm
+                action_ctx.setdefault("time_breakdown", []).append(
+                    {"label": "trace_friction", "minutes": int(new_tm - cur_tm)}
+                )
+                state.setdefault("world_notes", []).append(
+                    "[Security] Travel friction increased due to high Trace."
+                )
+            tier = get_trace_tier(state)
+            mult = float(tier.get("friction_multiplier", 1.0) or 1.0)
+            if mult > 1.0:
+                tcc = action_ctx.get("travel_cash_cost")
+                if isinstance(tcc, (int, float)):
+                    try:
+                        old_c = float(tcc)
+                        action_ctx["travel_cash_cost"] = max(0, int(round(old_c * mult)))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         # Location-specific movement friction (e.g., police sweep).
         try:
             cur_loc = str(state.get("player", {}).get("location", "") or "").strip().lower()
@@ -1043,7 +1091,7 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
             if not isinstance(it, dict):
                 continue
             label = str(it.get("label", "") or "")
-            if label in ("restrictions", "weather", "weather(dest)", "border_controls"):
+            if label in ("restrictions", "weather", "weather(dest)", "border_controls", "trace_friction"):
                 try:
                     extras += int(it.get("minutes", 0) or 0)
                 except Exception:
@@ -1059,6 +1107,8 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
         _advance(meta, int(action_ctx.get("instant_minutes", 2)))
 
     cur_day, cur_min = int(meta["day"]), int(meta["time_min"])
+    if int(cur_day) > int(prev_day):
+        _reset_daily_attrition_counters(state)
     # Daily decay for investigation heat/suspicion (once per day).
     try:
         world = state.setdefault("world", {})

@@ -14,7 +14,8 @@ from ai.intent_resolver import resolve_intent
 from ai.parser import apply_memory_hash_to_state, enforce_stop_sequence_output, parse_memory_hash, record_ai_parse_health
 from ai.turn_prompt import build_system_prompt, build_turn_package, get_narration_lang
 from display.renderer import console, render_monitor, stream_render
-from engine.core.action_intent import parse_action_intent
+from engine.core.action_intent import apply_active_scene_intent_lock, parse_action_intent
+from engine.player.boot_economy import format_boot_economy_preview
 from engine.player.bio import update_bio
 from engine.systems.combat import apply_combat_gates, resolve_combat_after_roll
 from engine.player.economy import update_economy
@@ -60,6 +61,70 @@ def _load_occupation_templates() -> list[dict[str, Any]]:
         return []
 
 
+def _label_from_template_id(template_id: str, temps: list[dict[str, Any]]) -> str:
+    """Human-ish occupation string from template id (for economy keywords + display)."""
+    tid = (template_id or "").strip().lower()
+    if not tid:
+        return ""
+    for t in temps:
+        if not isinstance(t, dict):
+            continue
+        if str(t.get("id", "")).strip().lower() != tid:
+            continue
+        name = str(t.get("name", "") or "").strip()
+        if name:
+            return name.split("/")[0].strip()
+        return tid.replace("_", " ").title()
+    return tid.replace("_", " ").title()
+
+
+def _print_boot_keyword_examples() -> None:
+    """Mini keyword hints per tier (Rich OK here; not inside input() prompts)."""
+    console.print(
+        "\n[bold]Contoh kata kunci tier ekonomi awal[/bold] [dim](occupation + background)[/dim]"
+    )
+    console.print(
+        "  [bold]Tinggi:[/bold] ceo, director, lawyer, engineer, manager, dokter, pilot, investor"
+    )
+    console.print(
+        "  [bold]Menengah:[/bold] tidak ada kata di atas/bawah yang dominan, atau campuran seimbang"
+    )
+    console.print(
+        "  [bold]Rendah:[/bold] student, driver, unemployed, cashier, waiter, buruh, mahasiswa, gig"
+    )
+
+
+def _boot_role_step(data: dict[str, Any], temps: list[dict[str, Any]]) -> None:
+    """Step (2): template loadout + occupation/background text (mutates data)."""
+    console.print("\n[bold](2) Peran[/bold] [dim]— template loadout + occupation/background[/dim]")
+    if temps:
+        console.print("\n[bold cyan]Template loadout[/bold cyan] [dim]— skill + peralatan awal (bukan nominal uang)[/dim]")
+        for t in temps[:10]:
+            console.print(f"  [dim]-[/dim] [bold]{t.get('id', '-')}[/bold]: {t.get('name', '')}")
+        pick = _ask("Template [ketik id / Enter = nanti otomatis dari teks occupation+background]: ").strip().lower()
+        if pick and pick not in ("auto", "none", "-", "skip"):
+            data["occupation_template_id"] = pick.strip().lower()
+        else:
+            data.pop("occupation_template_id", None)
+    else:
+        data.pop("occupation_template_id", None)
+
+    console.print("\n[bold green]Profil teks[/bold green] [dim]— kata kunci untuk tier ekonomi awal[/dim]")
+    def_occ = ""
+    if data.get("occupation_template_id"):
+        def_occ = _label_from_template_id(str(data["occupation_template_id"]), temps)
+    occ_hint = f" (Enter = '{def_occ}' dari template)" if def_occ else " (bebas; kosong ≈ ekonomi menengah)"
+    raw_occ = _ask(f"occupation{occ_hint}: ")
+    if not str(raw_occ).strip() and def_occ:
+        data["occupation"] = def_occ
+        console.print(f"[dim]→ occupation diisi otomatis: {def_occ}[/dim]")
+    else:
+        data["occupation"] = str(raw_occ).strip()
+
+    raw_bg = _ask("background (lore singkat; kosong = netral untuk ekonomi): ")
+    data["background"] = str(raw_bg).strip()
+
+
 def _bootstrap_location_input(*, seed_pack: str | None = None) -> str:
     """Location picker with manual override (deterministic normalization remains in engine)."""
     try:
@@ -71,26 +136,26 @@ def _bootstrap_location_input(*, seed_pack: str | None = None) -> str:
             resolve_place,
         )
     except Exception:
-        return _ask("location: ").strip()
+        return _ask("location: ").strip().lower()
 
     cities = list_known_cities()
     countries = list_known_countries()
     if not cities:
-        return _ask("location: ").strip()
+        return _ask("location: ").strip().lower()
 
     top_cities = [c for c in ("jakarta", "london", "tokyo", "nyc", "paris", "berlin", "mumbai", "singapore") if c in cities]
     if not top_cities:
         top_cities = cities[:8]
 
     console.print("[dim]Location mode: [1] pick city  [2] search  [3] manual[/dim]")
-    mode = _ask("location_mode [1/2/3, default=1]: ").strip() or "1"
+    mode = (_ask("location_mode [1/2/3, default=1]: ").strip().lower() or "1")
 
     if mode == "1":
         console.print("[dim]Popular cities:[/dim] " + ", ".join(top_cities))
-        pick = _ask("pick_city [enter for manual]: ").strip()
+        pick = _ask("pick_city [enter for manual]: ").strip().lower()
         if pick:
             return pick
-        return _ask("location(manual): ").strip()
+        return _ask("location(manual): ").strip().lower()
 
     # Seed used only for deterministic country->city mapping during boot.
     seed_for_country_city = str(seed_pack or "").strip()
@@ -120,7 +185,7 @@ def _bootstrap_location_input(*, seed_pack: str | None = None) -> str:
                 if near:
                     console.print("[dim]Did you mean:[/dim] " + ", ".join(near))
                 continue
-            picked = _ask("choose [index/name] or Enter to re-search: ").strip()
+            picked = _ask("choose [index/name] or Enter to re-search: ").strip().lower()
             if not picked:
                 continue
             if picked.isdigit():
@@ -133,12 +198,12 @@ def _bootstrap_location_input(*, seed_pack: str | None = None) -> str:
                 if kind == "country":
                     dc = default_city_for_country(c, seed=seed_for_country_city)
                     if isinstance(dc, str) and dc.strip():
-                        return dc
-            return picked
-        return _ask("location(manual): ").strip()
+                        return dc.strip().lower()
+            return picked.strip().lower()
+        return _ask("location(manual): ").strip().lower()
 
     # Manual mode.
-    raw = _ask("location(manual): ").strip()
+    raw = _ask("location(manual): ").strip().lower()
     if raw and not is_known_place(raw):
         pool = sorted(set(cities + countries))
         near = difflib.get_close_matches(raw.lower(), pool, n=5, cutoff=0.65)
@@ -146,7 +211,7 @@ def _bootstrap_location_input(*, seed_pack: str | None = None) -> str:
             console.print("[dim]Unknown place. Suggestions:[/dim]")
             for i, nm in enumerate(near, start=1):
                 console.print(f"[dim]  {i}. {nm}[/dim]")
-            retry = _ask("pick [index/name] or Enter keep manual: ").strip()
+            retry = _ask("pick [index/name] or Enter keep manual: ").strip().lower()
             if retry:
                 if retry.isdigit():
                     ix = int(retry)
@@ -182,32 +247,84 @@ def _expand_alias(cmd: str) -> str:
 
 def boot_sequence() -> dict[str, Any]:
     console.print("[bold red]OMNI-ENGINE v6.9[/bold red]")
-    fields = ["name", "age", "year", "occupation", "background"]
-    data: dict[str, Any] = {}
-    for f in fields:
-        raw = _ask(f"{f}: ")
-        if raw.upper().startswith("QUICK BOOT "):
-            parts = raw.split(maxsplit=3)
-            if len(parts) == 4:
-                data["location"], data["year"] = parts[2], parts[3]
-                data.setdefault("name", "Generated Subject")
-                data.setdefault("occupation", "Operator")
-                data.setdefault("background", "Quick boot profile")
-                break
-        data[f] = raw
+    console.print(
+        "[bold]Setup karakter — wizard 3 langkah[/bold]\n"
+        "[dim]"
+        "[bold](1) Identitas[/bold]: nama, umur, tahun.\n"
+        "[bold](2) Peran[/bold]: template loadout (skill/item) + occupation/background (kata kunci tier ekonomi awal).\n"
+        "[bold](3) Preview + konfirmasi[/bold]: perkiraan tier/rentang ekonomi, lalu Y/N sebelum seed pack & lokasi.\n"
+        "[/dim]"
+    )
+    console.print(
+        "[dim]• [cyan]Template[/cyan] = loadout: skill awal + barang. [bold]Tidak[/bold] mengganti nominal uang secara langsung.\n"
+        "• [green]occupation[/green] + [green]background[/green] = teks bebas; engine memetakan [bold]tier ekonomi awal[/bold] "
+        "(cash, bank, burn, FICO, CC) lewat kata kunci. Keduanya kosong ≈ tier [bold]menengah[/bold].\n"
+        "• [magenta]background[/magenta] = lore singkat; ikut keyword ekonomi + pencocokan template otomatis bila template tidak dipilih.\n"
+        "[/dim]"
+    )
+    _print_boot_keyword_examples()
 
-    # Optional occupation template selection (skip to auto-match).
-    try:
+    data: dict[str, Any] = {}
+    while True:
+        data = {}
+        quick_exit = False
+
+        # --- (1) Identity ---
+        console.print("\n[bold](1) Identitas[/bold] [dim]— atau ketik QUICK BOOT <lokasi> <tahun>[/dim]")
+        for key in ("name", "age", "year"):
+            raw = _ask(f"{key}: ")
+            if raw.upper().startswith("QUICK BOOT "):
+                parts = raw.split(maxsplit=3)
+                if len(parts) == 4:
+                    data["location"], data["year"] = parts[2].strip().lower(), parts[3]
+                    data.setdefault("name", "Generated Subject")
+                    data.setdefault("occupation", "Operator")
+                    data.setdefault("background", "Quick boot profile")
+                    quick_exit = True
+                    break
+            data[key] = raw
+
         temps = _load_occupation_templates()
-        if temps:
-            console.print("[dim]Occupation templates (optional):[/dim]")
-            for t in temps[:10]:
-                console.print(f"- {t.get('id','-')}: {t.get('name','')}")
-            pick = _ask("occupation_template_id [enter to auto]: ").strip().lower()
-            if pick and pick not in ("auto", "none", "-", "skip"):
-                data["occupation_template_id"] = pick
-    except Exception:
-        pass
+
+        if quick_exit:
+            console.print("\n[bold cyan]Ringkasan QUICK BOOT (default)[/bold cyan]")
+            console.print(f"  nama: {data.get('name')}")
+            console.print(f"  tahun: {data.get('year')}")
+            console.print(f"  lokasi: {data.get('location')}")
+            console.print(f"  occupation: {data.get('occupation')}")
+            console.print(f"  background: {data.get('background')}")
+            console.print("\n[bold](3) Preview ekonomi awal[/bold] [dim](perkiraan tier/rentang)[/dim]")
+            console.print(
+                format_boot_economy_preview(
+                    str(data.get("occupation", "") or ""),
+                    str(data.get("background", "") or ""),
+                    data.get("year"),
+                )
+            )
+            yn = _ask("Lanjutkan? [Y/N, default=Y]: ").strip().lower()
+            if yn in ("n", "no"):
+                console.print("[dim]Ulangi dari identitas…[/dim]")
+                continue
+            break
+
+        while True:
+            _boot_role_step(data, temps)
+            console.print("\n[bold](3) Preview ekonomi awal + konfirmasi[/bold]")
+            occ = str(data.get("occupation", "") or "")
+            bg = str(data.get("background", "") or "")
+            yr = data.get("year")
+            console.print(format_boot_economy_preview(occ, bg, yr))
+            tid = data.get("occupation_template_id")
+            console.print("\n[bold]Ringkasan sebelum seed & lokasi[/bold]")
+            console.print(f"  Template loadout: {tid or '(otomatis / tidak ada)'}")
+            console.print(f"  occupation: {occ or '(kosong)'}")
+            console.print(f"  background: {bg or '(kosong)'}")
+            console.print(f"  tahun: {yr}")
+            yn = _ask("Lanjutkan? [Y/N, default=Y]: ").strip().lower()
+            if yn not in ("n", "no"):
+                break
+            console.print("[dim]Kembali mengisi peran (template + occupation + background)…[/dim]")
+        break
 
     # Seed pack selection (do this BEFORE location picker so country->city mapping is seed-based).
     seeds = list_seed_names()
@@ -227,6 +344,10 @@ def boot_sequence() -> dict[str, Any]:
 
 
 def run_pipeline(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[str, Any]:
+    if bool(action_ctx.get("scene_locked")):
+        from engine.core.modifiers import compute_roll_package
+
+        return compute_roll_package(state, action_ctx)
     world_tick(state, action_ctx)
     apply_inventory_ops(state, action_ctx)
     update_timers(state, action_ctx)
@@ -441,6 +562,218 @@ def _scene_blocks_command(state: dict[str, Any], up_cmd: str) -> bool:
 
 def handle_special(state: dict[str, Any], cmd: str) -> bool:
     up = cmd.upper()
+    def _ui_err(kind: str, msg: str) -> None:
+        k = str(kind or "ERROR").strip().upper()
+        if k in ("ACCESS DENIED", "DENIED"):
+            console.print(f"[bold yellow][!][/bold yellow] ACCESS DENIED: {msg}")
+        else:
+            console.print(f"[bold red][!][/bold red] ERROR: {msg}")
+
+    if up == "UI FULL":
+        state.setdefault("meta", {})["monitor_mode"] = "full"
+        console.print("[green]Monitor: FULL (lebar).[/green]")
+        return True
+    if up == "UI COMPACT":
+        state.setdefault("meta", {})["monitor_mode"] = "compact"
+        console.print("[green]Monitor: COMPACT (ringkas).[/green]")
+        return True
+    if up in ("STATUS", "INFO"):
+        meta = state.get("meta", {}) or {}
+        tr = state.get("trace", {}) or {}
+        eco = state.get("economy", {}) or {}
+        try:
+            gigs_done = int(meta.get("daily_gigs_done", 0) or 0)
+        except Exception:
+            gigs_done = 0
+        try:
+            hacks_attempted = int(meta.get("daily_hacks_attempted", 0) or 0)
+        except Exception:
+            hacks_attempted = 0
+        penalty = max(0, int(hacks_attempted) * 10)
+        t = Table(title="STATUS", show_header=False)
+        t.add_column("k", style="bold cyan", no_wrap=True)
+        t.add_column("v")
+        t.add_row("Location", str((state.get("player", {}) or {}).get("location", "-") or "-"))
+        t.add_row("Clock", f"Day {int(meta.get('day', 1) or 1)} {_fmt_clock(int(meta.get('time_min', 0) or 0))}")
+        t.add_row("Trace", f"{int(tr.get('trace_pct', 0) or 0)}%")
+        t.add_row("Cash/Bank", f"${int(eco.get('cash', 0) or 0)} / ${int(eco.get('bank', 0) or 0)}")
+        t.add_row("Daily Gigs", f"{max(0, gigs_done)}/2")
+        t.add_row("Neural Fatigue", f"{penalty}% fail penalty")
+        console.print(t)
+        return True
+    if up in ("BLACKMARKET", "DARKNET") or up == "MARKET BLACK" or up == "MARKET BM":
+        try:
+            from engine.systems.black_market import black_market_accessible, generate_black_market_inventory
+            from display.renderer import format_data_table
+
+            if not black_market_accessible(state):
+                _ui_err("ACCESS DENIED", "CONNECTION REFUSED: Darknet node is offline.")
+                return True
+            inv = generate_black_market_inventory(state)
+            items = inv.get("items", [])
+            if not isinstance(items, list) or not items:
+                console.print(format_data_table("BLACK MARKET", ["item_id", "name", "price"], [], theme="magenta"))
+                console.print("[dim]- (no stock)[/dim]")
+                return True
+            rows: list[list[str]] = []
+            for it in items[:8]:
+                if not isinstance(it, dict):
+                    continue
+                rows.append([str(it.get("id", "?")), str(it.get("name", it.get("id", "-"))), "$" + str(it.get("price", "?"))])
+            console.print(format_data_table("BLACK MARKET", ["item_id", "name", "price"], rows, theme="magenta"))
+            console.print("[dim]Use: BUY_DARK <item_id>[/dim]")
+        except Exception:
+            _ui_err("ERROR", "BLACKMARKET error.")
+        return True
+    if up.startswith("BUY_DARK ") or up.startswith("BM_BUY "):
+        parts = cmd.split(maxsplit=1)
+        iid = parts[1].strip() if len(parts) >= 2 else ""
+        if not iid:
+            _ui_err("ERROR", "Usage: BUY_DARK <item_id>.")
+            return True
+        try:
+            from engine.systems.black_market import buy_black_market_item
+
+            r = buy_black_market_item(state, iid)
+            if not bool(r.get("ok")):
+                if r.get("reason") == "not_enough_cash":
+                    _ui_err("ERROR", "Not enough cash.")
+                elif r.get("reason") == "connection_refused":
+                    _ui_err("ACCESS DENIED", "Darknet node offline.")
+                elif r.get("reason") == "not_in_stock":
+                    _ui_err("ERROR", "Item not in stock today.")
+                else:
+                    _ui_err("ERROR", f"BUY_DARK failed: {r.get('reason','error')}")
+                return True
+            console.print(f"[green]BUY_DARK OK[/green] {r.get('item_id')} price={r.get('price')}")
+        except Exception:
+            _ui_err("ERROR", "BUY_DARK error.")
+        return True
+    if up in ("GIGS", "JOBS"):
+        try:
+            from engine.systems.jobs import generate_gigs
+            from display.renderer import format_data_table
+
+            gigs = generate_gigs(state)
+            if not gigs:
+                console.print(format_data_table("GIGS", ["id", "title", "skill", "diff", "time_m", "payout"], [], theme="cyan"))
+                console.print("[dim]- (none)[/dim]")
+                return True
+            rows: list[list[str]] = []
+            for g in gigs[:6]:
+                if not isinstance(g, dict):
+                    continue
+                rows.append(
+                    [
+                        str(g.get("id", "?")),
+                        str(g.get("title", "-")),
+                        str(g.get("req_skill", "-")),
+                        str(g.get("difficulty", "-")),
+                        str(g.get("time_cost_mins", "-")),
+                        "$" + str(g.get("payout_cash", "-")),
+                    ]
+                )
+            console.print(format_data_table("GIGS", ["id", "title", "skill", "diff", "time_m", "payout"], rows, theme="cyan"))
+            console.print("[dim]Use: WORK <gig_id>[/dim]")
+        except Exception:
+            _ui_err("ERROR", "GIGS error.")
+        return True
+    if up.startswith("HACK "):
+        parts = cmd.split(maxsplit=1)
+        tgt = parts[1].strip().lower() if len(parts) >= 2 else ""
+        if not tgt:
+            _ui_err("ERROR", "Usage: HACK <atm|corp_server|police_archive>.")
+            return True
+        try:
+            from engine.systems.targeted_hacking import execute_hack
+
+            r = execute_hack(state, tgt)
+            if not bool(r.get("ok")):
+                _ui_err("ERROR", f"HACK failed: {r.get('reason','error')}")
+                return True
+            # Always advance time even if detected (attempt took time). Keep domain=other to avoid double hack effects.
+            mins = 60 if tgt in ("corp_server", "police_archive") else 30
+            try:
+                run_pipeline(
+                    state,
+                    {
+                        "action_type": "instant",
+                        "domain": "other",
+                        "normalized_input": f"hack {tgt}",
+                        "instant_minutes": mins,
+                        "stakes": "medium",
+                    },
+                )
+            except Exception:
+                pass
+            if bool(r.get("success")):
+                console.print("[green]HACK success[/green]")
+            else:
+                console.print("[yellow]HACK detected[/yellow]")
+        except Exception:
+            _ui_err("ERROR", "HACK error.")
+        return True
+    if up.startswith("WORK "):
+        parts = cmd.split(maxsplit=1)
+        gid = parts[1].strip() if len(parts) >= 2 else ""
+        if not gid:
+            _ui_err("ERROR", "Usage: WORK <gig_id>.")
+            return True
+        try:
+            from engine.systems.jobs import execute_gig
+
+            r = execute_gig(state, gid)
+            if not bool(r.get("ok")):
+                if str(r.get("reason", "")) == "daily_gig_limit_reached":
+                    _ui_err("ERROR", "You are physically and mentally exhausted. Get some sleep before taking more gigs.")
+                else:
+                    _ui_err("ERROR", f"WORK failed: {r.get('reason','error')}")
+                return True
+            g = r.get("gig") if isinstance(r.get("gig"), dict) else {}
+            tmin = int(r.get("time_cost_mins", 120) or 120)
+            payout = int(r.get("payout_cash", 0) or 0)
+            succ = bool(r.get("success"))
+            trace_delta = int(r.get("trace_delta", 0) or 0)
+            try:
+                run_pipeline(
+                    state,
+                    {
+                        "action_type": "instant",
+                        "domain": str((g or {}).get("req_skill", "other") or "other"),
+                        "normalized_input": f"work {gid}",
+                        "instant_minutes": max(1, min(720, tmin)),
+                        "stakes": "low",
+                    },
+                )
+            except Exception:
+                pass
+            title = str((g or {}).get("title", gid) or gid)
+            if succ:
+                eco = state.setdefault("economy", {})
+                try:
+                    cash0 = int(eco.get("cash", 0) or 0)
+                except Exception:
+                    cash0 = 0
+                eco["cash"] = int(cash0 + payout)
+                state.setdefault("world_notes", []).append(f"[Economy] Completed gig '{title}' and earned ${payout}.")
+                console.print(f"[green]WORK success[/green] +${payout} ({tmin}m)")
+            else:
+                if trace_delta > 0:
+                    tr = state.setdefault("trace", {})
+                    try:
+                        tp = int(tr.get("trace_pct", 0) or 0)
+                    except Exception:
+                        tp = 0
+                    tr["trace_pct"] = max(0, min(100, tp + int(trace_delta)))
+                    state.setdefault("world_notes", []).append(
+                        f"[Economy] Failed gig '{title}'. The botched job left a digital trail, increasing your Trace."
+                    )
+                else:
+                    state.setdefault("world_notes", []).append(f"[Economy] Failed gig '{title}', wasting time with no payout.")
+                console.print(f"[yellow]WORK failed[/yellow] (time spent {tmin}m)")
+        except Exception:
+            _ui_err("ERROR", "WORK error.")
+        return True
     # Single blocking gatekeeper for scenes (ONE place).
     if _scene_blocks_command(state, up):
         console.print("[yellow]Scene active. Use: SCENE | SCENE OPTIONS | SCENE <action>[/yellow]")
@@ -513,9 +846,19 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         return True
 
     if up == "HELP":
+        console.print("[bold cyan]Mulai cepat[/bold cyan]")
+        console.print(
+            "[dim]Ketik bebas bahasa alami (game akan parse) atau perintah keras: "
+            "`TALK <nama>` ngobrol, `INFORMANTS` jaringan informan, `WORLD_BRIEF` ringkasan dunia, "
+            "`DISTRICTS` daftar distrik kota, `UI FULL` stat lebar. "
+            "Nama seperti Operator_Link = ID kontak di engine, bukan error.[/dim]"
+        )
+        console.print("")
         console.print("[bold]HELP — Commands[/bold]")
         console.print("[dim]Core[/dim]")
         console.print("- HELP")
+        console.print("- UI COMPACT | UI FULL (HUD ringkas vs lebar; default env OMNI_MONITOR_MODE=compact)")
+        console.print("- STATUS | INFO  (ringkasan kondisi harian: gigs cap + neural fatigue)")
         console.print("- SCENE | SCENE OPTIONS | SCENE <action>  (contextual; see SCENE OPTIONS)")
         console.print("- QUEST")
         console.print("- ATLAS [country]")
@@ -538,12 +881,17 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         console.print("- WHO")
         console.print("- HEAT")
         console.print("- OFFERS [role]   (contoh: OFFERS fixer)")
-        console.print("- MARKET")
+        console.print("- MARKET            (legal market snapshot)")
+        console.print("- BLACKMARKET       (night-only underground market)")
+        console.print("- MARKET BM         (alias for BLACKMARKET)")
+        console.print("- BUY_DARK <item_id>  (buy from Black Market; cash only)")
         console.print("- SAFEHOUSE stash putammo <ammo_id> <rounds> | stash takeammo <ammo_id> <rounds>")
         console.print("- SAFEHOUSE raid comply|hide|bribe <amt>|flee|negotiate|show_permit  (respon saat ada pending raid)")
         console.print("- SAFEHOUSE burn  (abandon safehouse, clear stash)")
         console.print("- BANK status|deposit <n>|withdraw <n>")
         console.print("- STAY status|hotel|boarding|suite <nights>")
+        console.print("- GIGS | JOBS       (list freelance contracts)")
+        console.print("- WORK <gig_id>     (spend hours to complete a gig)")
         console.print("[dim]  boarding = budget/shared room (Indonesian: kost); aliases: kos kost dorm hostel guesthouse[/dim]")
         console.print("- NPCSIM_STATS")
         console.print("- WHEREAMI")
@@ -1031,7 +1379,15 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         parts = cmd.split(maxsplit=3)
         sub = parts[1].strip().lower() if len(parts) >= 2 else "status"
         try:
-            from engine.systems.accommodation import get_stay_here, nightly_rate, stay_checkin, normalize_stay_kind, stay_kind_label, stay_help_aliases
+            from engine.systems.accommodation import (
+                get_stay_here,
+                maybe_trigger_stay_raid,
+                nightly_rate,
+                normalize_stay_kind,
+                stay_checkin,
+                stay_help_aliases,
+                stay_kind_label,
+            )
 
             loc = str((state.get("player", {}) or {}).get("location", "") or "").strip() or "-"
             if sub in ("status", "info"):
@@ -1057,6 +1413,10 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                     nn = int(n_raw)
                 except Exception:
                     nn = 1
+                rr = maybe_trigger_stay_raid(state)
+                if bool(rr.get("triggered")):
+                    console.print("[red]STAY interrupted[/red] Authorities tracked your location. Use SCENE responses now.")
+                    return True
                 res = stay_checkin(state, nk, nn)
                 if not bool(res.get("ok")):
                     r = str(res.get("reason", "error"))
@@ -1832,18 +2192,27 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             title += f" [tag={tag}]"
         if page > 1:
             title += f" [page {page}]"
-        tbl = Table(title=title)
-        tbl.add_column("#", justify="right", no_wrap=True)
-        tbl.add_column("item_id", no_wrap=True)
-        tbl.add_column("name")
-        tbl.add_column("cat", no_wrap=True)
-        tbl.add_column("stock", no_wrap=True)
-        tbl.add_column("buy", justify="right")
-        tbl.add_column("sell", justify="right")
-        for i, q in enumerate(quotes, start=1):
-            stock = "OK" if q.available else "SOLD OUT"
-            tbl.add_row(str(i), q.item_id, q.name, q.category, stock, str(q.buy_price), str(q.sell_price))
-        console.print(tbl)
+        try:
+            from display.renderer import format_data_table
+
+            rows: list[list[str]] = []
+            for i, q in enumerate(quotes, start=1):
+                stock = "OK" if q.available else "SOLD OUT"
+                rows.append([str(i), str(q.item_id), str(q.name), str(q.category), str(stock), str(q.buy_price), str(q.sell_price)])
+            console.print(format_data_table(title, ["#", "item_id", "name", "cat", "stock", "buy", "sell"], rows, theme="default"))
+        except Exception:
+            tbl = Table(title=title)
+            tbl.add_column("#", justify="right", no_wrap=True)
+            tbl.add_column("item_id", no_wrap=True)
+            tbl.add_column("name")
+            tbl.add_column("cat", no_wrap=True)
+            tbl.add_column("stock", no_wrap=True)
+            tbl.add_column("buy", justify="right")
+            tbl.add_column("sell", justify="right")
+            for i, q in enumerate(quotes, start=1):
+                stock = "OK" if q.available else "SOLD OUT"
+                tbl.add_row(str(i), q.item_id, q.name, q.category, stock, str(q.buy_price), str(q.sell_price))
+            console.print(tbl)
         console.print(
             "[dim]Use: SHOP [role] [tag <x>] [available] [page N] | BUY <item_id> [xN] [bag|pocket] [counter|dead_drop|courier] | SELL <item_id> [ALL] | PRICE <item_id>[/dim]"
         )
@@ -2183,6 +2552,8 @@ def main() -> None:
                     pass
         except Exception:
             pass
+
+        apply_active_scene_intent_lock(state, action_ctx, cmd)
 
         roll_pkg = run_pipeline(state, action_ctx)
 

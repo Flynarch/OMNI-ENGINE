@@ -67,6 +67,42 @@ def _tier(occupation: str, background: str) -> str:
     return "mid"
 
 
+def preview_economy_tier(occupation: str, background: str) -> str:
+    """Same rules as startup economy tier (keyword scan on occupation + background)."""
+    return _tier(occupation, background)
+
+
+def format_boot_economy_preview(occupation: str, background: str, year: Any) -> str:
+    """
+    Human-readable tier + approximate numeric ranges after year scaling.
+    Final cash/bank/etc. still use name|occ|bg seed inside apply_boot_economy — this is indicative only.
+    """
+    tier = _tier(occupation, background)
+    factor = _year_factor(_parse_year(year))
+    if tier == "high":
+        cash_r, bank_r, burn_r, cc_r, fico_r = (2500, 8000), (12000, 50000), (150, 350), (72, 95), (680, 780)
+    elif tier == "low":
+        cash_r, bank_r, burn_r, cc_r, fico_r = (200, 800), (500, 2000), (40, 80), (22, 48), (520, 600)
+    else:
+        cash_r, bank_r, burn_r, cc_r, fico_r = (800, 2500), (3000, 12000), (80, 180), (45, 70), (600, 680)
+
+    def scaled(lo: int, hi: int) -> tuple[int, int]:
+        return int(lo * factor), int(hi * factor)
+
+    c0, c1 = scaled(*cash_r)
+    b0, b1 = scaled(*bank_r)
+    br0, br1 = scaled(*burn_r)
+    # burn has max(15, ...) in apply — show scaled range as hint
+    br0 = max(15, br0)
+    lines = [
+        f"Tier ekonomi awal (preview): [bold]{tier}[/bold]",
+        f"  Cash ~ {c0}-{c1}  |  Bank ~ {b0}-{b1}  |  Burn/hari ~ {br0}-{br1}",
+        f"  CC ~ {cc_r[0]}-{cc_r[1]}  |  FICO ~ {fico_r[0]}-{fico_r[1]}  (skala tahun x{factor:.2f})",
+        "[dim]Angka final ditentukan saat start (seed nama+teks); ini hanya rentang tier.[/dim]",
+    ]
+    return "\n".join(lines)
+
+
 def apply_boot_economy(state: dict[str, Any]) -> None:
     """
     Set cash, bank, daily_burn, fico, dan player.cc dari occupation/background/year.

@@ -27,6 +27,84 @@ def _compile() -> bool:
     return ok
 
 
+def test_master_e2e_pipeline() -> None:
+    """Master E2E: use top-level handlers to validate cross-system stability."""
+    from engine.core.state import initialize_state
+    from main import handle_special
+    from engine.systems.black_market import generate_black_market_inventory
+    from engine.systems.jobs import generate_gigs
+
+    st = initialize_state({"name": "MasterE2E", "location": "london", "year": "2025", "occupation": "hacker"}, seed_pack="minimal")
+    st.setdefault("meta", {}).update({"day": 3, "time_min": 8 * 60, "turn": 0})
+    st.setdefault("economy", {})["cash"] = 100_000
+    st.setdefault("trace", {})["trace_pct"] = 0
+    st.setdefault("inventory", {}).setdefault("bag_contents", []).append("laptop_basic")
+    abs_min = lambda s: int((s.get("meta", {}) or {}).get("day", 1) or 1) * 1440 + int((s.get("meta", {}) or {}).get("time_min", 0) or 0)
+
+    # 1) GIGS -> WORK <id>
+    assert handle_special(st, "GIGS") is True
+    gigs = generate_gigs(st)
+    assert isinstance(gigs, list) and gigs
+    gid = str((gigs[0] or {}).get("id", "") or "")
+    assert gid
+    t0 = abs_min(st)
+    assert handle_special(st, f"WORK {gid}") is True
+    t1 = abs_min(st)
+    assert t1 > t0
+
+    # 2) WORK until fatigue limit reached (max 2/day).
+    assert handle_special(st, f"WORK {gid}") is True
+    t2 = abs_min(st)
+    assert t2 >= t1
+    assert int((st.get("meta", {}) or {}).get("daily_gigs_done", 0) or 0) == 2
+    assert handle_special(st, f"WORK {gid}") is True
+    t3 = abs_min(st)
+    assert t3 == t2  # no time spent when exhausted
+    assert any("physically and mentally exhausted" in str(x) for x in (st.get("world_notes") or []))
+
+    # 3) HACK atm increments daily_hacks_attempted.
+    h0 = int((st.get("meta", {}) or {}).get("daily_hacks_attempted", 0) or 0)
+    assert handle_special(st, "HACK atm") is True
+    h1 = int((st.get("meta", {}) or {}).get("daily_hacks_attempted", 0) or 0)
+    assert h1 == h0 + 1
+
+    # 4) STAY 1 crossing midnight resets daily counters.
+    meta = st.setdefault("meta", {})
+    meta["time_min"] = 23 * 60 + 55
+    d0 = int((st.get("meta", {}) or {}).get("day", 0) or 0)
+    assert handle_special(st, "STAY hotel 1") is True
+    d1 = int((st.get("meta", {}) or {}).get("day", 0) or 0)
+    assert d1 == d0 + 1
+    assert int((st.get("meta", {}) or {}).get("daily_gigs_done", -1) or 0) == 0
+    assert int((st.get("meta", {}) or {}).get("daily_hacks_attempted", -1) or 0) == 0
+
+    # 5) Reach night, access BLACKMARKET, then BUY_DARK.
+    (st.get("meta", {}) or {})["time_min"] = 20 * 60
+    assert handle_special(st, "BLACKMARKET") is True
+    inv = generate_black_market_inventory(st)
+    items = inv.get("items", []) or []
+    assert isinstance(items, list) and items
+    seed = str((st.get("meta", {}) or {}).get("world_seed", "") or (st.get("meta", {}) or {}).get("seed_pack", "") or "seed")
+    day = int((st.get("meta", {}) or {}).get("day", 1) or 1)
+    chosen = None
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        iid = str(it.get("id", "") or "")
+        if not iid:
+            continue
+        h = hashlib.md5(f"{seed}|{day}|{iid}|sting".encode("utf-8", errors="ignore")).hexdigest()
+        if int(h[:8], 16) % 100 >= 5:  # avoid sting for this e2e flow
+            chosen = iid
+            break
+    if not chosen:
+        chosen = str((items[0] or {}).get("id", "") or "")
+    assert chosen
+    assert handle_special(st, f"BUY_DARK {chosen}") is True
+    bag = (st.get("inventory", {}) or {}).get("bag_contents", []) or []
+    assert chosen in [str(x) for x in bag]
+
+
 def _smoke() -> None:
     from ai.parser import (
         SECTION_TAGS,
@@ -68,6 +146,8 @@ def _smoke() -> None:
         }
         return hashlib.sha256(_stable_json(core).encode("utf-8", errors="ignore")).hexdigest()
     from engine.npc.npcs import update_npcs
+
+    test_master_e2e_pipeline()
 
     st = initialize_state(
         {
@@ -296,6 +376,203 @@ def _smoke() -> None:
     apply_hacking_after_roll(st_ct, ctx_ct, rp_ct)
     assert int(st_ct.get("trace", {}).get("trace_pct", 0) or 0) < 60
 
+    # Gig economy: listing gigs and working one should advance time and log [Economy].
+    from main import handle_special as _hs_gigs
+    from engine.systems.jobs import generate_gigs as _gen_gigs
+
+    st_g = initialize_state({"name": "GigVerify", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_g.setdefault("meta", {}).update({"day": 2, "time_min": 8 * 60})
+    st_g.setdefault("economy", {})["cash"] = 0
+    assert _hs_gigs(st_g, "GIGS") is True
+    gigs = _gen_gigs(st_g)
+    assert isinstance(gigs, list) and gigs
+    gid0 = str((gigs[0] or {}).get("id", "") or "")
+    assert gid0
+    t0 = int(st_g.get("meta", {}).get("time_min", 0) or 0)
+    assert _hs_gigs(st_g, f"WORK {gid0}") is True
+    t1 = int(st_g.get("meta", {}).get("time_min", 0) or 0)
+    assert t1 != t0  # time advanced (instant_minutes applied)
+    assert any(str(x).startswith("[Economy]") for x in (st_g.get("world_notes") or []))
+
+    # Gig risk: failing a hacking/stealth/security gig increases trace by +10.
+    st_gr = initialize_state({"name": "GigRisk", "location": "london", "year": "2025", "occupation": "hacker"}, seed_pack="minimal")
+    st_gr.setdefault("meta", {}).update({"day": 2, "time_min": 8 * 60})
+    st_gr.setdefault("trace", {})["trace_pct"] = 0
+    st_gr.setdefault("skills", {})["hacking"] = {"level": 1, "xp": 0, "base": 10, "current": 10, "last_used_day": 1}
+    gigs_r = _gen_gigs(st_gr)
+    assert gigs_r and str((gigs_r[0] or {}).get("req_skill", "")) == "hacking"
+    gid_r = str((gigs_r[0] or {}).get("id", "") or "")
+    assert gid_r
+    # Find a turn that forces failure for this gig (chance: lvl1 => 45 - diff*5).
+    from engine.systems.jobs import execute_gig as _exec_g
+    fail_turn = None
+    for tn in range(512):
+        st_gr["meta"]["turn"] = int(tn)
+        rr = _exec_g(st_gr, gid_r)
+        if bool(rr.get("ok")) and not bool(rr.get("success")):
+            fail_turn = int(tn)
+            break
+    assert fail_turn is not None
+    st_gr["meta"]["turn"] = fail_turn
+    tr0 = int((st_gr.get("trace") or {}).get("trace_pct", 0) or 0)
+    assert _hs_gigs(st_gr, f"WORK {gid_r}") is True
+    tr1 = int((st_gr.get("trace") or {}).get("trace_pct", 0) or 0)
+    assert tr1 >= tr0 + 10
+    assert any("left a digital trail" in str(x) for x in (st_gr.get("world_notes") or []))
+
+    # Targeted hacking system: success gives cash, failure raises trace, missing tools blocks.
+    from engine.systems.targeted_hacking import deterministic_hack_roll_1_100
+    from main import handle_special as _hs_hack
+
+    st_hs = initialize_state({"name": "HackSys", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_hs.setdefault("meta", {}).update({"day": 2, "time_min": 8 * 60})
+    st_hs.setdefault("economy", {})["cash"] = 0
+    st_hs.setdefault("trace", {})["trace_pct"] = 0
+    st_hs.setdefault("skills", {})["hacking"] = {"level": 6, "xp": 0, "base": 10, "current": 40, "last_used_day": 1}
+    st_hs.setdefault("inventory", {}).setdefault("bag_contents", []).append("laptop_basic")
+
+    # Find a turn that succeeds at HACK atm.
+    hit_s = None
+    hit_f = None
+    for tn in range(512):
+        st_hs["meta"]["turn"] = int(tn)
+        # chance formula in execute_hack: lvl6 -> chance=35+35-12=58
+        r = deterministic_hack_roll_1_100(st_hs, target_type="atm")
+        if hit_s is None and int(r) <= 58:
+            hit_s = int(tn)
+        if hit_f is None and int(r) > 58:
+            hit_f = int(tn)
+        if hit_s is not None and hit_f is not None:
+            break
+    assert hit_s is not None and hit_f is not None
+
+    st_hs["meta"]["turn"] = hit_s
+    cash0 = int((st_hs.get("economy") or {}).get("cash", 0) or 0)
+    assert _hs_hack(st_hs, "HACK atm") is True
+    cash1 = int((st_hs.get("economy") or {}).get("cash", 0) or 0)
+    assert cash1 > cash0
+    assert any(str(x).startswith("[Cyber] Successfully breached atm.") for x in (st_hs.get("world_notes") or []))
+
+    st_hs["meta"]["turn"] = hit_f
+    tr0 = int((st_hs.get("trace") or {}).get("trace_pct", 0) or 0)
+    assert _hs_hack(st_hs, "HACK atm") is True
+    tr1 = int((st_hs.get("trace") or {}).get("trace_pct", 0) or 0)
+    assert tr1 >= tr0 + 15
+    assert any(str(x).startswith("[Cyber] Intrusion detected at atm.") for x in (st_hs.get("world_notes") or []))
+
+    # Hacking heat escalation: corporate faction heat increases on corp_server success.
+    st_fh = initialize_state({"name": "HackHeat", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_fh.setdefault("meta", {}).update({"day": 2, "time_min": 8 * 60})
+    st_fh.setdefault("economy", {})["cash"] = 0
+    st_fh.setdefault("trace", {})["trace_pct"] = 0
+    st_fh.setdefault("skills", {})["hacking"] = {"level": 6, "xp": 0, "base": 10, "current": 40, "last_used_day": 1}
+    st_fh.setdefault("inventory", {}).setdefault("bag_contents", []).append("laptop_basic")
+    hit_corp = None
+    for tn in range(512):
+        st_fh["meta"]["turn"] = int(tn)
+        r = deterministic_hack_roll_1_100(st_fh, target_type="corp_server")
+        # chance formula in execute_hack: lvl6 -> chance=35+35-24=46
+        if int(r) <= 46:
+            hit_corp = int(tn)
+            break
+    assert hit_corp is not None
+    st_fh["meta"]["turn"] = hit_corp
+    assert _hs_hack(st_fh, "HACK corp_server") is True
+    fh = (st_fh.get("world", {}) or {}).get("faction_heat", {}) or {}
+    assert int(fh.get("corporate", 0) or 0) >= 20
+    assert any("Corporate heat increased" in str(x) for x in (st_fh.get("world_notes") or []))
+
+    st_no = initialize_state({"name": "HackNoTool", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_no.setdefault("meta", {}).update({"day": 2, "time_min": 8 * 60})
+    st_no.setdefault("inventory", {})["bag_contents"] = []
+    st_no.setdefault("inventory", {})["pocket_contents"] = []
+    assert _hs_hack(st_no, "HACK atm") is True
+    assert any("Missing equipment" in str(x) for x in (st_no.get("world_notes") or []))
+
+    # Underworld economy: black market stock is accessible at night; blocked at noon unless a Fixer/Smuggler is nearby.
+    from engine.systems.black_market import buy_black_market_item, generate_black_market_inventory
+    from main import handle_special as _hs_bm
+
+    st_bm = initialize_state({"name": "BMVerify", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_bm.setdefault("meta", {}).update({"day": 2, "time_min": 22 * 60})
+    st_bm.setdefault("economy", {})["cash"] = 50_000
+    assert _hs_bm(st_bm, "BLACKMARKET") is True
+    inv = generate_black_market_inventory(st_bm)
+    inv2 = generate_black_market_inventory(st_bm)
+    assert inv == inv2
+    items = inv.get("items", [])
+    assert isinstance(items, list) and items
+    iid0 = str((items[0] or {}).get("id", "") or "")
+    assert iid0
+    assert _hs_bm(st_bm, f"BUY_DARK {iid0}") is True
+    bag = (st_bm.get("inventory", {}) or {}).get("bag_contents", []) or []
+    assert isinstance(bag, list) and iid0 in [str(x) for x in bag]
+    inv3 = generate_black_market_inventory(st_bm)
+    assert iid0 not in [str((x or {}).get("id", "")) for x in (inv3.get("items") or []) if isinstance(x, dict)]
+
+    from engine.systems.black_market import black_market_accessible, buy_black_market_item
+
+    st_bm2 = initialize_state({"name": "BMNoon", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_bm2.setdefault("meta", {}).update({"day": 2, "time_min": 12 * 60})
+    assert black_market_accessible(st_bm2) is False
+    r_den = buy_black_market_item(st_bm2, "burner_phone")
+    assert bool(r_den.get("ok")) is False and r_den.get("reason") == "connection_refused"
+
+    # Fixer nearby bypass at noon.
+    st_bm2.setdefault("npcs", {})["Fixer_A"] = {"name": "Fixer_A", "role": "fixer", "tags": ["Fixer"], "current_location": "london", "ambient": False}
+    assert black_market_accessible(st_bm2) is True
+
+    # Sting operation: deterministic ambush during Black Market purchase.
+    import hashlib
+
+    from engine.systems.scenes import advance_scene as _advance_scene_sting
+
+    st_sting = initialize_state({"name": "StingVerify", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_sting.setdefault("meta", {}).update({"day": 1, "time_min": 22 * 60})
+    st_sting.setdefault("economy", {})["cash"] = 50_000
+    st_sting.setdefault("trace", {})["trace_pct"] = 80  # enables 20% sting chance
+
+    # Find a day + item that deterministically triggers sting.
+    seed = str((st_sting.get("meta", {}) or {}).get("seed_pack", "") or (st_sting.get("meta", {}) or {}).get("world_seed", "") or "seed")
+    chosen = None
+    for day in range(1, 60):
+        st_sting["meta"]["day"] = int(day)
+        inv_s = generate_black_market_inventory(st_sting)
+        items_s = inv_s.get("items", []) or []
+        for it in items_s:
+            if not isinstance(it, dict):
+                continue
+            iid = str(it.get("id", "") or "")
+            if not iid:
+                continue
+            h = hashlib.md5(f"{seed}|{day}|{iid}|sting".encode("utf-8", errors="ignore")).hexdigest()
+            r = int(h[:8], 16) % 100
+            if int(r) < 20:
+                chosen = (iid, int(it.get("price", 0) or 0), int(day))
+                break
+        if chosen:
+            break
+    assert chosen is not None
+    iid_s, price_s, day_s = chosen
+    st_sting["meta"]["day"] = int(day_s)
+    cash0 = int((st_sting.get("economy") or {}).get("cash", 0) or 0)
+    rr = buy_black_market_item(st_sting, iid_s)
+    assert bool(rr.get("ok")) is False and rr.get("reason") == "sting_operation"
+    cash1 = int((st_sting.get("economy") or {}).get("cash", 0) or 0)
+    assert cash1 == cash0 - int(price_s)
+    asc = st_sting.get("active_scene") or {}
+    assert str(asc.get("scene_type", "")) == "sting_operation"
+    assert any("sting operation has been triggered" in str(x) for x in (st_sting.get("world_notes") or []))
+    bag_s = (st_sting.get("inventory", {}) or {}).get("bag_contents", []) or []
+    assert iid_s not in [str(x) for x in bag_s]
+
+    day0 = int((st_sting.get("meta", {}) or {}).get("day", 0) or 0)
+    _advance_scene_sting(st_sting, {"scene_action": "surrender"})
+    assert (st_sting.get("active_scene") is None) or (st_sting.get("active_scene") == {})
+    assert int((st_sting.get("trace") or {}).get("trace_pct", 0) or 0) == 0
+    assert int((st_sting.get("meta", {}) or {}).get("day", 0) or 0) == day0 + 2
+
+
     # Heat decay: should cool down daily via world_tick.
     st_heat = initialize_state({"name": "HeatVerify", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_heat.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60})
@@ -313,9 +590,82 @@ def _smoke() -> None:
     heat2 = int((st_heat.get("world", {}).get("hacking_heat") or {}).get(key, {}).get("heat", 0) or 0)
     assert heat2 <= heat1
 
+    # Security heat check (Lockdown tier): deterministic 30% trigger + scene intent lock.
+    from engine.core.action_intent import apply_active_scene_intent_lock
+    from engine.systems.encounter_scheduler import deterministic_security_roll_percent, evaluate_security_encounters
+
+    st_sec = initialize_state({"name": "SecHeat", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_sec.setdefault("trace", {})["trace_pct"] = 80
+    st_sec.setdefault("meta", {}).setdefault("day", 1)
+    hit_turn = None
+    for tn in range(512):
+        st_sec["meta"]["turn"] = int(tn)
+        if deterministic_security_roll_percent(st_sec) < 30:
+            hit_turn = int(tn)
+            break
+    assert hit_turn is not None
+    st_sec["meta"]["turn"] = hit_turn
+    st_sec.setdefault("world", {})["encounter_sched"] = {}
+    r0 = evaluate_security_encounters(st_sec, {"action_type": "instant"})
+    assert bool(r0.get("triggered")) is True
+    asc = st_sec.get("active_scene") or {}
+    assert str(asc.get("scene_type", "")) == "police_stop"
+    assert str(asc.get("phase", "")) == "approach"
+    assert "[Security]" in " ".join(st_sec.get("world_notes") or [])
+
+    ctx_blk = parse_action_intent("aku pergi ke jakarta")
+    apply_active_scene_intent_lock(st_sec, ctx_blk, "aku pergi ke jakarta")
+    assert bool(ctx_blk.get("scene_locked")) is True
+    assert ctx_blk.get("combat_blocked") == "scene_locked"
+
+    ctx_ok = parse_action_intent("SCENE COMPLY")
+    apply_active_scene_intent_lock(st_sec, ctx_ok, "SCENE COMPLY")
+    assert ctx_ok.get("scene_locked") is None
+    assert ctx_ok.get("combat_blocked") is None
+
+    # Arrest protocol: patrol scene + high trace + COMPLY -> execute_arrest (time/money/trace/inventory).
+    from engine.systems.scenes import advance_scene as _advance_scene_arrest
+
+    st_ar = initialize_state({"name": "ArrestProt", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_ar.setdefault("trace", {})["trace_pct"] = 90
+    st_ar.setdefault("economy", {})["cash"] = 1000
+    st_ar.setdefault("economy", {})["bank"] = 10000
+    st_ar.setdefault("meta", {}).update({"day": 5, "time_min": 600})
+    st_ar.setdefault("inventory", {}).setdefault("weapons", {})["gun1"] = {"name": "Gun-1", "kind": "firearm", "ammo": 3}
+    st_ar["inventory"]["active_weapon_id"] = "gun1"
+    st_ar["inventory"]["r_hand"] = "-"
+    st_ar["inventory"]["l_hand"] = "-"
+    st_ar["active_scene"] = {
+        "scene_id": "testscene01",
+        "scene_type": "police_stop",
+        "phase": "approach",
+        "context": {
+            "location": "london",
+            "district": "",
+            "weapon_ids": [],
+            "reason": "heat_check",
+            "permit_doc": {},
+            "dialog": {},
+        },
+        "vars": {"wait_count": 0},
+        "expires_at": {"day": 5, "time_min": 1200},
+        "next_options": ["SCENE COMPLY", "SCENE BRIBE 500", "SCENE RUN"],
+    }
+    r_ar = _advance_scene_arrest(st_ar, {"scene_action": "comply", "action_type": "instant"})
+    assert bool(r_ar.get("ok")) and bool(r_ar.get("ended"))
+    assert int((st_ar.get("trace") or {}).get("trace_pct", 0) or 0) == 0
+    assert str(st_ar.get("trace", {}).get("trace_status", "")) == "Ghost"
+    assert int(st_ar.get("meta", {}).get("day", 0) or 0) == 7
+    assert int(st_ar.get("meta", {}).get("time_min", 0) or 0) == 480
+    assert int((st_ar.get("economy") or {}).get("cash", 0) or 0) == 0
+    assert int((st_ar.get("economy") or {}).get("bank", 0) or 0) == 8500
+    assert str(st_ar.get("inventory", {}).get("active_weapon_id", "x") or "") == ""
+    assert st_ar.get("active_scene") is None
+    assert any("[Arrest]" in str(x) for x in (st_ar.get("world_notes") or []))
+
     ctx = parse_action_intent("tembak target")
     apply_combat_gates(st, ctx)
-    assert ctx.get("combat_blocked") in (None, "no_weapon", "out_of_ammo", "broken")
+    assert ctx.get("combat_blocked") in (None, "no_weapon", "out_of_ammo", "broken", "scene_locked")
 
     # Combat should raise trace and therefore police attention tier.
     st_combat = initialize_state({"name": "CombatVerify", "location": "london", "year": "2025"}, seed_pack="minimal")
@@ -1834,8 +2184,9 @@ def _smoke() -> None:
     assert int(npc_d.get("trust", 0) or 0) <= 80  # moved toward max_trust=30
     assert int((npc_d.get("belief_summary", {}) or {}).get("suspicion", 0) or 0) >= 18  # moved toward min_suspicion=50
 
-    # Social triggers should fire once and append to world_events.
-    from engine.npc.npcs import check_social_triggers
+    # Social triggers schedule pending ripple events (countdown); one-shot while armed.
+    from engine.npc.memory import get_narrative_anchor_context, is_trigger_condition_met
+    from engine.npc.npcs import check_social_triggers, process_pending_events
 
     st_tr = initialize_state({"name": "TriggerTest", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_tr.setdefault("npcs", {})["T"] = {
@@ -1848,10 +2199,203 @@ def _smoke() -> None:
     }
     fired1 = check_social_triggers(st_tr, "T")
     assert isinstance(fired1, list) and fired1
-    we = st_tr.get("world_events", []) or []
-    assert isinstance(we, list) and any(isinstance(x, dict) and str(x.get("npc_id", "")) == "T" for x in we)
+    pe_tr = st_tr.get("pending_events", []) or []
+    assert isinstance(pe_tr, list) and any(
+        isinstance(x, dict) and str(x.get("source_npc", "")) == "T" and "turns_to_trigger" in x for x in pe_tr
+    )
+    ctx_t = get_narrative_anchor_context(st_tr, "T")
+    assert isinstance(ctx_t, str) and "[FORESHADOWING]" in ctx_t
     fired2 = check_social_triggers(st_tr, "T")
     assert fired2 == []
+
+    # BETRAYAL_RISK: pending event defuses if social state improves before countdown completes.
+    st_def = initialize_state({"name": "DefuseRipple", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_def.setdefault("npcs", {})["Brutus"] = {
+        "name": "Brutus",
+        "alive": True,
+        "trust": 5,
+        "fear": 20,
+        "belief_summary": {"suspicion": 95, "respect": 50},
+    }
+    assert is_trigger_condition_met(st_def, "Brutus", "BETRAYAL_RISK") is True
+    fired_b = check_social_triggers(st_def, "Brutus")
+    assert "BETRAYAL_RISK" in fired_b
+    assert any(
+        isinstance(x, dict)
+        and x.get("source_npc") == "Brutus"
+        and x.get("type") == "BETRAYAL_RISK"
+        and "turns_to_trigger" in x
+        for x in (st_def.get("pending_events") or [])
+    )
+    # Cheat: rebuild trust / lower suspicion so threshold no longer holds.
+    st_def["npcs"]["Brutus"]["trust"] = 95
+    st_def["npcs"]["Brutus"]["belief_summary"]["suspicion"] = 20
+    assert is_trigger_condition_met(st_def, "Brutus", "BETRAYAL_RISK") is False
+    process_pending_events(st_def)
+    pe_brutus = [
+        x
+        for x in (st_def.get("pending_events") or [])
+        if isinstance(x, dict) and x.get("source_npc") == "Brutus" and "turns_to_trigger" in x
+    ]
+    assert pe_brutus == []
+    we_def = st_def.get("world_events", []) or []
+    assert any(isinstance(x, dict) and x.get("kind") == "ABORTED_EVENT" and x.get("type") == "BETRAYAL_RISK" for x in we_def)
+    notes_def = st_def.get("world_notes", []) or []
+    assert any(isinstance(n, str) and "[Ripple Defused]" in n for n in notes_def)
+    at_b = (st_def.get("npcs", {}) or {}).get("Brutus", {}).get("active_triggers", {}) or {}
+    assert at_b.get("BETRAYAL_RISK") is False
+
+    # Gossip protocol: deterministic spread from grudge/suspicion source to same-faction peer.
+    from engine.npc.memory import get_narrative_anchor_context
+    from engine.npc.npc_rumor_system import propagate_reputation
+
+    st_go = initialize_state({"name": "GossipProto", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_go.setdefault("npcs", {})["G_A"] = {
+        "name": "G_A",
+        "alive": True,
+        "hp": 100,
+        "affiliation": "corporate",
+        "current_location": "london",
+        "belief_tags": ["Deep_Grudge"],
+        "belief_summary": {"suspicion": 50, "respect": 50},
+    }
+    st_go.setdefault("npcs", {})["G_B"] = {
+        "name": "G_B",
+        "alive": True,
+        "hp": 100,
+        "affiliation": "corporate",
+        "current_location": "london",
+        "belief_summary": {"suspicion": 40, "respect": 50},
+    }
+    sus0 = int((st_go["npcs"]["G_B"].get("belief_summary") or {}).get("suspicion", 0) or 0)
+    gossip_hit_turn: int | None = None
+    for t in range(48):
+        st_go.setdefault("meta", {})["turn"] = t
+        n_sp = propagate_reputation(st_go)
+        if n_sp > 0:
+            gossip_hit_turn = t
+            break
+    assert gossip_hit_turn is not None
+    sus1 = int((st_go["npcs"]["G_B"].get("belief_summary") or {}).get("suspicion", 0) or 0)
+    assert sus1 > sus0
+    notes_g = st_go.get("world_notes", []) or []
+    assert any(isinstance(x, str) and x.startswith("[Gossip] Reputation spread from G_A to G_B") for x in notes_g)
+    ctx_gb = get_narrative_anchor_context(st_go, "G_B")
+    assert isinstance(ctx_gb, str) and "[RUMOR]" in ctx_gb
+
+    # REPORTING_RISK / snitch: trace delta +20 without disguise, +5 with active disguise.
+    from engine.npc.npcs import process_pending_events
+    from engine.systems.disguise import ensure_disguise
+
+    st_sn = initialize_state({"name": "SnitchTrace", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_sn["trace"] = {"trace_pct": 10, "trace_status": "Ghost"}
+    st_sn.setdefault("npcs", {})["Sn"] = {
+        "name": "Sn",
+        "alive": True,
+        "hp": 100,
+        "belief_summary": {"suspicion": 90, "respect": 50},
+        "active_triggers": {"REPORTING_RISK": True},
+    }
+    st_sn.setdefault("pending_events", []).append(
+        {
+            "id": "se:Sn:REPORTING_RISK:0",
+            "type": "REPORTING_RISK",
+            "source_npc": "Sn",
+            "turns_to_trigger": 0,
+            "payload": {"effect": "file_report", "trigger": "REPORTING_RISK"},
+        }
+    )
+    process_pending_events(st_sn)
+    assert int((st_sn.get("trace", {}) or {}).get("trace_pct", 0) or 0) == 30
+    assert any(isinstance(x, dict) and x.get("kind") == "REPORT_FILED" for x in (st_sn.get("world_events", []) or []))
+    notes_sn = st_sn.get("world_notes", []) or []
+    assert any(isinstance(x, str) and x.startswith("[Snitch]") for x in notes_sn)
+    ctx_rep = get_narrative_anchor_context(st_sn, "Sn")
+    assert isinstance(ctx_rep, str) and "[REPORTING_RISK]" in ctx_rep
+
+    st_sd = initialize_state({"name": "SnitchDisguise", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_sd["trace"] = {"trace_pct": 10, "trace_status": "Ghost"}
+    ensure_disguise(st_sd)["active"] = True
+    st_sd.setdefault("npcs", {})["Sn2"] = {
+        "name": "Sn2",
+        "alive": True,
+        "hp": 100,
+        "belief_summary": {"suspicion": 90, "respect": 50},
+        "active_triggers": {"REPORTING_RISK": True},
+    }
+    st_sd.setdefault("pending_events", []).append(
+        {
+            "id": "se:Sn2:REPORTING_RISK:0",
+            "type": "REPORTING_RISK",
+            "source_npc": "Sn2",
+            "turns_to_trigger": 0,
+            "payload": {"effect": "file_report", "trigger": "REPORTING_RISK"},
+        }
+    )
+    process_pending_events(st_sd)
+    assert int((st_sd.get("trace", {}) or {}).get("trace_pct", 0) or 0) == 15
+
+    # Reporting plan defuses when belief_summary.suspicion drops below 80.
+    st_rd = initialize_state({"name": "ReportDefuse", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_rd.setdefault("npcs", {})["Sn3"] = {
+        "name": "Sn3",
+        "alive": True,
+        "hp": 100,
+        "belief_summary": {"suspicion": 75, "respect": 50},
+        "active_triggers": {"REPORTING_RISK": True},
+    }
+    st_rd.setdefault("pending_events", []).append(
+        {
+            "id": "se:Sn3:REPORTING_RISK:1",
+            "type": "REPORTING_RISK",
+            "source_npc": "Sn3",
+            "turns_to_trigger": 2,
+            "payload": {"effect": "file_report", "trigger": "REPORTING_RISK"},
+        }
+    )
+    process_pending_events(st_rd)
+    pe3 = st_rd.get("pending_events", []) or []
+    assert not any(
+        isinstance(x, dict) and x.get("type") == "REPORTING_RISK" and x.get("source_npc") == "Sn3" for x in pe3
+    )
+    assert any(
+        isinstance(x, str) and "below 80" in x and "Sn3" in x for x in (st_rd.get("world_notes", []) or [])
+    )
+
+    # Trace tier friction: Lockdown scales travel minutes; HUD label uses security tier names.
+    from engine.core.trace import apply_trace_travel_friction, fmt_trace_monitor_ui, get_trace_tier
+    from engine.world.timers import update_timers
+
+    st_tf0 = initialize_state({"name": "TraceTier0", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_tf0["trace"] = {"trace_pct": 0, "trace_status": "Ghost"}
+    assert get_trace_tier(st_tf0)["tier_id"] == "Ghost"
+    assert apply_trace_travel_friction(st_tf0, 50) == (50, False)
+
+    st_tf80 = initialize_state({"name": "TraceTier80", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_tf80["trace"] = {"trace_pct": 80, "trace_status": "Manhunt"}
+    assert get_trace_tier(st_tf80)["tier_id"] == "Lockdown"
+    m80, ap80 = apply_trace_travel_friction(st_tf80, 50)
+    assert m80 == 100 and ap80 is True
+    ui80 = fmt_trace_monitor_ui(st_tf80)
+    assert "[Lockdown]" in ui80 and "80%" in ui80
+
+    st_trv0 = initialize_state({"name": "TravelFriction0", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_trv0.setdefault("meta", {}).update({"day": 1, "time_min": 480, "turn": 0})
+    st_trv0["trace"] = {"trace_pct": 0, "trace_status": "Ghost"}
+    t0 = int(st_trv0["meta"]["time_min"])
+    update_timers(st_trv0, {"action_type": "travel", "travel_minutes": 100})
+    adv0 = int(st_trv0["meta"]["time_min"]) - t0
+
+    st_trv1 = initialize_state({"name": "TravelFriction80", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_trv1.setdefault("meta", {}).update({"day": 1, "time_min": 480, "turn": 0})
+    st_trv1["trace"] = {"trace_pct": 80, "trace_status": "Manhunt"}
+    t1 = int(st_trv1["meta"]["time_min"])
+    update_timers(st_trv1, {"action_type": "travel", "travel_minutes": 100})
+    adv1 = int(st_trv1["meta"]["time_min"]) - t1
+    assert adv1 > adv0
+    # Lockdown doubles the pre-modifier travel_minutes bucket (100 → 200) before other shared modifiers.
+    assert (adv1 - adv0) >= 95
+    assert any("[Security] Travel friction increased due to high Trace." in str(x) for x in (st_trv1.get("world_notes", []) or []))
 
     from engine.systems.scenes import advance_scene
 
@@ -1928,7 +2472,7 @@ def _smoke() -> None:
     assert isinstance(sc2, dict) and sc2.get("scene_type") == "police_stop" and sc2.get("phase") == "stop"
     r0 = advance_scene(st_p, {"scene_action": "comply"})
     assert bool(r0.get("ok")) and r0.get("phase_after") == "dialog"
-    # Conceal then deny (should still be deterministic; may reduce found).
+    # Conceal then admit (should still be deterministic; may reduce found).
     advance_scene(st_p, {"scene_action": "conceal", "scene_arg": "compact_pistol"})
     r1 = advance_scene(st_p, {"scene_action": "say_yes"})
     assert bool(r1.get("ok")) and bool(r1.get("ended")) is True
@@ -2193,7 +2737,7 @@ def _smoke() -> None:
     assert str((st_aml.get("economy", {}) or {}).get("aml_status", "")).startswith("ACTIVE")
 
     # ACCOMMODATION: prepaid hotel nights tick down per game day (not on check-in day).
-    from engine.systems.accommodation import normalize_stay_kind, process_accommodation_daily, stay_checkin
+    from engine.systems.accommodation import deterministic_stay_raid_roll_percent, normalize_stay_kind, process_accommodation_daily, stay_checkin
 
     # NL accommodation intent: narrator hint only; engine charges via STAY command.
     ctx_stay_nl = parse_action_intent("kamu stay satu malam di hotel")
@@ -2247,6 +2791,44 @@ def _smoke() -> None:
     st_acc.setdefault("meta", {})["day"] = 6
     process_accommodation_daily(st_acc)
     assert int(((st_acc.get("world", {}) or {}).get("accommodation", {}) or {}).get("paris", {}).get("nights_remaining", 0) or 0) == 1
+
+    # STAY anti-turtle: Lockdown can trigger immediate safehouse raid before time advances.
+    from main import handle_special as _handle_special
+
+    st_stay_raid = initialize_state({"name": "StayRaid", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_stay_raid.setdefault("trace", {})["trace_pct"] = 90
+    st_stay_raid.setdefault("economy", {})["cash"] = 1000
+    st_stay_raid.setdefault("economy", {})["bank"] = 10000
+    st_stay_raid.setdefault("meta", {}).update({"day": 3, "time_min": 480})
+    st_stay_raid.setdefault("world", {}).setdefault("safehouses", {})["london"] = {
+        "status": "rent",
+        "security_level": 1,
+        "stash": [{"item_id": "compact_pistol"}],
+        "stash_ammo": {},
+        "delinquent_days": 0,
+    }
+    hit_turn = None
+    for tn in range(512):
+        st_stay_raid["meta"]["turn"] = int(tn)
+        if deterministic_stay_raid_roll_percent(st_stay_raid) < 40:
+            hit_turn = int(tn)
+            break
+    assert hit_turn is not None
+    st_stay_raid["meta"]["turn"] = hit_turn
+    day0 = int(st_stay_raid.get("meta", {}).get("day", 0) or 0)
+    time0 = int(st_stay_raid.get("meta", {}).get("time_min", 0) or 0)
+    assert _handle_special(st_stay_raid, "STAY hotel 1") is True
+    sc_sr = st_stay_raid.get("active_scene")
+    assert isinstance(sc_sr, dict) and sc_sr.get("scene_type") == "safehouse_raid"
+    assert int(st_stay_raid.get("meta", {}).get("day", 0) or 0) == day0
+    assert int(st_stay_raid.get("meta", {}).get("time_min", 0) or 0) == time0
+    rr_sr = advance_scene(st_stay_raid, {"scene_action": "comply"})
+    assert bool(rr_sr.get("ok")) and bool(rr_sr.get("ended")) is True
+    assert int((st_stay_raid.get("trace") or {}).get("trace_pct", 0) or 0) == 0
+    assert int(st_stay_raid.get("meta", {}).get("day", 0) or 0) == day0 + 2
+    assert st_stay_raid.get("active_scene") is None
+    sh_after = (((st_stay_raid.get("world", {}) or {}).get("safehouses", {}) or {}).get("london", {}) or {})
+    assert str(sh_after.get("status", "")) == "none"
 
     # Skill level → meaningful roll modifier (BAL_SKILL_MOD_PER_LEVEL).
     from engine.core.modifiers import compute_roll_package

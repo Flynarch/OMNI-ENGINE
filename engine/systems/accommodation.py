@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from engine.core.balance import BALANCE, get_balance_snapshot
@@ -119,6 +120,74 @@ def stay_checkin(state: dict[str, Any], kind: str, nights: int) -> dict[str, Any
         row["checkin_day"] = day
     state.setdefault("world_notes", []).append(f"[Stay] {k} +{n}n @ {loc} rate={rate}/n total={total}")
     return {"ok": True, "kind": k, "nights_added": n, "nights_remaining": int(row["nights_remaining"]), "rate_per_night": rate, "paid": total, "cash_after": int(econ["cash"])}
+
+
+def deterministic_stay_raid_roll_percent(state: dict[str, Any]) -> int:
+    meta = state.get("meta", {}) or {}
+    seed = str(meta.get("world_seed", "") or meta.get("seed_pack", "") or "").strip() or "seed"
+    try:
+        turn = int(meta.get("turn", 0) or 0)
+    except Exception:
+        turn = 0
+    loc = _here_key(state)
+    h = hashlib.md5(f"{seed}|{turn}|{loc}|raid_trigger".encode("utf-8", errors="ignore")).hexdigest()
+    return int(h[:8], 16) % 100
+
+
+def maybe_trigger_stay_raid(state: dict[str, Any]) -> dict[str, Any]:
+    """Before STAY time processing, deterministically trigger an immediate raid scene."""
+    if isinstance(state.get("active_scene"), dict) and state.get("active_scene"):
+        return {"triggered": False, "reason": "scene_active"}
+    try:
+        from engine.core.trace import get_trace_tier
+
+        tier_id = str((get_trace_tier(state) or {}).get("tier_id", "") or "")
+    except Exception:
+        tier_id = ""
+    if tier_id not in ("Wanted", "Lockdown"):
+        return {"triggered": False, "reason": "tier_below_wanted", "tier_id": tier_id}
+
+    chance = 15 if tier_id == "Wanted" else 40
+    roll = deterministic_stay_raid_roll_percent(state)
+    if roll >= chance:
+        return {"triggered": False, "reason": "miss", "roll": int(roll), "chance": int(chance), "tier_id": tier_id}
+
+    loc = _here_key(state) or "unknown"
+    try:
+        from engine.world.atlas import ensure_location_profile
+
+        prof = ensure_location_profile(state, loc)
+    except Exception:
+        prof = {}
+    sh_row = ((state.get("world", {}) or {}).get("safehouses", {}) or {}).get(loc, {})
+    if not isinstance(sh_row, dict):
+        sh_row = {}
+    meta = state.get("meta", {}) or {}
+    try:
+        day = int(meta.get("day", 1) or 1)
+    except Exception:
+        day = 1
+    try:
+        tmin = int(meta.get("time_min", 0) or 0)
+    except Exception:
+        tmin = 0
+    scene_id = hashlib.md5(f"{loc}|{day}|{tmin}|stay_safehouse_raid".encode("utf-8", errors="ignore")).hexdigest()[:10]
+    state["active_scene"] = {
+        "scene_id": scene_id,
+        "scene_type": "safehouse_raid",
+        "phase": "breach",
+        "context": {
+            "location": loc,
+            "country": str((prof or {}).get("country", "") or "").strip().lower(),
+            "law_level": str((prof or {}).get("law_level", "standard") or "standard").strip().lower(),
+            "security_level": int(sh_row.get("security_level", 1) or 1),
+        },
+        "vars": {"wait_count": 0},
+        "expires_at": {"day": int(day), "time_min": min(1439, int(tmin) + 20)},
+        "next_options": ["SCENE COMPLY", "SCENE FLEE", "SCENE HIDE", "SCENE FIGHT"],
+    }
+    state.setdefault("world_notes", []).append("[Security] Authorities tracked your location! A tactical unit is breaching.")
+    return {"triggered": True, "roll": int(roll), "chance": int(chance), "tier_id": tier_id, "scene_type": "safehouse_raid"}
 
 
 def process_accommodation_daily(state: dict[str, Any]) -> None:

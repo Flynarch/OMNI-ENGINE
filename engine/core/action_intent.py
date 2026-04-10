@@ -452,6 +452,43 @@ def parse_action_intent(player_input: str) -> dict[str, Any]:
     return ctx
 
 
+def _squish_cmd(s: str) -> str:
+    return " ".join(str(s or "").strip().upper().split())
+
+
+def command_allowed_for_active_scene(state: dict[str, Any], raw_cmd: str) -> bool:
+    """True if input is allowed while ``active_scene`` is set (scene UX + matching ``next_options``)."""
+    u = _squish_cmd(raw_cmd)
+    if u in ("HELP", "QUIT", "EXIT", "UI FULL", "UI COMPACT"):
+        return True
+    parts = u.split()
+    if len(parts) >= 2 and parts[0] == "SCENE" and parts[1] in ("STATUS", "INFO", "OPTIONS", "OPTS"):
+        return True
+    sc = state.get("active_scene")
+    if not isinstance(sc, dict) or not sc:
+        return True
+    opts = sc.get("next_options") or []
+    if not isinstance(opts, list) or not opts:
+        return False
+    for opt in opts:
+        if not isinstance(opt, str):
+            continue
+        if _squish_cmd(opt) == u:
+            return True
+    return False
+
+
+def apply_active_scene_intent_lock(state: dict[str, Any], action_ctx: dict[str, Any], raw_cmd: str) -> None:
+    """If an active scene lists ``next_options``, block non-scene responses (``scene_locked`` / ``combat_blocked``)."""
+    sc = state.get("active_scene")
+    if not isinstance(sc, dict) or not sc:
+        return
+    if command_allowed_for_active_scene(state, raw_cmd):
+        return
+    action_ctx["scene_locked"] = True
+    action_ctx["combat_blocked"] = "scene_locked"
+
+
 def is_intent_v2(intent: Any) -> bool:
     try:
         return isinstance(intent, dict) and int(intent.get("version", 1) or 1) == 2 and isinstance(intent.get("plan"), dict)

@@ -177,6 +177,16 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
     mods: list[tuple[str, int]] = []
     act_type = str(action_ctx.get("action_type", "") or "")
 
+    if bool(action_ctx.get("scene_locked")):
+        return {
+            "base": base,
+            "mods": [("Scene locked", -100)],
+            "net_threshold": 0,
+            "roll": None,
+            "outcome": "Auto Fail (Scene locked)",
+            "net_threshold_locked": True,
+        }
+
     bio = state.get("bio", {})
     # Hacking tiers + gating (soft gate + selective hard gate).
     if str(domain).lower() == "hacking":

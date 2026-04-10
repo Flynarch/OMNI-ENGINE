@@ -242,8 +242,8 @@ def travel_within_city(state: dict[str, Any], target_district_id: str) -> dict[s
         base_time += weather_mod
     except Exception:
         pass
-    
-    # Apply time to state
+
+    # Apply time to state (trace tier friction is applied inside update_timers for all travel).
     from engine.world.timers import update_timers
     ctx = {
         "action_type": "travel",

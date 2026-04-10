@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
+from rich import box
 from rich.console import Console, Group
 from rich.columns import Columns
 from rich.panel import Panel
@@ -11,6 +13,33 @@ from rich.text import Text
 from engine.systems.combat import get_active_weapon
 
 console = Console()
+
+
+def format_data_table(title: str, headers: list[str], rows: list[list[str]], *, theme: str = "default") -> Table:
+    """Small Rich table helper to standardize CLI UX."""
+    t = Table(title=title, box=box.SQUARE)
+    if theme == "magenta":
+        t.title_style = "bold magenta"
+        header_style = "bold magenta"
+    elif theme == "cyan":
+        t.title_style = "bold cyan"
+        header_style = "bold cyan"
+    else:
+        t.title_style = "bold"
+        header_style = "bold"
+    for h in headers:
+        t.add_column(str(h), header_style=header_style, no_wrap=True if len(str(h)) <= 10 else False)
+    for r in rows:
+        t.add_row(*[str(x) for x in r])
+    return t
+
+
+def _monitor_mode(state: dict[str, Any]) -> str:
+    mm = str((state.get("meta", {}) or {}).get("monitor_mode", "")).strip().lower()
+    if mm in ("full", "compact"):
+        return mm
+    v = os.getenv("OMNI_MONITOR_MODE", "compact").strip().lower()
+    return "full" if v in ("full", "wide", "verbose") else "compact"
 
 
 def _fmt_clock(time_min: int) -> str:
@@ -234,7 +263,153 @@ def _fmt_npc_offers(state: dict[str, Any], max_n: int = 3) -> list[str]:
     return out
 
 
-def render_monitor(state: dict[str, Any]) -> None:
+def _compact_hook_text(state: dict[str, Any], *, max_len: int = 72) -> str:
+    """One scannable hook line for [HOOK]; empty string if nothing worth showing."""
+    pe = state.get("pending_events") or []
+    if isinstance(pe, list) and pe:
+        ev0 = pe[0]
+        if isinstance(ev0, dict):
+            title = str(ev0.get("title", ev0.get("event_type", "")) or "").strip()
+            if title:
+                extra = f" @d{ev0.get('due_day', '?')} t{ev0.get('due_time', '?')}"
+                s = title + extra
+                return s if len(s) <= max_len else s[: max_len - 1] + "…"
+    intel = _fmt_intel_items(state)
+    if intel:
+        line0 = intel[0]
+        if len(line0) > max_len:
+            return line0[: max_len - 1] + "…"
+        return line0
+    world = state.get("world", {}) or {}
+    news = world.get("news_feed", []) or []
+    if isinstance(news, list) and news:
+        last = news[-1]
+        if isinstance(last, dict):
+            nt = str(last.get("text", "") or "").strip()
+            if nt:
+                if len(nt) > max_len:
+                    return nt[: max_len - 1] + "…"
+                return nt
+    return ""
+
+
+def _condition_parts(state: dict[str, Any]) -> tuple[int, int, int, str]:
+    meta = state.get("meta", {}) or {}
+    try:
+        gigs_done = int(meta.get("daily_gigs_done", 0) or 0)
+    except Exception:
+        gigs_done = 0
+    try:
+        hacks_attempted = int(meta.get("daily_hacks_attempted", 0) or 0)
+    except Exception:
+        hacks_attempted = 0
+    gigs_done = max(0, gigs_done)
+    penalty = max(0, hacks_attempted * 10)
+    style = "bold red" if gigs_done >= 2 or penalty >= 30 else "yellow"
+    return gigs_done, hacks_attempted, penalty, style
+
+
+def _render_monitor_compact(state: dict[str, Any]) -> None:
+    """Vertical tagged HUD (one line per category); type UI FULL for the wide panel."""
+    bio = state.get("bio", {})
+    tr = state.get("trace", {}) or {}
+    eco = state.get("economy", {}) or {}
+    player = state.get("player", {}) or {}
+    meta = state.get("meta", {}) or {}
+    world = state.get("world", {}) or {}
+    day = int(meta.get("day", 1))
+    clock = _fmt_clock(int(meta.get("time_min", 0)))
+
+    loc_raw = str(player.get("location", "-") or "-").strip()
+    loc_display = loc_raw.replace("_", " ").title() if loc_raw and loc_raw != "-" else loc_raw
+
+    cash = int(eco.get("cash", 0) or 0)
+    bank = int(eco.get("bank", 0) or 0)
+    burn = int(eco.get("daily_burn", 0) or 0)
+
+    try:
+        from engine.core.trace import get_trace_tier
+
+        _tier = get_trace_tier(state)
+        trace_pct = int(_tier.get("trace_pct", 0) or 0)
+        tier_lbl = str(_tier.get("tier_id", "Ghost") or "Ghost")
+    except Exception:
+        trace_pct = int(tr.get("trace_pct", 0) or 0)
+        tier_lbl = str(tr.get("trace_status", "Ghost") or "Ghost")
+    bp = str(bio.get("bp_state", "Stable") or "Stable")
+    if trace_pct > 75:
+        trace_val_style = "bold red"
+    elif trace_pct > 50:
+        trace_val_style = "bold yellow"
+    else:
+        trace_val_style = "yellow"
+
+    t = Text()
+    t.append("[INFO] ", style="bold cyan")
+    t.append(f"{player.get('name', '?')} | Day {day} ({clock}) | Loc: {loc_display}\n", style="cyan")
+
+    t.append("[ECON] ", style="bold green")
+    t.append(f"Cash: ${cash} | Bank: ${bank} | Burn: {burn}/d\n", style="green")
+
+    t.append("[STAT] ", style="bold yellow")
+    t.append("Trace: ", style="yellow")
+    t.append(f"{trace_pct}% [{tier_lbl}]", style=trace_val_style)
+    t.append(f" | BP: {bp}\n", style="yellow")
+    gigs_done, _hacks_attempted, penalty, cond_style = _condition_parts(state)
+    t.append("[CONDITION] ", style=cond_style)
+    t.append(f"Gigs: {gigs_done}/2 | Hack Penalty: -{penalty}%\n", style=cond_style)
+
+    nearby = world.get("nearby_items", []) or []
+    ids: list[str] = []
+    if isinstance(nearby, list) and nearby:
+        for x in nearby[:8]:
+            if isinstance(x, dict):
+                ids.append(str(x.get("id", x.get("name", "-"))))
+            else:
+                ids.append(str(x))
+    near_s = ", ".join(ids) if ids else "-"
+    if len(near_s) > 72:
+        near_s = near_s[:70] + "…"
+    t.append("[NEAR] ", style="bold magenta")
+    t.append(f"{near_s}\n", style="magenta")
+
+    hook = _compact_hook_text(state)
+    hook_line = hook if hook else "-"
+    if len(hook_line) > 72:
+        hook_line = hook_line[:70] + "…"
+    t.append("[HOOK] ", style="bold red")
+    t.append(f"{hook_line}\n", style="red")
+
+    sc = state.get("active_scene")
+    if isinstance(sc, dict) and sc:
+        opts = sc.get("next_options") or []
+        stype = str(sc.get("scene_type", "-") or "-").strip() or "-"
+        if isinstance(opts, list) and opts:
+            pv = [str(x) for x in opts[:6] if isinstance(x, str)]
+            if pv:
+                sc_line = " | ".join(pv)
+                if len(sc_line) > 72:
+                    sc_line = sc_line[:70] + "…"
+                t.append("[SCENE] ", style="bold red")
+                t.append(f"{stype} - Opsi: {sc_line}\n", style="bold red")
+
+    t.append("[TIP] ", style="dim")
+    t.append("TALK · INFORMANTS · WORLD_BRIEF · DISTRICTS · MARKET · BLACKMARKET · BUY_DARK · HELP\n", style="dim")
+
+    panel_w = min(console.width - 4, 82) if console.width else 82
+    console.print(
+        Panel(
+            t,
+            title="[bold cyan]OMNI_MONITOR[/]",
+            box=box.SQUARE,
+            border_style="bold cyan",
+            width=panel_w,
+            subtitle="[dim]FICO=credit · idx=market · UI FULL=full HUD[/dim]",
+        )
+    )
+
+
+def _render_monitor_full(state: dict[str, Any]) -> None:
     bio = state.get("bio", {})
     tr = state.get("trace", {})
     inv = state.get("inventory", {})
@@ -242,12 +417,27 @@ def render_monitor(state: dict[str, Any]) -> None:
     player = state.get("player", {})
     meta = state.get("meta", {})
     flags = state.get("flags", {})
+    world = state.get("world", {}) or {}
 
     bp = bio.get("bp_state", "Stable")
     bp_style = {"Stable": "green", "Low": "yellow", "Critical": "red", "Flatline": "bright_red"}.get(bp, "white")
-    trace_style = {"Ghost": "green", "Flagged": "yellow", "Investigated": "dark_orange", "Manhunt": "red"}.get(
-        tr.get("trace_status", "Ghost"), "white"
-    )
+    try:
+        from engine.core.trace import get_trace_tier
+
+        _tier_f = get_trace_tier(state)
+        trace_pct_ui = int(_tier_f.get("trace_pct", 0) or 0)
+        tier_lbl_f = str(_tier_f.get("tier_id", "Ghost") or "Ghost")
+    except Exception:
+        trace_pct_ui = int(tr.get("trace_pct", 0) or 0)
+        tier_lbl_f = str(tr.get("trace_status", "Ghost") or "Ghost")
+    if trace_pct_ui > 75:
+        trace_style = "bold red"
+    elif trace_pct_ui > 50:
+        trace_style = "bold yellow"
+    else:
+        trace_style = {"Ghost": "green", "Flagged": "yellow", "Investigated": "dark_orange", "Manhunt": "red"}.get(
+            tr.get("trace_status", "Ghost"), "yellow"
+        )
 
     day = int(meta.get("day", 1))
     clock = _fmt_clock(int(meta.get("time_min", 0)))
@@ -259,7 +449,7 @@ def render_monitor(state: dict[str, Any]) -> None:
     right_prefix = Text()
     right_suffix = Text()
 
-    left.append("OMNI-ENGINE v6.9\n", style="bold red")
+    left.append("OMNI-ENGINE v6.9\n", style="bold black on cyan")
     lang = str(player.get("language", "id")).lower()
     left.append(
         f"{player.get('name', '?')} | Day {day} {clock} | Turn {turn} | Lang: {lang} | Seed: {seed}\n",
@@ -297,9 +487,17 @@ def render_monitor(state: dict[str, Any]) -> None:
             f"hygiene={int(social.get('hygiene', 0) or 0)} | speaking={int(social.get('speaking', 0) or 0)}\n",
             style="dim",
         )
-    left.append(f"BP: {bp}  ", style=bp_style)
-    left.append(f"Blood: {bio.get('blood_volume', 5.0)}/{bio.get('blood_max', 5.0)}L\n")
-    left.append(f"Trace: {tr.get('trace_pct', 0)}% [{tr.get('trace_status', 'Ghost')}]\n", style=trace_style)
+    left.append(f"[+] BP: {bp}\n", style=bp_style)
+    left.append(
+        f"[+] Blood: {bio.get('blood_volume', 5.0)}/{bio.get('blood_max', 5.0)}L\n",
+        style="dim",
+    )
+    left.append(
+        f"[TRACE] {trace_pct_ui}% [{tier_lbl_f}]\n",
+        style=trace_style,
+    )
+    gigs_done, _hacks_attempted, penalty, cond_style = _condition_parts(state)
+    left.append(f"[CONDITION] Gigs: {gigs_done}/2 | Hack Penalty: -{penalty}%\n", style=cond_style)
     # Local investigation pressure (Heat/Suspicion) — label + a few reasons only.
     try:
         from engine.social.suspicion_ui import get_heat_brief, get_suspicion_brief
@@ -361,7 +559,6 @@ def render_monitor(state: dict[str, Any]) -> None:
     except Exception:
         pass
 
-    world = state.get("world", {}) or {}
     nearby = world.get("nearby_items", []) or []
     contacts = world.get("contacts", {}) or {}
     contact_n = len(contacts) if isinstance(contacts, dict) else 0
@@ -446,7 +643,8 @@ def render_monitor(state: dict[str, Any]) -> None:
             rp = int(nsc.get("ripples", 0) or 0)
         except Exception:
             rp = 0
-        left.append(f"NPCSim: eval={ev} coarse={co} actions={ac} ripples={rp}\n", style="dim")
+        if ev != 0 or co != 0 or ac != 0 or rp != 0:
+            left.append(f"NPCSim: eval={ev} coarse={co} actions={ac} ripples={rp}\n", style="dim")
 
     # NPC offers (fixer/merchant services) from deterministic NPC sim.
     offers_lines = _fmt_npc_offers(state, max_n=3)
@@ -537,7 +735,7 @@ def render_monitor(state: dict[str, Any]) -> None:
         )
 
     mid.append(
-        f"Cash: {eco.get('cash', 0)} | Bank: {eco.get('bank', 0)} | Burn: {eco.get('daily_burn', 0)}/d | "
+        f"[$] Cash: {eco.get('cash', 0)} | Bank: {eco.get('bank', 0)} | Burn: {eco.get('daily_burn', 0)}/d | "
         f"FICO: {eco.get('fico', 600)} | Debt: {eco.get('debt', 0)}\n",
         style="green",
     )
@@ -560,7 +758,7 @@ def render_monitor(state: dict[str, Any]) -> None:
             ds = int(mi.get("d_scarcity", 0) or 0)
         except Exception:
             ds = 0
-        mid.append(f"MktIdx: price={pavg} (Δ{dp:+d}) | scarcity={savg} (Δ{ds:+d})\n", style="dim")
+        mid.append(f"[$] MktIdx: price={pavg} (Δ{dp:+d}) | scarcity={savg} (Δ{ds:+d})\n", style="dim")
     mkt = eco.get("market", {}) or {}
     if isinstance(mkt, dict) and mkt:
         try:
@@ -568,7 +766,7 @@ def render_monitor(state: dict[str, Any]) -> None:
             e = mkt.get("electronics", {}) if isinstance(mkt.get("electronics"), dict) else {}
             t = mkt.get("transport", {}) if isinstance(mkt.get("transport"), dict) else {}
             mid.append(
-                f"Market: weapons idx={w.get('price_idx', '-')} sc={w.get('scarcity', '-')} | "
+                f"[$] Market: weapons idx={w.get('price_idx', '-')} sc={w.get('scarcity', '-')} | "
                 f"elec idx={e.get('price_idx', '-')} sc={e.get('scarcity', '-')} | "
                 f"transport idx={t.get('price_idx', '-')} sc={t.get('scarcity', '-')}\n",
                 style="dim",
@@ -580,7 +778,7 @@ def render_monitor(state: dict[str, Any]) -> None:
         f"StopSeq: {flags.get('stop_sequence_active', False)} | Hallu: {flags.get('hallucination_active', False)}\n",
         style="cyan",
     )
-    mid.append(_weapon_line(inv, flags) + "\n", style="yellow")
+    mid.append("[!] " + _weapon_line(inv, flags) + "\n", style="yellow")
     pocket = inv.get("pocket_contents", [])
     bag = inv.get("bag_contents", [])
     pc = int(inv.get("pocket_capacity", 4) or 4)
@@ -595,7 +793,10 @@ def render_monitor(state: dict[str, Any]) -> None:
     trig = state.get("triggered_events_this_turn", []) or []
     surf = state.get("surfacing_ripples_this_turn", []) or []
     notes = state.get("world_notes", []) or []
-    right_prefix.append(f"Triggered: {len(trig)} | Surfacing: {len(surf)}\n", style="cyan")
+    trig_n = len(trig) if isinstance(trig, list) else 0
+    surf_n = len(surf) if isinstance(surf, list) else 0
+    if trig_n > 0 or surf_n > 0:
+        right_prefix.append(f"Triggered: {trig_n} | Surfacing: {surf_n}\n", style="cyan")
 
     # Intel feed (news + surfaced ripples).
     intel = _fmt_intel_items(state)
@@ -665,9 +866,9 @@ def render_monitor(state: dict[str, Any]) -> None:
             if isinstance(v, dict):
                 att_bits.append(f"{label} {v.get('from','-')}→{v.get('to','-')}")
         att_s = (" | " + " | ".join(att_bits)) if att_bits else ""
-        right_prefix.append("WhatChanged:\n", style="bold")
+        right_prefix.append("> sys.delta: ", style="dim")
         right_prefix.append(
-            f"Δ cash={cash_d:+d} bank={bank_d:+d} debt={debt_d:+d} trace={tr_d:+d} | queued ev={qe} rp={qr}{att_s}\n",
+            f"cash={cash_d:+d} bank={bank_d:+d} debt={debt_d:+d} trace={tr_d:+d} | queued ev={qe} rp={qr}{att_s}\n",
             style="bold cyan",
         )
         # What Changed v2: effects + skill XP + notes added this turn.
@@ -684,7 +885,8 @@ def render_monitor(state: dict[str, Any]) -> None:
                 dis_s = "-"
                 if isinstance(dis, dict) and bool(dis.get("active", False)):
                     dis_s = str(dis.get("persona", "persona"))
-                right_prefix.append(f"Effects: weather={w} | safehouse={sh_s} | disguise={dis_s}\n", style="dim")
+                if (w not in ("", "-", None)) or sh_s != "-" or dis_s != "-":
+                    right_prefix.append(f"> sys.effects: weather={w} | safehouse={sh_s} | disguise={dis_s}\n", style="dim")
             except Exception:
                 pass
             try:
@@ -696,15 +898,14 @@ def render_monitor(state: dict[str, Any]) -> None:
                         if v:
                             bits.append(f"{k}+{v}")
                     if bits:
-                        right_prefix.append("XP: " + ", ".join(bits) + "\n", style="dim")
+                        right_prefix.append("> sys.xp: " + ", ".join(bits) + "\n", style="dim")
             except Exception:
                 pass
             try:
                 added = aud.get("notes_added", [])
                 if isinstance(added, list) and added:
-                    right_prefix.append("Audit:\n", style="bold")
                     for s in added[-4:]:
-                        right_prefix.append(f"- {str(s)}\n", style="dim")
+                        right_prefix.append(f"> sys.audit: {str(s)}\n", style="dim")
             except Exception:
                 pass
             # Time breakdown (transparent sim clock).
@@ -725,7 +926,7 @@ def render_monitor(state: dict[str, Any]) -> None:
                             continue
                         bits.append(f"{lbl}+{mm}m")
                     if bits:
-                        right_prefix.append(f"Time: +{tel}m (" + ", ".join(bits) + ")\n", style="dim")
+                        right_prefix.append(f"> sys.time: +{tel}m (" + ", ".join(bits) + ")\n", style="dim")
             except Exception:
                 pass
     parse_miss = meta.get("last_ai_missing_sections") or []
@@ -835,12 +1036,19 @@ def render_monitor(state: dict[str, Any]) -> None:
                 for line in belief_lines:
                     right_prefix.append(f"- {line}\n", style="dim")
 
-    npc_table = Table(title="NPC Minds", box=None, show_header=True, header_style="bold")
+    npc_table = Table(
+        title="NPC Minds",
+        caption="[dim]Baris = NPC/kontak yang dilacak engine (nama bisa berupa handle, bukan semua warga di jalan)[/dim]",
+        box=box.SIMPLE_HEAVY,
+        border_style="magenta",
+        show_header=True,
+        header_style="bold magenta",
+    )
     npc_table.add_column("Name", overflow="fold")
     npc_table.add_column("Mood", width=10)
     npc_table.add_column("Aff", width=10)
     npc_table.add_column("Love", width=4, justify="right")
-    npc_table.add_column("Alarm", width=4, justify="right")
+    npc_table.add_column("Alarm", width=6, justify="right")
     npc_table.add_column("Cont", width=4, justify="right")
 
     if npc_names:
@@ -885,7 +1093,7 @@ def render_monitor(state: dict[str, Any]) -> None:
                 _fmt_meter(int(sec.get("contempt", 0) or 0), kind="contempt"),
             )
     else:
-        npc_table.add_row("-", "-", "-", "-", "-", "-")
+        npc_table.add_row("[dim](no tracked NPCs)[/]", "", "", "", "", "")
 
     # Last intent audit line (helps align AI behavior with engine intent)
     last_source = meta.get("last_intent_source") or "-"
@@ -902,8 +1110,23 @@ def render_monitor(state: dict[str, Any]) -> None:
     else:
         right_suffix.append(f"LastIntent: source={last_source}\n", style="magenta")
 
-    right_group = Group([right_prefix, npc_table, right_suffix])
-    console.print(Panel(Columns([left, mid, right_group], expand=True, equal=True), title="OMNI_MONITOR"))
+    right_group = Group(right_prefix, npc_table, right_suffix)
+    console.print(
+        Panel(
+            Columns([left, mid, right_group], expand=True, equal=True),
+            title="[bold cyan]OMNI_MONITOR[/]",
+            box=box.SQUARE,
+            border_style="bold cyan",
+            subtitle="[dim]CC=cybercreds · FICO=kredit · idx/sc=indeks & kelangkaan pasar · Burn=biaya hidup/hari[/dim]",
+        )
+    )
+
+
+def render_monitor(state: dict[str, Any]) -> None:
+    if _monitor_mode(state) == "compact":
+        _render_monitor_compact(state)
+    else:
+        _render_monitor_full(state)
 
 
 def stream_render(text_chunk: str) -> None:

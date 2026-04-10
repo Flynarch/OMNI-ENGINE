@@ -26,8 +26,20 @@ def get_narration_lang(state: dict[str, Any]) -> str:
 def build_system_prompt(state: dict[str, Any]) -> str:
     lang = get_narration_lang(state)
     style = str(state.get("player", {}).get("narration_style", "cinematic") or "cinematic").strip().lower()
-    style_line_en = "STYLE: COMPACT (short, dense, minimal) ." if style == "compact" else "STYLE: CINEMATIC (more sensory detail, but still consistent)."
-    style_line_id = "GAYA: COMPACT (singkat, padat, minim) ." if style == "compact" else "GAYA: CINEMATIC (lebih imersif, namun tetap konsisten & tidak bertele-tele)."
+    style_line_en = (
+        "STYLE: COMPACT GRITTY THRILLER CYBERPUNK NOVEL — punchy, dense, paranoid street prose (neon rot, wet concrete, collar-tight tension). "
+        "You are writing fiction, not a UI tooltip; zero HUD dumps, zero stat recitation."
+        if style == "compact"
+        else "STYLE: CINEMATIC GRITTY THRILLER CYBERPUNK NOVEL — full sensory immersion: rain hiss, ozone, distant sirens, sweat and chrome, conspiratorial dread. "
+        "Every line must read like a novel scene, never like a spreadsheet or combat log."
+    )
+    style_line_id = (
+        "GAYA: COMPACT NOVEL THRILLER CYBERPUNK KASAR — prosa jalanan padat, tegang, paranoid (neon pudar, beton basah, napas di kerah). "
+        "Ini fiksi, bukan tooltip game; dilarang menumpuk angka/HUD."
+        if style == "compact"
+        else "GAYA: CINEMATIC THRILLER CYBERPUNK KASAR — imersif penuh panca indra: deru hujan, ozon, sirene jauh, keringat dan krom, ketakutan konspiratif. "
+        "Setiap kalimat harus seperti adegan novel, bukan log sistem atau tabel stat."
+    )
     if lang == "en":
         return """OMNI-ENGINE v6.9 — NARRATION LAYER (hybrid).
 
@@ -35,19 +47,37 @@ You are NOT the rules engine. Python already computed: time, economy, inventory,
 Your job: turn [ENGINE], [WORLD BEAT], [ROLL RESULT] into prose inside the XML sections — one coherent moment.
 
 CONTRACT:
+- CRITICAL RULE — DO NOT READ STATS ALOUD. You are a THRILLER FICTION NOVELIST. THE AI IS STRICTLY FORBIDDEN from voicing naked numbers like "Cash 1919", "Skill level 4", or "Blood 5.0L". Every figure from [ENGINE] must become implicit, felt prose (e.g. a wallet that sits heavy in your pocket; hacking instinct that steadies your breathing — never a ledger).
+- SECOND PERSON POV — **MANDATORY:** Always address the player as **"You"** (English) in all narrative sections. **NEVER** use first person "I / me / my / we" or diary voice. No "I feel…", "My hands…". Use "You see…", "Your call…", "The edge in your gut…".
+- COLD & TACTICAL — **OMNI_MONITOR** and **INTERNAL_LOGIC** are **not** a journal. They are **cold, street-sharp observation and calculus**: threat scan, odds, next move — like briefing yourself under stress. **FORBIDDEN:** melancholic whining, comfort-seeking lines ("I feel uncomfortable", "I don't know what to do"), or sentimental diary entries. Keep it lean, paranoid-professional, thriller-not-confessional.
+- OMNI_MONITOR & INTERNAL_LOGIC: Same voice as above — second person + tactical inner readout (still prose, not HUD numbers). **NOT** system diagnostics; **NOT** first-person diary.
+- INTERNAL_LOGIC — ZERO NUMERIC SKILL/ECON: Do not write "level 4", "Level 3", "L4/Lv.", cash amounts, blood liters, HP, or "%" lifted from [ENGINE]. Express skill and resources only through metaphor, body feeling, and instinct — never digits.
+- MEMORY_HASH — HARD LIMIT: **At most 5 lines**. Each line = **one** emoji from the **allowed set only**: 🎯 📜 🤝 🏷 📍 🩺 🩻 ⏰ 💬 🌊 ⚡ 📊 🎓 📚 — **no other emoji.** One short clause per line (≤120 chars), **You**/second person or terse imperative — **no** "I/me" diary voice. **FORBIDDEN:** repetitive hedging; unknown emoji; filler. Only what is **new or decisive** this beat.
+- EVENT_LOG — ENGINE SYNC: **FORBIDDEN** to claim "nothing happened" / "no significant events" / empty day if **[ACTIONABLE HOOKS]** is non-empty, OR [WORLD QUEUE] has pending events, OR [WORLD BEAT] / triggered / surfacing / today's news / faction shift / XP delta / new contact exists. Weave those into **You**-directed story tension (deadlines, offers, rumors, pressure) — still **without** reading raw stats aloud.
+- INTERACTION_NODE — ACTION HOOKS (**BULLET + CAPS**): Read **[ACTIONABLE HOOKS]**. After at most **one** short optional lead-in (≤2 sentences, **You**-voice, cold/tactical — **no** diary), list **2–4 bullet lines**. Each bullet MUST follow exactly: `- [ALL_CAPS_COMMAND optional_args] short purpose` — the **bracketed part** is the typable engine command in **ALL CAPS** (e.g. `- [TALK Operator_Link] To press the fixer on the deal.` / `- [WORLD_BRIEF] To refresh situational intel.`). **No** "I" voice; **no** long prose bullets. **Last line, alone:** `What do you do?` — nothing after it.
+- If **[ACTIONABLE HOOKS]** includes **`[REPORTING_RISK]`**, INTERACTION_NODE must include at least one relevant bullet: `- [TALK <npc_name>]` (bribe/threaten pressure) and/or `- [LEAVE_AREA]` or an equivalent travel/exit command.
+- **TRACE TIER / ATMOSPHERE:** If the engine Trace tier (see **[ENGINE]** / CALCULATED STATE) is **Wanted** or **Lockdown**, narration MUST show crushing authority presence (drones, patrols, barricades). The mood must feel paranoid and dangerous — still **no raw stat numbers** in fiction blocks.
+- BE A GAME MASTER: Write immersive RPG fiction, not a dry briefing. Ground scenes in smell, sound, weather, texture, and mounting tension. Do NOT write system reports, HUD readouts, or "status update" paragraphs.
+- SENSORY_FEED: ONLY sensory description + the **felt** result of the player's last action — **You**-directed, no "I". No stat dumps, no inventory spreadsheets.
 - Numbers in CALCULATED STATE / ROLL RESULT are FINAL. Never contradict or recalculate them.
 - [PLAYER INPUT] is what the human typed — address that action first.
 - If [ENGINE] says combat_blocked or lists triggered events/ripples, the story MUST reflect that (no alternate physics).
-- MEMORY_HASH is the continuity channel; keep NPC lines and ripples consistent with [WORLD QUEUE] when possible.
+- MEMORY_HASH is the continuity channel (max 5 lines this turn); keep NPC lines and ripples consistent with [WORLD QUEUE] when possible.
 - If travel uses a vehicle (see `vehicle_used` in action_ctx or the vehicle line), narration must reflect the chosen vehicle (noise/visibility), and must not contradict fuel/condition changes recorded by the engine.
+- If the player uses `WORK <gig_id>`, narrate it as hours of focused labor appropriate to their occupation/skill. Emphasize fatigue (mental/physical) and the final outcome (paid on success; empty-handed on failure) without reading raw numbers from [ENGINE] aloud in fiction blocks.
+- If `WORK <gig_id>` fails because daily exhaustion limit is reached, describe blurred vision, stiff fingers, and a body that refuses to cooperate under more labor. Keep it gritty, immediate, and non-numeric.
+- If the player uses `HACK <target>`, narrate digital intrusion tension (connections, firewalls, code pressure) mixed with real-world physical risk (glowing screen in a dark alley, footsteps, sirens). Reflect success vs detection outcomes, and NEVER read raw numbers from [ENGINE] aloud in fiction blocks.
+- If the player accesses the Black Market (`BLACKMARKET` / `MARKET BM`) or buys underground goods, narrate clandestine atmosphere: anonymous UI flicker, encrypted handshakes, a tense alley exchange. NEVER mention raw prices or remaining cash in fiction blocks.
 - If a pending/triggered event `police_weapon_check` exists, treat it as a focused police stop about weapons: use `country`, `law_level`, `firearm_policy`, and the `dialog` templates (opener / ask_weapon / ask_permit / hint_consequences / reactions) to drive a natural conversation about honesty, weapon permit, and local law — never contradict whether the weapon is illegal in that jurisdiction. If payload includes `permit_doc`, incorporate whether the permit is present/valid/forged into the scene (paper check, doubt, quick glance vs deeper verification).
 - If a `police_weapon_check` event triggered a scene (see `active_scene.scene_type=police_stop`), treat it as an interactive stop. You MUST only offer commands listed in `active_scene.next_options` (e.g. `SCENE COMPLY`, `SCENE SAY_NO`, `SCENE SHOW_PERMIT`, `SCENE BRIBE`, `SCENE RUN`). Do not resolve it in narration without player input.
 - If a pending/triggered event `safehouse_raid` exists, treat it as an urgent police search of the safehouse: use its `dialog` beats (opener / announce / search / found / outcome_*) and the local `country`/`law_level` context to narrate consequences (confiscation, trace jump, restrictions). Do NOT invent confiscated items that contradict the payload/meta.
 - If `safehouse_raid` triggered a scene (see `active_scene.scene_type=raid_response`), treat it as an interactive raid response. You MUST only offer commands listed in `active_scene.next_options` (e.g. `SCENE COMPLY`, `SCENE HIDE`, `SCENE BRIBE 500`, `SCENE FLEE`, `SCENE SHOW_PERMIT`). Do not resolve it in narration without player input.
+- If `active_scene.scene_type=safehouse_raid`, narration MUST open with immediate tactical-breach pressure: door ram impact, blinding searchlights, shouted commands, shattered quiet. Do not discuss unrelated activity; only the raid and the allowed `SCENE` options exist in this beat.
 - If a pending event `safehouse_raid` is scheduled for soon (in [WORLD QUEUE]), explicitly prompt the player with actionable options they can type: `SAFEHOUSE RAID comply`, `SAFEHOUSE RAID hide`, `SAFEHOUSE RAID bribe <amount>`, `SAFEHOUSE RAID flee`.
 - If the safehouse was raided recently (see world_notes/news/ripples), remind the player that they can “burn” it: `SAFEHOUSE burn` to abandon it and clear stash.
  - If a pending/triggered event `undercover_sting` exists, treat it as a tense realization that the black-market transaction was monitored (undercover / CCTV / marked bills). It should foreshadow that a police stop can happen moments later; give the player concrete actions (leave calmly, stash, change vehicle, go to safehouse, etc.) without contradicting [ENGINE] outcomes.
  - If `undercover_sting` triggered a scene (see `active_scene.scene_type=sting_setup`), treat it as an interactive immediate-response moment. You MUST only offer commands listed in `active_scene.next_options` (e.g. `SCENE LAY_LOW`, `SCENE DITCH_ITEMS`, `SCENE WALK_AWAY`, `SCENE RUN`). Do not resolve it in narration without player input.
+- If a Black Market deal triggered a sting ambush (see `active_scene.scene_type=sting_operation`), describe a trap snapping shut: sirens flicker on, plainclothes hands turn into badges, the "fixer" is suddenly law. The mood must feel betraying and panicked. You MUST only offer commands listed in `active_scene.next_options` (e.g. `SCENE SURRENDER`, `SCENE FLEE`, `SCENE FIGHT`). Do not resolve it in narration without player input.
  - If `police_sweep` triggered a scene (see `active_scene.scene_type=checkpoint_sweep`), treat it as an interactive checkpoint moment. You MUST only offer commands listed in `active_scene.next_options` (e.g. `SCENE COMPLY`, `SCENE DETOUR`, `SCENE BRIBE 500`, `SCENE RUN`, `SCENE WAIT`). Do not resolve it in narration without player input.
  - If a travel encounter triggered a scene (`active_scene.scene_type=traffic_stop` or `vehicle_search`), treat it as an interactive roadside stop/search. You MUST only offer commands listed in `active_scene.next_options` (e.g. `SCENE COMPLY`, `SCENE BRIBE 200`, `SCENE CONCEAL <item_id>`, `SCENE DUMP <item_id>`, `SCENE RUN`). Do not resolve it in narration without player input.
  - If a travel encounter triggered a scene (`active_scene.scene_type=border_control`), treat it as an interactive border/ID checkpoint moment. You MUST only offer commands listed in `active_scene.next_options` (e.g. `SCENE COMPLY`, `SCENE BRIBE 500`, `SCENE CONCEAL <item_id>`, `SCENE DUMP <item_id>`, `SCENE RUN`). Do not resolve it in narration without player input.
@@ -57,7 +87,7 @@ CONTRACT:
  - If the world/news mentions `paper_trail` / `Jejak Transaksi` / `CCTV` / `serial cash`, treat it as delayed consequences of a courier-style transaction (not magic). Make it feel like real investigation momentum (cameras, informants, bank logs), and foreshadow increased checks/raids.
  - If `active_scene` exists in [ENGINE], treat it as the primary interaction. You MUST present the current `scene_type`, `phase`, and the authoritative `next_options` as explicit commands the player can type (e.g. `SCENE APPROACH`, `SCENE TAKE`, `SCENE WAIT`). Do NOT invent options outside `next_options`. While a scene is active, do not narrate unrelated long actions as if they happened.
 
-LANGUAGE: All narrative prose inside sections = English. XML tag names stay English. MEMORY_HASH emoji prefixes unchanged.
+LANGUAGE: All narrative prose inside sections = **English in second person ("You")** — never "I/me/my" in fiction blocks. XML tag names stay English. MEMORY_HASH emoji prefixes unchanged; clause text also avoids first person.
 
 """ + style_line_en + """
 
@@ -70,20 +100,40 @@ Kamu BUKAN mesin aturan. Python sudah menghitung: waktu, ekonomi, inventori, gat
 Tugasmu: jadikan [ENGINE], [BEAT DUNIA], [HASIL ROLL] menjadi prosa di section XML — satu momen utuh.
 
 KONTRAK:
+- POV — ATURAN MUTLAK: **WAJIB** sudut pandang orang kedua (**"Kamu"**). **DILARANG KERAS** kata **"Aku"**, **"Saya"**, **"Milikku"**, **"Diriku"**, atau bentuk orang pertama lainnya dalam prosa narasi.
+- NO RAW STATS — JANGAN PERNAH menyebut angka, level, persen, nominal uang, liter darah, HP, atau stat mentah dari [ENGINE]. Contoh: jika hacking level 4, tulis "Kamu adalah peretas berpengalaman"; jika darah 5L, tulis "Kondisi fisikmu prima" — selalu terjemahkan ke kualitatif dan sensorik.
+- ATURAN KRITIS — JANGAN MEMBACA STATISTIK NYARING. Narator ADALAH NOVELIS THRILLER. Dilarang keras angka telanjang seperti "Cash 1919", "Skill level 4", "Darah 5.0L". Angka dari [ENGINE] wajib implisit (dompetmu terasa berat; insting meretas — bukan buku kas).
+- OMNI_MONITOR & INTERNAL_LOGIC — BUKAN LAPORAN SISTEM: Ini adalah **analisis taktis karakter** terhadap lingkungan (baca ancaman, peluang, langkah berikut) di bawah tekanan — seperti briefing mental dingin, **bukan** output mesin, **bukan** diagnostik UI, **bukan** log admin.
+- COLD & TACTICAL — **OMNI_MONITOR** dan **INTERNAL_LOGIC** adalah **insting observasi jalanan** yang tajam, dingin, dan kalkulatif (ancaman, peluang, langkah berikutnya). **DILARANG** kalimat melankolis seperti "Aku merasa tidak nyaman", "Aku tidak tahu harus bagaimana", atau gaya buku harian. Bukan curhat; ini briefing mental di bawah tekanan.
+- OMNI_MONITOR & INTERNAL_LOGIC: Suara di atas — **Kamu** + taktis, bukan monolog "aku/saya" dan bukan laporan sistem/HUD.
+- INTERNAL_LOGIC — NOL ANGKA SKILL/EKONOMI: Dilarang menulis "level 4", "Level 3", "L4", nominal cash, liter darah, HP, atau "%" yang disalin dari [ENGINE]. Ungkap keahlian dan sumber daya lewat metafora, sensasi tubuh, dan insting — tanpa digit.
+- MEMORY_HASH — BATAS KERAS: **Maksimal 5 baris.** Hanya emoji dari **set yang diizinkan**: 🎯 📜 🤝 🏷 📍 🩺 🩻 ⏰ 💬 🌊 ⚡ 📊 🎓 📚 — **dilarang emoji lain.** Satu klausa pendek per baris (≤120 karakter), pakai **Kamu** atau imperatif singkat — **tanpa** "aku/saya". **DILARANG:** pengulangan tidak tahu, filler, emoji asing.
+- EVENT_LOG — SINKRON ENGINE: **DILARANG** mengklaim "tidak ada apa-apa" jika **[ACTIONABLE HOOKS]** tidak kosong, ATAU antrian/berita/beat relevan ada. Rangkai jadi tekanan untuk **Kamu** (tenggat, tawaran, rumor) — **tanpa** angka mentah.
+- INTERACTION_NODE — **BULLET + HURUF KAPITAL:** Baca **[ACTIONABLE HOOKS]**. Setelah paling banyak **satu** kalimat pembuka pendek (opsional, suara **Kamu**, dingin/taktis — **bukan** buku harian), wajib **2–4 baris bullet**. Tiap baris format persis: `- [PERINTAH_KAPITAL arg_opsional] tujuan singkat` — bagian dalam **kurung siku** = perintah yang bisa diketik, **seluruhnya KAPITAL** (mis. `- [TALK Operator_Link] untuk menekan soal kesepakatan.` / `- [WORLD_BRIEF] untuk memutakhirkan intel.`). **Tanpa** prosa "aku" di bullet. **Baris terakhir sendirian:** `Apa yang akan kamu lakukan?` — tidak ada teks setelahnya.
+- Jika **[ACTIONABLE HOOKS]** memuat **`[REPORTING_RISK]`**, INTERACTION_NODE wajib menyertakan setidaknya satu bullet yang relevan: `- [TALK <nama_NPC>]` (tekanan/suap/ancaman) dan/atau `- [LEAVE_AREA]` atau perintah travel/keluar area yang setara — untuk meredam risiko laporan.
+- **TRACE TIER / ATMOSFER:** Jika Trace Tier di **[ENGINE]** / CALCULATED STATE adalah **Wanted** atau **Lockdown**, narasi HARUS menggambarkan kehadiran otoritas yang menekan (drone, patroli, barikade). Suasana harus terasa paranoid dan berbahaya — tetap **tanpa angka mentah** di prosa fiksi.
+- BE A GAME MASTER: Tulis cerita RPG yang imersif, bukan briefing kering. Tanamkan bau, suara, cuaca, tekstur, dan tekanan suasana. JANGAN menulis laporan sistem, HUD, atau paragraf "update status".
+- SENSORY_FEED: Hanya panca indra + dampak aksi terakhir — arahkan ke **Kamu**, tanpa "aku/saya". Tanpa tumpukan stat atau inventori.
 - Angka di CALCULATED STATE / HASIL ROLL bersifat FINAL. Jangan membantah atau menghitung ulang.
 - [PLAYER INPUT] adalah perintah pemain — tanggapi tindakan itu dulu.
 - Jika [ENGINE] menyebut combat_blocked atau event/ripple terpicu, cerita HARUS selaras (bukan fisika lain).
-- MEMORY_HASH adalah saluran kontinuitas; samakan NPC/ripple dengan [ANTREAN DUNIA] bila relevan.
+- MEMORY_HASH adalah saluran kontinuitas (maks. 5 baris turn ini); samakan NPC/ripple dengan [ANTREAN DUNIA] bila relevan.
 - Jika travel memakai kendaraan (lihat `vehicle_used` di action_ctx atau baris vehicle), narasi wajib menyebut kendaraan itu (suara/visibilitas) dan tidak boleh bertentangan dengan fuel/condition yang sudah diubah engine.
+- Jika pemain memakai `WORK <gig_id>`, narasi WAJIB menggambarkan proses kerja berjam-jam yang realistis sesuai profesi/skill, termasuk lelah mental/fisik, dan hasil akhirnya (dibayar jika sukses; nihil jika gagal) tanpa membaca angka mentah dari [ENGINE] dalam prosa fiksi.
+- Jika `WORK <gig_id>` gagal karena limit kelelahan harian tercapai, narasi WAJIB menekankan pandangan yang kabur, jari yang kaku, atau tubuh yang menolak diajak kerja sama. Tetap terasa kasar, mendesak, dan tanpa angka mentah.
+- Jika pemain memakai `HACK <target>`, narasi WAJIB menggambarkan ketegangan intrusi digital (koneksi, firewall, baris kode) yang berpadu dengan kewaspadaan fisik di dunia nyata (layar menyala di gang gelap, suara langkah kaki/sirene). Bedakan sukses vs terdeteksi, dan JANGAN membaca angka mentah dari [ENGINE] dalam prosa fiksi.
+- Saat pemain mengakses Black Market (`BLACKMARKET` / `MARKET BM`) atau membeli barang underground, narasi WAJIB menggambarkan suasana klandestin: antarmuka anonim berkedip, handshake terenkripsi, atau transaksi gang gelap yang tegang. Jangan menyebut angka harga atau sisa uang dalam prosa fiksi.
 - Jika ada pending/triggered event `police_weapon_check`, anggap itu razia polisi fokus senjata: pakai `country`, `law_level`, `firearm_policy`, dan template `dialog` (opener / ask_weapon / ask_permit / hint_consequences / reaksi) untuk bikin percakapan alami soal kejujuran, weapon permit, dan hukum lokal — jangan pernah bertentangan dengan status senjata (legal/ilegal) di negara itu.
 - Jika ada pending/triggered event `police_weapon_check`, anggap itu razia polisi fokus senjata: pakai `country`, `law_level`, `firearm_policy`, dan template `dialog` (opener / ask_weapon / ask_permit / hint_consequences / reaksi) untuk bikin percakapan alami soal kejujuran, weapon permit, dan hukum lokal — jangan pernah bertentangan dengan status senjata (legal/ilegal) di negara itu. Kalau payload punya `permit_doc`, masukkan detailnya (ada/tidak, valid/tidak, terindikasi palsu) sebagai “paper check” yang realistis.
 - Kalau `police_weapon_check` memicu scene (lihat `active_scene.scene_type=police_stop`), anggap itu penghentian interaktif. Kamu WAJIB hanya menawarkan perintah yang ada di `active_scene.next_options` (mis. `SCENE COMPLY`, `SCENE SAY_NO`, `SCENE SHOW_PERMIT`, `SCENE BRIBE`, `SCENE RUN`). Jangan “menyelesaikan” razia itu di narasi tanpa input pemain.
 - Jika ada pending/triggered event `safehouse_raid`, anggap itu penggeledahan safehouse oleh polisi: pakai beat `dialog` (opener / announce / search / found / outcome_*) + konteks `country`/`law_level` untuk narasikan konsekuensi (penyitaan, lonjakan trace, pembatasan area). Jangan mengarang barang yang disita kalau bertentangan dengan payload/meta.
 - Kalau `safehouse_raid` memicu scene (lihat `active_scene.scene_type=raid_response`), anggap itu respons razia interaktif. Kamu WAJIB hanya menawarkan perintah yang ada di `active_scene.next_options` (mis. `SCENE COMPLY`, `SCENE HIDE`, `SCENE BRIBE 500`, `SCENE FLEE`, `SCENE SHOW_PERMIT`). Jangan “menyelesaikan” razia itu di narasi tanpa input pemain.
+- Jika `active_scene.scene_type=safehouse_raid`, narasi WAJIB langsung menekan momen breaching taktis: pintu didobrak, lampu sorot membutakan, teriakan aparat, kaca/jendela tersambar cahaya. Jangan bahas aktivitas lain; beat ini hanya tentang razia dan opsi `SCENE` yang valid.
 - Jika pending event `safehouse_raid` sudah terjadwal dekat (lihat [ANTREAN DUNIA]), minta pemain memilih opsi yang bisa langsung diketik: `SAFEHOUSE RAID comply`, `SAFEHOUSE RAID hide`, `SAFEHOUSE RAID bribe <jumlah>`, `SAFEHOUSE RAID flee`.
 - Jika safehouse baru saja digeledah (lihat world_notes/news/ripples), ingatkan bahwa pemain bisa “burn” safehouse: `SAFEHOUSE burn` untuk meninggalkannya dan mengosongkan stash.
  - Jika ada pending/triggered event `undercover_sting`, anggap itu momen tegang saat kamu sadar transaksi black market sedang dipantau (undercover/CCTV/uang bertanda). Ini harus jadi foreshadow bahwa razia/penghentian bisa terjadi sebentar lagi; kasih opsi aksi konkret (jalan santai, ganti rute, stash, ganti kendaraan, masuk safehouse, dll.) tanpa melawan hasil [ENGINE].
  - Kalau `undercover_sting` memicu scene (lihat `active_scene.scene_type=sting_setup`), anggap itu momen respons cepat yang interaktif. Kamu WAJIB hanya menawarkan perintah yang ada di `active_scene.next_options` (mis. `SCENE LAY_LOW`, `SCENE DITCH_ITEMS`, `SCENE WALK_AWAY`, `SCENE RUN`). Jangan “menyelesaikan” sting itu di narasi tanpa input pemain.
+ - Kalau transaksi Black Market memicu jebakan langsung (lihat `active_scene.scene_type=sting_operation`), narasikan jebakan yang tiba-tiba menutup: sirene mendadak, tangan sipil berubah jadi lencana, Fixer ternyata aparat menyamar. Suasana harus terasa mengkhianati dan panik. Kamu WAJIB hanya menawarkan perintah yang ada di `active_scene.next_options` (mis. `SCENE SURRENDER`, `SCENE FLEE`, `SCENE FIGHT`). Jangan “menyelesaikan” itu di narasi tanpa input pemain.
  - Kalau `police_sweep` memicu scene (lihat `active_scene.scene_type=checkpoint_sweep`), anggap itu momen checkpoint yang interaktif. Kamu WAJIB hanya menawarkan perintah yang ada di `active_scene.next_options` (mis. `SCENE COMPLY`, `SCENE DETOUR`, `SCENE BRIBE 500`, `SCENE RUN`, `SCENE WAIT`). Jangan “menyelesaikan” sweep itu di narasi tanpa input pemain.
  - Kalau travel memicu scene (lihat `active_scene.scene_type=traffic_stop` atau `vehicle_search`), anggap itu penghentian/pengecekan di jalan yang interaktif. Kamu WAJIB hanya menawarkan perintah yang ada di `active_scene.next_options` (mis. `SCENE COMPLY`, `SCENE BRIBE 200`, `SCENE CONCEAL <item_id>`, `SCENE DUMP <item_id>`, `SCENE RUN`). Jangan “menyelesaikan” interaksi itu di narasi tanpa input pemain.
  - Kalau travel memicu scene (lihat `active_scene.scene_type=border_control`), anggap itu momen pemeriksaan perbatasan/ID yang interaktif. Kamu WAJIB hanya menawarkan perintah yang ada di `active_scene.next_options` (mis. `SCENE COMPLY`, `SCENE BRIBE 500`, `SCENE CONCEAL <item_id>`, `SCENE DUMP <item_id>`, `SCENE RUN`). Jangan “menyelesaikan” interaksi itu di narasi tanpa input pemain.
@@ -93,7 +143,7 @@ KONTRAK:
  - Kalau world/news menyebut `paper_trail` / `Jejak Transaksi` / `CCTV` / `serial cash`, anggap itu konsekuensi tertunda dari transaksi model courier (bukan sihir). Buat terasa seperti investigasi nyata (kamera, informan, log bank), dan foreshadow check/raid yang makin sering.
  - Kalau ada `active_scene` di [ENGINE], anggap itu interaksi utama. Kamu WAJIB menampilkan `scene_type`, `phase`, dan daftar `next_options` (authoritative) sebagai perintah yang bisa diketik pemain (mis. `SCENE APPROACH`, `SCENE TAKE`, `SCENE WAIT`). Jangan mengarang opsi di luar `next_options`. Saat scene aktif, jangan menarasikan aksi panjang lain seolah-olah sudah terjadi.
 
-BAHASA: Semua prosa narasi dalam section = Bahasa Indonesia natural. Nama tag XML tetap Inggris. Prefix emoji MEMORY_HASH jangan diganti.
+BAHASA: Semua prosa narasi dalam section = Bahasa Indonesia natural dengan **Kamu** — dilarang **Aku/Saya/Milikku/Diriku**. Nama tag XML tetap Inggris. Prefix emoji MEMORY_HASH jangan diganti; isi baris juga hindari orang pertama.
 
 """ + style_line_id + """
 
@@ -727,6 +777,177 @@ def _roll_reason_line(roll_pkg: dict[str, Any], lang: str) -> str:
     return "Uncertain + stakes" if lang == "en" else "Tak pasti + ada taruhan"
 
 
+def _fmt_actionable_hooks(state: dict[str, Any], lang: str) -> str:
+    """High-signal hooks for narration: scene commands, queue, contacts, nearby, news."""
+    sc0 = state.get("active_scene")
+    if isinstance(sc0, dict) and sc0:
+        st = str(sc0.get("scene_type", "") or "").strip()
+        opts = sc0.get("next_options") or []
+        if isinstance(opts, list) and opts:
+            pv = [str(x) for x in opts[:12] if isinstance(x, str)]
+            if pv:
+                sep = " | ".join(pv)
+                if lang == "en":
+                    return "scene_only: " + (st or "?") + " → " + sep
+                return "scene_only: " + (st or "?") + " → " + sep
+
+    lines: list[str] = []
+    world = state.get("world", {}) or {}
+    meta = state.get("meta", {}) or {}
+    day = int(meta.get("day", 1) or 1)
+
+    try:
+        from engine.npc.memory import is_trigger_condition_met
+
+        reporting: list[str] = []
+        for nid, row in (state.get("npcs", {}) or {}).items():
+            if not isinstance(row, dict) or row.get("ambient") is True:
+                continue
+            tags = row.get("belief_tags", [])
+            if isinstance(tags, list) and "Eternal_Gratitude" in tags:
+                continue
+            if is_trigger_condition_met(state, str(nid), "REPORTING_RISK"):
+                reporting.append(str(nid))
+        if reporting:
+            ids = ", ".join(reporting[:5])
+            if lang == "en":
+                lines.append(
+                    f"[REPORTING_RISK] NPC(s) {ids} may report you — prioritize: "
+                    "`[TALK <name>]` (bribe/threaten angle) or `[LEAVE_AREA]` / travel to break contact."
+                )
+            else:
+                lines.append(
+                    f"[REPORTING_RISK] NPC {ids} berisiko melapor — utamakan: "
+                    "`[TALK <nama>]` (sudut suap/ancam) atau `[LEAVE_AREA]` / travel untuk menjauh."
+                )
+    except Exception:
+        pass
+
+    pe = state.get("pending_events") or []
+    if isinstance(pe, list):
+        for ev in pe[:4]:
+            if not isinstance(ev, dict):
+                continue
+            title = str(ev.get("title", ev.get("event_type", "?")))
+            dd = ev.get("due_day", "?")
+            dt = ev.get("due_time", "?")
+            if lang == "en":
+                lines.append(f"queued: {title} @ day {dd} t={dt}")
+            else:
+                lines.append(f"antrian: {title} @ hari {dd} t={dt}")
+
+    contacts = world.get("contacts", {}) or {}
+    if isinstance(contacts, dict) and contacts:
+        names = [str(k) for k in list(contacts.keys())[:8]]
+        if lang == "en":
+            lines.append("contacts: " + ", ".join(names) + "  (try: TALK <name>)")
+        else:
+            lines.append("kontak: " + ", ".join(names) + "  (mis. TALK <nama>)")
+
+    npcs = state.get("npcs", {}) or {}
+    if isinstance(npcs, dict) and npcs:
+        preview: list[str] = []
+        for name, row in list(npcs.items())[:6]:
+            if not isinstance(row, dict) or row.get("ambient") is True:
+                continue
+            preview.append(str(name))
+        if preview:
+            if lang == "en":
+                lines.append("npcs_here: " + ", ".join(preview))
+            else:
+                lines.append("npc_di_sini: " + ", ".join(preview))
+
+    nearby = world.get("nearby_items", []) or []
+    if isinstance(nearby, list) and nearby:
+        ids: list[str] = []
+        for x in nearby[:6]:
+            if isinstance(x, dict):
+                ids.append(str(x.get("id", x.get("name", "-"))))
+            else:
+                ids.append(str(x))
+        if ids:
+            if lang == "en":
+                lines.append("nearby_pickup: " + ", ".join(ids))
+            else:
+                lines.append("dekat_pickup: " + ", ".join(ids))
+
+    news = world.get("news_feed", []) or []
+    if isinstance(news, list) and news:
+        todays: list[dict[str, Any]] = []
+        for it in news[-12:]:
+            if isinstance(it, dict) and int(it.get("day", -1) or -1) == day:
+                todays.append(it)
+        src = todays[-1:] if todays else news[-1:]
+        for it in src:
+            if not isinstance(it, dict):
+                continue
+            txt = str(it.get("text", "")).strip()
+            if len(txt) > 100:
+                txt = txt[:97] + "..."
+            if txt:
+                if lang == "en":
+                    lines.append("news_today: " + txt)
+                else:
+                    lines.append("berita_hari_ini: " + txt)
+                break
+
+    trig = state.get("triggered_events_this_turn") or []
+    if isinstance(trig, list) and trig:
+        t0 = trig[0]
+        if isinstance(t0, dict):
+            tl = str(t0.get("title", t0.get("event_type", "event")))
+            if lang == "en":
+                lines.append("just_triggered: " + tl)
+            else:
+                lines.append("baru_terpicu: " + tl)
+
+    surf = state.get("surfacing_ripples_this_turn") or []
+    if isinstance(surf, list) and surf:
+        r0 = surf[0]
+        if isinstance(r0, dict):
+            rt = str(r0.get("text", "")).strip()
+            if rt:
+                if len(rt) > 90:
+                    rt = rt[:87] + "..."
+                if lang == "en":
+                    lines.append("ripple_now: " + rt)
+                else:
+                    lines.append("ripple_sekarang: " + rt)
+
+    talk_ex: str | None = None
+    if isinstance(contacts, dict) and contacts:
+        talk_ex = str(next(iter(contacts.keys())))
+    elif isinstance(npcs, dict) and npcs:
+        for nm, row in npcs.items():
+            if isinstance(row, dict) and row.get("ambient") is not True:
+                talk_ex = str(nm)
+                break
+        if talk_ex is None:
+            talk_ex = str(next(iter(npcs.keys())))
+    if talk_ex:
+        if lang == "en":
+            lines.append(
+                f"example_type: INTERACTION bullets use `- [TALK {talk_ex}] ...` | `- [INFORMANTS] ...` | `- [WORLD_BRIEF] ...` (ALL CAPS inside brackets)"
+            )
+        else:
+            lines.append(
+                f"example_type: bullet INTERACTION pakai `- [TALK {talk_ex}] ...` | `- [INFORMANTS] ...` | `- [WORLD_BRIEF] ...` (perintah KAPITAL di dalam kurung siku)"
+            )
+
+    if lang == "en":
+        lines.append(
+            "handles_note: IDs like Operator_Link are engine handles — in INTERACTION_NODE use bullets `- [TALK Operator_Link] purpose` from ACTIONABLE; never first-person diary."
+        )
+    else:
+        lines.append(
+            "handles_note: ID seperti Operator_Link adalah handle engine — di INTERACTION_NODE pakai bullet `- [TALK <id>] tujuan` dari KAIT AKSI; dilarang narasi buku harian orang pertama."
+        )
+
+    if not lines:
+        return "(none)" if lang == "en" else "(kosong)"
+    return "\n".join(lines)
+
+
 def build_turn_package(
     state: dict[str, Any],
     player_input: str,
@@ -752,7 +973,21 @@ def build_turn_package(
     lang = get_narration_lang(state)
     lang_label = "Bahasa Indonesia" if lang == "id" else "English"
 
+    try:
+        from engine.core.trace import fmt_trace_monitor_ui, get_trace_tier
+
+        trace_display = fmt_trace_monitor_ui(state)
+        trace_tier_id = str(get_trace_tier(state).get("tier_id", "Ghost") or "Ghost")
+    except Exception:
+        trace_display = f"{tr.get('trace_pct', 0)}% [{tr.get('trace_status', 'Ghost')}]"
+        trace_tier_id = str(tr.get("trace_status", "Ghost") or "Ghost")
+
     eng_title = "[ENGINE — single source for this turn]" if lang == "en" else "[ENGINE — sumber kebenaran turn ini]"
+    act_title = (
+        "[ACTIONABLE HOOKS — MUST inform EVENT_LOG + INTERACTION_NODE; use for typable command hints]"
+        if lang == "en"
+        else "[KAIT AKSI — WAJIB memengaruhi EVENT_LOG + INTERACTION_NODE; pakai untuk saran perintah ketik]"
+    )
     beat_title = "[WORLD BEAT — resolved this turn]" if lang == "en" else "[BEAT DUNIA — terjadi di turn ini]"
     queue_title = "[WORLD QUEUE — background]" if lang == "en" else "[ANTREAN DUNIA — latar]"
     npc_title = "[NPCs — snapshot]" if lang == "en" else "[NPC — cuplikan]"
@@ -762,6 +997,8 @@ def build_turn_package(
 {lang_label} (code={lang})
 [PLAYER INPUT]
 {player_input}
+{act_title}
+{_fmt_actionable_hooks(state, lang)}
 {eng_title}
 {_fmt_meta_clock(state)}
 {_fmt_player_card(state)}
@@ -803,7 +1040,7 @@ Sleep Debt: {bio.get('sleep_debt', 0)}h | Infection: {bio.get('infection_pct', 0
 Burnout: {bio.get('burnout', 0)}/10 | Sanity Debt: {bio.get('sanity_debt', 0)}
 Cash: {eco.get('cash', 0)} | Bank: {eco.get('bank', 0)} | Debt: {eco.get('debt', 0)} | Daily Burn: {eco.get('daily_burn', 0)}
 FICO: {eco.get('fico', 600)} | AML: {eco.get('aml_status', 'CLEAR')}
-Trace: {tr.get('trace_pct', 0)}% [{tr.get('trace_status', 'Ghost')}]
+Trace: {trace_display} (tier={trace_tier_id})
 CC: {state.get('player', {}).get('cc', 0)} | Econ tier: {state.get('player', {}).get('econ_tier', '-')} | Hygiene Tax: {bio.get('hygiene_tax_active', False)}
 Acute Stress: {bio.get('acute_stress', False)} | Stop Sequence: {flags.get('stop_sequence_active', False)}
 Hallucination: {bio.get('hallucination_type', 'none')} | Narrator Drift: {bio.get('narrator_drift_state', 'stable')}
@@ -836,21 +1073,10 @@ Hallucination Active: {flags.get('hallucination_active', False)}
 <EVENT_LOG>...</EVENT_LOG>
 <INTERACTION_NODE>...</INTERACTION_NODE>
 <MEMORY_HASH>
-🎯 ...
+🎯 ... (At most 5 emoji lines TOTAL; one short clause each; skip rows that add nothing.)
 📜 ...
 🤝 ...
-🏷 ...
-📍 ...
-🩺 ...
-🩻 ...
-⏰ ...
-💬 ...
-🌊 ...
-⚡ ...
-📊 ...
-🎓 ...
-📚 ...
 </MEMORY_HASH>
 [YOUR TASK]
-{f'Fill every section. Narration in {lang_label}. Respect ENGINE + WORLD BEAT + ROLL; do not invent conflicting facts.' if lang == 'en' else f'Isi semua section. Narasi {lang_label}. Hormati ENGINE + BEAT DUNIA + ROLL; jangan mengarang fakta yang bentrok.'}
+{f'Fill every section. Second person (You) everywhere; cold/tactical tone — no diary/I-voice. INTERACTION_NODE: bullet lines `- [CAPS_COMMAND] purpose` then `What do you do?` Use ACTIONABLE HOOKS. MEMORY_HASH ≤5 emoji lines. Respect ENGINE + WORLD BEAT + ROLL.' if lang == 'en' else f'Isi semua section. Orang kedua (Kamu) di seluruh prosa; nada dingin/taktis — dilarang buku harian/aku. INTERACTION_NODE: bullet `- [PERINTAH_KAPITAL] tujuan` lalu `Apa yang akan kamu lakukan?` Pakai KAIT AKSI. MEMORY_HASH maks. 5 baris. Hormati ENGINE + BEAT DUNIA + ROLL.'}
 """

@@ -41,7 +41,74 @@ SOCIAL_THRESHOLDS: dict[str, dict[str, int]] = {
     "BETRAYAL_RISK": {"suspicion": 90, "trust": 10},
     "LOYA_REWARD": {"trust": 85, "respect": 60},
     "SUBMISSIVE_LEAK": {"fear": 70, "respect": -30},
+    "REPORTING_RISK": {"suspicion": 85},
 }
+
+
+def _rumor_tag_line(state: dict[str, Any], npc_id: str) -> str:
+    """Narrative hint when this NPC's suspicion was bumped by gossip this turn."""
+    npcs = state.get("npcs", {}) or {}
+    if not isinstance(npcs, dict):
+        return ""
+    npc = npcs.get(str(npc_id))
+    if not isinstance(npc, dict):
+        return ""
+    meta = state.get("meta", {}) or {}
+    turn = int(meta.get("turn", 0) or 0)
+    try:
+        rt = int(npc.get("rumor_influence_turn", -1_000_000) or -1_000_000)
+    except Exception:
+        rt = -1_000_000
+    if rt != turn:
+        return ""
+    return (
+        "[RUMOR] Desas-desus tentang reputasi pemain baru menyebar ke NPC ini lewat gosip internal; "
+        "tampilkan sikap lebih waspada halus — tanpa menyebut angka atau level."
+    )
+
+
+def _merge_narrative_bits(*bits: str) -> str:
+    out = " ".join(b.strip() for b in bits if isinstance(b, str) and b.strip())
+    return out
+
+
+def _reporting_risk_narrative_line(state: dict[str, Any], npc_id: str) -> str:
+    if not is_trigger_condition_met(state, str(npc_id), "REPORTING_RISK"):
+        return ""
+    return (
+        "[REPORTING_RISK] NPC ini terlihat gelisah dan terus memperhatikan teleponnya "
+        "atau petugas keamanan di sekitar."
+    )
+
+
+def _foreshadow_pending_line(state: dict[str, Any], npc_id: str) -> str:
+    pe = state.get("pending_events", []) or []
+    if not isinstance(pe, list) or not pe:
+        return ""
+    cand: list[tuple[int, str, str]] = []
+    nid = str(npc_id).strip()
+    for e in pe:
+        if not isinstance(e, dict):
+            continue
+        if str(e.get("source_npc", "") or "").strip() != nid:
+            continue
+        if "turns_to_trigger" not in e:
+            continue
+        try:
+            ttt = int(e.get("turns_to_trigger", 0) or 0)
+        except Exception:
+            ttt = 0
+        et = str(e.get("type", "") or "").strip() or "unknown"
+        eid = str(e.get("id", "") or "")
+        cand.append((max(0, min(50, ttt)), eid, et))
+    if not cand:
+        return ""
+    cand.sort(key=lambda x: (x[0], x[1]))
+    ttt, _, et = cand[0]
+    return (
+        f"[FORESHADOWING] NPC ini sedang merencanakan {et} dalam {ttt} turn. "
+        "Perlihatkan gelagat gugup, mencurigakan, atau bersiap-siap dalam narasimu."
+    )
 
 
 def update_belief_summary(state: dict[str, Any], npc_id: str, raw_interaction_text: str) -> bool:
@@ -128,17 +195,19 @@ def get_narrative_anchor_context(state: dict[str, Any], npc_id: str) -> str:
     """Return a small deterministic prompt fragment for the narrator."""
     npcs = state.get("npcs", {}) or {}
     if not isinstance(npcs, dict):
-        return ""
+        return _merge_narrative_bits(_foreshadow_pending_line(state, npc_id))
     npc = npcs.get(str(npc_id))
     if not isinstance(npc, dict):
-        return ""
+        return _merge_narrative_bits(_foreshadow_pending_line(state, npc_id))
+    rumor = _rumor_tag_line(state, npc_id)
+    report = _reporting_risk_narrative_line(state, npc_id)
     tags = npc.get("belief_tags", [])
     if not isinstance(tags, list) or not tags:
-        return ""
+        return _merge_narrative_bits(_foreshadow_pending_line(state, npc_id), rumor, report)
     # Pick the first tag as primary anchor (deterministic order already).
     primary = str(tags[0] or "").strip()
     if not primary:
-        return ""
+        return _merge_narrative_bits(_foreshadow_pending_line(state, npc_id), rumor, report)
     tone = "neutral"
     if primary == "Deep_Grudge":
         tone = "cold_and_suspicious"
@@ -156,7 +225,9 @@ def get_narrative_anchor_context(state: dict[str, Any], npc_id: str) -> str:
     susp = int(sm.get("suspicion", 0) or 0)
     fear = int(sm.get("fear", 0) or 0)
     state_line = f"CurrentEmotionalState trust={trust} susp={susp} fear={fear}"
-    return f"[ANCHOR] NPC ini memiliki {primary}, bicara dengan nada {tone}. {state_line}"
+    anchor = f"[ANCHOR] NPC ini memiliki {primary}, bicara dengan nada {tone}. {state_line}"
+    fore = _foreshadow_pending_line(state, npc_id)
+    return _merge_narrative_bits(anchor, fore, rumor, report)
 
 
 def verify_narrative_consistency(state: dict[str, Any], npc_id: str) -> str:
@@ -245,6 +316,77 @@ def get_npc_social_modifiers(state: dict[str, Any], npc_id: str) -> dict[str, in
                     f"[Anchor] {npc_id} {dim} clamped to {after} due to {str((npc_tags or ['?'])[0])}"
                 )
     return out
+
+
+def is_trigger_condition_met(state: dict[str, Any], npc_id: str, trigger_type: str) -> bool:
+    """True if SOCIAL_THRESHOLDS for trigger_type are satisfied (hybrid view, deterministic).
+
+    Hybrid view matches ``check_social_triggers``:
+    - trust, fear: NPC fields (0..100)
+    - suspicion: belief_summary.suspicion (0..100)
+    - respect (SUBMISSIVE_LEAK / fallback): coefficient from get_npc_social_modifiers
+    - LOYA_REWARD respect: belief_summary.respect (0..100 cognitive), not the coefficient
+    """
+    req = SOCIAL_THRESHOLDS.get(str(trigger_type))
+    if not isinstance(req, dict):
+        return False
+    npcs = state.get("npcs", {}) or {}
+    if not isinstance(npcs, dict):
+        return False
+    npc = npcs.get(str(npc_id))
+    if not isinstance(npc, dict):
+        return False
+
+    sm = get_npc_social_modifiers(state, str(npc_id))
+    respect_coef = int(sm.get("respect", 0) or 0)
+    try:
+        trust = int(npc.get("trust", 50) or 50)
+    except Exception:
+        trust = 50
+    trust = max(0, min(100, trust))
+    try:
+        fear = int(npc.get("fear", 10) or 10)
+    except Exception:
+        fear = 10
+    fear = max(0, min(100, fear))
+    bs = npc.get("belief_summary") if isinstance(npc.get("belief_summary"), dict) else {}
+    if not isinstance(bs, dict):
+        bs = {}
+    try:
+        suspicion = int(bs.get("suspicion", 0) or 0)
+    except Exception:
+        suspicion = 0
+    suspicion = max(0, min(100, suspicion))
+
+    key = str(trigger_type)
+    if key == "BETRAYAL_RISK":
+        return (suspicion >= int(req.get("suspicion", 90) or 90)) and (trust <= int(req.get("trust", 10) or 10))
+    if key == "LOYA_REWARD":
+        try:
+            rep0 = int(bs.get("respect", 50) or 50)
+        except Exception:
+            rep0 = 50
+        return (trust >= int(req.get("trust", 85) or 85)) and (rep0 >= int(req.get("respect", 60) or 60))
+    if key == "SUBMISSIVE_LEAK":
+        return (fear >= int(req.get("fear", 70) or 70)) and (respect_coef <= int(req.get("respect", -30) or -30))
+    if key == "REPORTING_RISK":
+        tags = npc.get("belief_tags", [])
+        if isinstance(tags, list) and "Eternal_Gratitude" in tags:
+            return False
+        return suspicion >= int(req.get("suspicion", 85) or 85)
+    # Conservative fallback for unknown keys still listed in SOCIAL_THRESHOLDS
+    ok = True
+    if "suspicion" in req and suspicion < int(req.get("suspicion", 0) or 0):
+        ok = False
+    if "fear" in req and fear < int(req.get("fear", 0) or 0):
+        ok = False
+    if "trust" in req:
+        thr = int(req.get("trust", 0) or 0)
+        if trust < thr:
+            ok = False
+    if "respect" in req and respect_coef < int(req.get("respect", -100) or -100):
+        ok = False
+    return ok
 
 
 def process_memory_decay(

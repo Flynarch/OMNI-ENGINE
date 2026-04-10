@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
-from engine.npc.memory import SOCIAL_THRESHOLDS, get_npc_social_modifiers, update_belief_summary
+from engine.npc.memory import SOCIAL_THRESHOLDS, get_npc_social_modifiers, is_trigger_condition_met, update_belief_summary
 
 
 def _label(score: int) -> str:
@@ -65,6 +65,92 @@ def _snippet_id(*parts: Any) -> str:
     s = "|".join([str(p) for p in parts])
     h = hashlib.md5(s.encode("utf-8", errors="ignore")).hexdigest()
     return h[:12]
+
+
+def _h32(*parts: Any) -> int:
+    s = "|".join([str(p) for p in parts])
+    h = hashlib.md5(s.encode("utf-8", errors="ignore")).hexdigest()
+    return int(h[:8], 16)
+
+
+def _belief_summary_suspicion(npc: dict[str, Any] | None) -> int:
+    if not isinstance(npc, dict):
+        return 0
+    bs = npc.get("belief_summary")
+    if not isinstance(bs, dict):
+        return 0
+    try:
+        return max(0, min(100, int(bs.get("suspicion", 0) or 0)))
+    except Exception:
+        return 0
+
+
+def _remove_social_pending(state: dict[str, Any], npc_id: str, trigger_type: str) -> None:
+    pe = state.get("pending_events")
+    if not isinstance(pe, list):
+        return
+    nid = str(npc_id).strip()
+    tt = str(trigger_type).strip()
+    keep: list[Any] = []
+    for ev in pe:
+        if (
+            isinstance(ev, dict)
+            and "turns_to_trigger" in ev
+            and str(ev.get("source_npc", "") or "").strip() == nid
+            and str(ev.get("type", "") or "").strip() == tt
+        ):
+            continue
+        keep.append(ev)
+    state["pending_events"] = keep
+
+
+def execute_npc_snitch_report(state: dict[str, Any], npc_id: str) -> int:
+    """Apply trace spike, log snitch, emit REPORT_FILED, clear reporting pending + active flag."""
+    from engine.core.trace import apply_npc_snitch_report_trace
+
+    delta = apply_npc_snitch_report_trace(state, str(npc_id))
+    state.setdefault("world_notes", []).append(f"[Snitch] NPC {npc_id} has reported your activities to authorities.")
+    state.setdefault("world_events", []).append(
+        {
+            "kind": "REPORT_FILED",
+            "npc_id": str(npc_id),
+            "source_npc": str(npc_id),
+            "text": f"[Report] {npc_id} filed a report with authorities.",
+            "day": int((state.get("meta", {}) or {}).get("day", 1) or 1),
+        }
+    )
+    _remove_social_pending(state, str(npc_id), "REPORTING_RISK")
+    npc = (state.get("npcs", {}) or {}).get(str(npc_id))
+    if isinstance(npc, dict):
+        at = npc.setdefault("active_triggers", {})
+        if isinstance(at, dict):
+            at["REPORTING_RISK"] = False
+    return int(delta)
+
+
+def check_npc_reporting(state: dict[str, Any], npc_id: str) -> bool:
+    """15% / turn (deterministic) snitch while REPORTING_RISK is armed and conditions hold."""
+    npcs = state.get("npcs", {}) or {}
+    if not isinstance(npcs, dict):
+        return False
+    npc = npcs.get(str(npc_id))
+    if not isinstance(npc, dict):
+        return False
+    tags = npc.get("belief_tags", [])
+    if isinstance(tags, list) and "Eternal_Gratitude" in tags:
+        return False
+    if not is_trigger_condition_met(state, str(npc_id), "REPORTING_RISK"):
+        return False
+    active = npc.get("active_triggers")
+    if not isinstance(active, dict) or active.get("REPORTING_RISK") is not True:
+        return False
+    meta = state.get("meta", {}) or {}
+    seed = str(meta.get("world_seed", "") or "")
+    turn = int(meta.get("turn", 0) or 0)
+    if _h32(seed, turn, npc_id, "snitch_report") % 100 >= 15:
+        return False
+    execute_npc_snitch_report(state, str(npc_id))
+    return True
 
 
 def add_belief_snippet(
@@ -161,7 +247,7 @@ def add_belief_snippet(
 
 
 def check_social_triggers(state: dict[str, Any], npc_id: str) -> list[str]:
-    """Check SOCIAL_THRESHOLDS and emit one-shot world_events (no spam)."""
+    """Check SOCIAL_THRESHOLDS and schedule one-shot pending ripple events (no spam)."""
     npcs = state.get("npcs", {}) or {}
     if not isinstance(npcs, dict):
         return []
@@ -174,10 +260,6 @@ def check_social_triggers(state: dict[str, Any], npc_id: str) -> list[str]:
         active = {}
         npc["active_triggers"] = active
 
-    # Hybrid view for triggers:
-    # - trust/fear: persistent NPC fields (0..100)
-    # - suspicion: belief_summary.suspicion (0..100)
-    # - respect_coef: from belief tags coefficients (-100..100)
     sm = get_npc_social_modifiers(state, str(npc_id))
     respect = int(sm.get("respect", 0) or 0)
     try:
@@ -203,48 +285,254 @@ def check_social_triggers(state: dict[str, Any], npc_id: str) -> list[str]:
     for key, req in SOCIAL_THRESHOLDS.items():
         if not isinstance(req, dict):
             continue
-        if key in active:
+        if active.get(key) is True:
             continue
-        ok = True
-        # Explicit semantics per trigger kind (deterministic).
-        if key == "BETRAYAL_RISK":
-            ok = (suspicion >= int(req.get("suspicion", 90) or 90)) and (trust <= int(req.get("trust", 10) or 10))
-        elif key == "LOYA_REWARD":
-            try:
-                rep0 = int(bs.get("respect", 50) or 50)
-            except Exception:
-                rep0 = 50
-            ok = (trust >= int(req.get("trust", 85) or 85)) and (rep0 >= int(req.get("respect", 60) or 60))
-        elif key == "SUBMISSIVE_LEAK":
-            # Requires high fear and very low respect (coefficient).
-            ok = (fear >= int(req.get("fear", 70) or 70)) and (respect <= int(req.get("respect", -30) or -30))
-        else:
-            # Conservative fallback
-            if "suspicion" in req and suspicion < int(req.get("suspicion", 0) or 0):
-                ok = False
-            if "fear" in req and fear < int(req.get("fear", 0) or 0):
-                ok = False
-            if "trust" in req and trust < int(req.get("trust", 0) or 0):
-                ok = False
-            if "respect" in req and respect < int(req.get("respect", -100) or -100):
-                ok = False
-        if not ok:
+        if not is_trigger_condition_met(state, str(npc_id), key):
             continue
 
         active[key] = True
         fired.append(key)
-        state.setdefault("world_events", []).append(
-            {
-                "kind": str(key),
-                "npc_id": str(npc_id),
-                "text": f"[Event] NPC {npc_id} triggered {key} (trust={trust} respect={respect} suspicion={suspicion} fear={fear}).",
-                "day": int((state.get("meta", {}) or {}).get("day", 1) or 1),
-            }
+        meta = state.get("meta", {}) or {}
+        turn = int(meta.get("turn", 0) or 0)
+        delay = 2 + (_h32(meta.get("world_seed", ""), npc_id, key, turn, "delay") % 4)  # 2..5
+
+        payload: dict[str, Any] = {
+            "trigger": key,
+            "trust": trust,
+            "respect": respect,
+            "suspicion": suspicion,
+            "fear": fear,
+        }
+        if key == "BETRAYAL_RISK":
+            payload.update({"effect": "spawn_ambush"})
+        elif key == "LOYA_REWARD":
+            payload.update({"effect": "close_shop"})
+        elif key == "SUBMISSIVE_LEAK":
+            payload.update({"effect": "submissive_leak"})
+        elif key == "REPORTING_RISK":
+            payload.update({"effect": "file_report"})
+        else:
+            payload.update({"effect": "social_event"})
+
+        ev_id = f"se:{npc_id}:{key}:{turn}"
+        state.setdefault("pending_events", []).append(
+            {"id": ev_id, "type": str(key), "source_npc": str(npc_id), "turns_to_trigger": int(delay), "payload": payload}
         )
-        state.setdefault("world_notes", []).append(f"[Trigger] {npc_id}: {key}")
+        state.setdefault("world_notes", []).append(f"[Trigger] {npc_id}: {key} scheduled in {delay}t")
 
     npc["active_triggers"] = active
     return fired
+
+
+def process_pending_events(state: dict[str, Any]) -> dict[str, int]:
+    """Countdown social ripple events; defuse if thresholds no longer met; execute at 0.
+
+    Entries with ``turns_to_trigger`` / ``type`` / ``source_npc`` are social-scheduled.
+    Other ``pending_events`` shapes are preserved for ``engine.world.timers``.
+    """
+    pe = state.get("pending_events", []) or []
+    if not isinstance(pe, list) or not pe:
+        return {"ticked": 0, "executed": 0, "archived": 0, "defused": 0}
+    npcs = state.get("npcs", {}) or {}
+    if not isinstance(npcs, dict):
+        npcs = {}
+
+    ticked = 0
+    executed = 0
+    archived = 0
+    defused = 0
+    keep: list[Any] = []
+
+    meta = state.get("meta", {}) or {}
+    day = int(meta.get("day", 1) or 1)
+
+    for ev in pe:
+        if not isinstance(ev, dict):
+            keep.append(ev)
+            continue
+        if "turns_to_trigger" not in ev or "type" not in ev or "source_npc" not in ev:
+            keep.append(ev)
+            continue
+
+        src = str(ev.get("source_npc", "") or "").strip()
+        et = str(ev.get("type", "") or "").strip()
+        if not src or not et:
+            keep.append(ev)
+            continue
+
+        try:
+            ttt = int(ev.get("turns_to_trigger", 0) or 0)
+        except Exception:
+            ttt = 0
+        ttt = max(0, min(50, ttt))
+
+        npc_here = npcs.get(src)
+
+        # REPORTING_RISK: defuse if suspicion < 80; hysteresis 80–84 ticks but cannot file until >=85.
+        if et == "REPORTING_RISK":
+            sus = _belief_summary_suspicion(npc_here if isinstance(npc_here, dict) else None)
+            if sus < 80:
+                defused += 1
+                if isinstance(npc_here, dict):
+                    at = npc_here.setdefault("active_triggers", {})
+                    if isinstance(at, dict):
+                        at[et] = False
+                state.setdefault("world_notes", []).append(
+                    f"[Ripple Defused] Event {et} for NPC {src} was aborted (suspicion eased below 80; reporting plan cancelled)."
+                )
+                state.setdefault("world_events", []).append(
+                    {
+                        "kind": "ABORTED_EVENT",
+                        "type": et,
+                        "source_npc": src,
+                        "text": f"[Aborted] {et} for NPC {src} — suspicion dropped below 80.",
+                        "day": day,
+                        "payload": ev.get("payload") if isinstance(ev.get("payload"), dict) else {},
+                    }
+                )
+                continue
+            if sus < 85:
+                if ttt == 0:
+                    defused += 1
+                    if isinstance(npc_here, dict):
+                        at = npc_here.setdefault("active_triggers", {})
+                        if isinstance(at, dict):
+                            at[et] = False
+                    state.setdefault("world_notes", []).append(
+                        f"[Ripple Defused] Event {et} for NPC {src} was aborted (deadline reached without filing threshold)."
+                    )
+                    state.setdefault("world_events", []).append(
+                        {
+                            "kind": "ABORTED_EVENT",
+                            "type": et,
+                            "source_npc": src,
+                            "text": f"[Aborted] {et} for NPC {src} — suspicion below 85 at deadline.",
+                            "day": day,
+                            "payload": ev.get("payload") if isinstance(ev.get("payload"), dict) else {},
+                        }
+                    )
+                    continue
+                ev2 = dict(ev)
+                ev2["turns_to_trigger"] = ttt - 1
+                keep.append(ev2)
+                ticked += 1
+                continue
+            if ttt > 0:
+                ev2 = dict(ev)
+                ev2["turns_to_trigger"] = ttt - 1
+                keep.append(ev2)
+                ticked += 1
+                continue
+            executed += 1
+            execute_npc_snitch_report(state, src)
+            archived += 1
+            continue
+
+        if not is_trigger_condition_met(state, src, et):
+            defused += 1
+            npc = npcs.get(src)
+            if isinstance(npc, dict):
+                at = npc.setdefault("active_triggers", {})
+                if not isinstance(at, dict):
+                    at = {}
+                    npc["active_triggers"] = at
+                at[et] = False
+            state.setdefault("world_notes", []).append(
+                f"[Ripple Defused] Event {et} for NPC {src} was aborted due to changing social conditions."
+            )
+            state.setdefault("world_events", []).append(
+                {
+                    "kind": "ABORTED_EVENT",
+                    "type": et,
+                    "source_npc": src,
+                    "text": f"[Aborted] {et} for NPC {src} — social conditions changed.",
+                    "day": day,
+                    "payload": ev.get("payload") if isinstance(ev.get("payload"), dict) else {},
+                }
+            )
+            continue
+
+        if ttt > 0:
+            ev2 = dict(ev)
+            ev2["turns_to_trigger"] = ttt - 1
+            keep.append(ev2)
+            ticked += 1
+            continue
+
+        # Execute at 0
+        executed += 1
+        payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
+        eff = str((payload or {}).get("effect", "") or "").strip().lower()
+
+        npc = npcs.get(src)
+        if isinstance(npc, dict):
+            if eff == "spawn_ambush":
+                try:
+                    tr = state.setdefault("trace", {})
+                    if isinstance(tr, dict):
+                        tr["trace_pct"] = max(0, min(100, int(tr.get("trace_pct", 0) or 0) + 6))
+                except Exception:
+                    pass
+                state.setdefault("active_ripples", []).append(
+                    {
+                        "kind": "threat",
+                        "text": f"[Threat] {src} set something in motion. An ambush risk is rising.",
+                        "triggered_day": day,
+                        "surface_day": day,
+                        "surface_time": min(1439, int(meta.get("time_min", 0) or 0) + 5),
+                        "surfaced": False,
+                        "propagation": "local_witness",
+                        "origin_location": str((state.get("player", {}) or {}).get("location", "") or "").strip().lower(),
+                        "origin_faction": "",
+                        "witnesses": [],
+                        "surface_attempts": 0,
+                        "meta": {"source_npc": src, "event": et},
+                    }
+                )
+                npc["is_active"] = False
+            elif eff == "close_shop":
+                npc["is_active"] = False
+            elif eff == "submissive_leak":
+                bs = npc.get("belief_summary") if isinstance(npc.get("belief_summary"), dict) else {}
+                if not isinstance(bs, dict):
+                    bs = {}
+                try:
+                    bs["suspicion"] = max(0, min(100, int(bs.get("suspicion", 0) or 0) + 10))
+                except Exception:
+                    bs["suspicion"] = 50
+                npc["belief_summary"] = bs
+                state.setdefault("active_ripples", []).append(
+                    {
+                        "kind": "leak",
+                        "text": f"[Leak] {src} quietly shared something damaging about you.",
+                        "triggered_day": day,
+                        "surface_day": day,
+                        "surface_time": min(1439, int(meta.get("time_min", 0) or 0) + 5),
+                        "surfaced": False,
+                        "propagation": "contacts",
+                        "origin_location": str((state.get("player", {}) or {}).get("location", "") or "").strip().lower(),
+                        "origin_faction": "",
+                        "witnesses": [],
+                        "surface_attempts": 0,
+                        "meta": {"source_npc": src, "event": et},
+                    }
+                )
+
+        archived += 1
+        state.setdefault("world_events", []).append(
+            {
+                "kind": "ARCHIVED_EVENT",
+                "type": et,
+                "source_npc": src,
+                "text": f"[Archived] {et} executed for NPC {src}.",
+                "day": day,
+                "payload": payload,
+            }
+        )
+        state.setdefault("world_notes", []).append(f"[Ripple] Event {et} executed for NPC {src}")
+
+    state["pending_events"] = keep
+    return {"ticked": int(ticked), "executed": int(executed), "archived": int(archived), "defused": int(defused)}
 
 
 def apply_beliefs_from_ripple(state: dict[str, Any], rp: dict[str, Any]) -> None:
@@ -520,6 +808,11 @@ def update_npcs(state: dict, action_ctx: dict) -> None:
         except Exception:
             pass
 
+        try:
+            check_npc_reporting(state, str(name))
+        except Exception:
+            pass
+
         # Autonomous agenda tick: NPCs act while player does other things.
         agenda = n.get("agenda")
         if agenda and time_min % 120 == 0:
@@ -533,3 +826,15 @@ def update_npcs(state: dict, action_ctx: dict) -> None:
         # Keep global contacts in sync if flagged.
         if isinstance(contacts, dict) and n.get("is_contact") is True:
             contacts[str(name)] = dict(n)
+
+    try:
+        process_pending_events(state)
+    except Exception:
+        pass
+
+    try:
+        from engine.npc.npc_rumor_system import propagate_reputation
+
+        propagate_reputation(state)
+    except Exception:
+        pass

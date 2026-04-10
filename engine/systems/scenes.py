@@ -111,6 +111,9 @@ def pump_scene_queue(state: dict[str, Any]) -> dict[str, Any] | None:
     if st == "sting_setup":
         payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
         return start_sting_setup_scene(state, payload=payload)
+    if st == "safehouse_raid":
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        return start_safehouse_raid_scene(state, payload=payload)
     if st == "raid_response":
         payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
         return start_raid_response_scene(state, payload=payload)
@@ -228,6 +231,8 @@ def auto_resolve_scene_if_needed(state: dict[str, Any], *, cur_day: int, cur_tim
     st = str(sc.get("scene_type", "") or "").strip().lower()
     if st == "sting_setup":
         return _auto_resolve_sting_setup(state, sc, phase_before=str(sc.get("phase", "") or ""))
+    if st == "safehouse_raid":
+        return _auto_resolve_safehouse_raid(state, sc, phase_before=str(sc.get("phase", "") or ""))
     if st == "raid_response":
         return _auto_resolve_raid_response(state, sc, phase_before=str(sc.get("phase", "") or ""))
     if st == "police_stop":
@@ -278,6 +283,10 @@ def advance_scene(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[str
         return _advance_police_stop(state, sc, action_ctx)
     if st == "sting_setup":
         return _advance_sting_setup(state, sc, action_ctx)
+    if st == "sting_operation":
+        return _advance_sting_operation(state, sc, action_ctx)
+    if st == "safehouse_raid":
+        return _advance_safehouse_raid(state, sc, action_ctx)
     if st == "raid_response":
         return _advance_raid_response(state, sc, action_ctx)
     if st == "checkpoint_sweep":
@@ -1087,7 +1096,147 @@ def _advance_police_stop(state: dict[str, Any], sc: dict[str, Any], action_ctx: 
     effects: list[dict[str, Any]] = []
     messages: list[str] = []
 
-    if phase_before == "stop":
+    if phase_before in ("stop", "approach"):
+        # Patrol / heat-check path: arrest protocol, minor fine, escape roll, or bribe threshold.
+        _patrol = phase_before == "approach" or str(reason or "").strip().lower() == "heat_check"
+        if _patrol:
+            from engine.systems.arrest import execute_arrest
+
+            def _patrol_escape_chance_pct() -> int:
+                base = 40
+                try:
+                    row = (state.get("skills", {}) or {}).get("evasion")
+                    lvl = int((row or {}).get("level", 1) or 1)
+                except Exception:
+                    lvl = 1
+                bonus = max(0, min(35, (lvl - 1) * 3))
+                return min(90, base + bonus)
+
+            if act in ("comply", "cooperate"):
+                try:
+                    tp = int((state.get("trace", {}) or {}).get("trace_pct", 0) or 0)
+                except Exception:
+                    tp = 0
+                if tp >= 50:
+                    execute_arrest(state)
+                    messages.append("You comply. They run your record—and the cuffs come out.")
+                    return _scene_return(
+                        ok=True,
+                        reason="arrest",
+                        phase_before=phase_before,
+                        phase_after="",
+                        ended=True,
+                        next_options=[],
+                        effects=[{"kind": "arrest", "reason": "comply_trace_high"}],
+                        messages=messages,
+                    )
+                eco = state.setdefault("economy", {})
+                try:
+                    cash0 = int(eco.get("cash", 0) or 0)
+                except Exception:
+                    cash0 = 0
+                fine = min(100, cash0)
+                eco["cash"] = int(cash0 - fine)
+                effects.append({"kind": "cash_delta", "delta": int(-fine), "reason": "patrol_minor_fine"})
+                effects.append({"kind": "scene_end", "reason": "minor_fine"})
+                messages.append("You pay a minor fine and they let you go.")
+                state.setdefault("world_notes", []).append("[Security] Paid a minor fine.")
+                clear_active_scene(state)
+                return _scene_return(
+                    ok=True,
+                    reason="",
+                    phase_before=phase_before,
+                    phase_after="",
+                    ended=True,
+                    next_options=[],
+                    effects=effects,
+                    messages=messages,
+                )
+
+            if act in ("run", "flee"):
+                ch = _patrol_escape_chance_pct()
+                r = scene_rng(state, scene_id=str(sc.get("scene_id", "")), scene_type="police_stop", salt="patrol_escape_v1")
+                if int(r) < int(ch):
+                    clear_active_scene(state)
+                    td = _bump_trace(state, 15)
+                    effects.append({"kind": "trace_delta", "delta": int(td), "reason": "patrol_escape"})
+                    effects.append({"kind": "scene_end", "reason": "escape"})
+                    messages.append("You slip away—but the city will remember.")
+                    state.setdefault("world_notes", []).append("[Security] Escaped the patrol, but heat increased.")
+                    return _scene_return(
+                        ok=True,
+                        reason="",
+                        phase_before=phase_before,
+                        phase_after="",
+                        ended=True,
+                        next_options=[],
+                        effects=effects,
+                        messages=messages,
+                    )
+                execute_arrest(state)
+                messages.append("They cut you off. There is no clean exit.")
+                return _scene_return(
+                    ok=True,
+                    reason="arrest",
+                    phase_before=phase_before,
+                    phase_after="",
+                    ended=True,
+                    next_options=[],
+                    effects=[{"kind": "arrest", "reason": "flee_failed"}],
+                    messages=messages,
+                )
+
+            if act in ("bribe",):
+                br = int(action_ctx.get("bribe_amount", 0) or 0)
+                if br <= 0:
+                    br = 500
+                eco = state.setdefault("economy", {})
+                try:
+                    cash0 = int(eco.get("cash", 0) or 0)
+                except Exception:
+                    cash0 = 0
+                if br >= 500 and cash0 >= br:
+                    eco["cash"] = int(cash0 - br)
+                    effects.append({"kind": "cash_delta", "delta": int(-br), "reason": "patrol_bribe_success"})
+                    effects.append({"kind": "scene_end", "reason": "bribe"})
+                    messages.append("The patrol looks away. You walk before they change their minds.")
+                    state.setdefault("world_notes", []).append("[Security] Bribed the patrol successfully.")
+                    clear_active_scene(state)
+                    return _scene_return(
+                        ok=True,
+                        reason="",
+                        phase_before=phase_before,
+                        phase_after="",
+                        ended=True,
+                        next_options=[],
+                        effects=effects,
+                        messages=messages,
+                    )
+                execute_arrest(state, bribery_attempt=True)
+                messages.append("The bribe backfires—or you couldn't pay. You are in custody.")
+                return _scene_return(
+                    ok=True,
+                    reason="arrest",
+                    phase_before=phase_before,
+                    phase_after="",
+                    ended=True,
+                    next_options=[],
+                    effects=[{"kind": "arrest", "reason": "bribe_failed"}],
+                    messages=messages,
+                )
+
+            return _scene_return(
+                ok=False,
+                reason="invalid_action",
+                phase_before=phase_before,
+                phase_after=phase_before,
+                ended=False,
+                next_options=list(sc.get("next_options") or []),
+                effects=[],
+                messages=["Invalid scene action for this phase."],
+            )
+
+        # Legacy weapon-check stop: COMPLY opens dialog; RUN flees with heat/trace.
         if act in ("comply", "cooperate"):
             sc["phase"] = "dialog"
             sc["next_options"] = [
@@ -1533,6 +1682,130 @@ def _advance_sting_setup(state: dict[str, Any], sc: dict[str, Any], action_ctx: 
         return _scene_return(ok=False, reason="invalid_action", phase_before=phase_before, phase_after=phase_before, ended=False, next_options=list(sc.get("next_options") or []), effects=[], messages=["Invalid scene action."])
 
     return _scene_return(ok=False, reason="invalid_phase", phase_before=phase_before, phase_after=phase_before, ended=False, next_options=list(sc.get("next_options") or []), effects=[], messages=["Scene is in an unknown phase."])
+
+
+def _advance_sting_operation(state: dict[str, Any], sc: dict[str, Any], action_ctx: dict[str, Any]) -> dict[str, Any]:
+    """Hard consequence scene: surrender, flee (30%), or fight (auto-fail)."""
+    from engine.systems.arrest import execute_arrest
+
+    phase_before = str(sc.get("phase", "") or "")
+    act = str(action_ctx.get("scene_action", "") or "").strip().lower().replace("-", "_")
+    if act in ("surrender", "comply"):
+        execute_arrest(state)
+        state.setdefault("world_notes", []).append("[Security] You surrendered to the sting team. Arrest processed.")
+        return _scene_return(ok=True, reason="arrest", phase_before=phase_before, phase_after="", ended=True, next_options=[], effects=[{"kind": "arrest", "reason": "sting_surrender"}], messages=["You put your hands up. The net closes immediately."])
+
+    if act in ("flee", "run"):
+        chance = 30
+        roll = scene_rng(state, scene_id=str(sc.get("scene_id", "sting")), scene_type="sting_operation", salt="flee|v1")
+        if int(roll) < int(chance):
+            clear_active_scene(state)
+            td = _bump_trace(state, 20)
+            state.setdefault("world_notes", []).append("[Security] You slipped the sting, but the escape left a heavy trail.")
+            return _scene_return(ok=True, reason="", phase_before=phase_before, phase_after="", ended=True, next_options=[], effects=[{"kind": "trace_delta", "delta": int(td), "reason": "sting_escape"}, {"kind": "scene_end", "reason": "flee"}], messages=["You vanish into the noise—barely."])
+        execute_arrest(state)
+        return _scene_return(ok=True, reason="arrest", phase_before=phase_before, phase_after="", ended=True, next_options=[], effects=[{"kind": "arrest", "reason": "sting_flee_failed"}], messages=["The ambush was layered. You run straight into cuffs."])
+
+    if act in ("fight", "attack"):
+        execute_arrest(state)
+        # Max penalty: wipe bank balance after arrest processing.
+        try:
+            eco = state.get("economy", {}) or {}
+            if isinstance(eco, dict):
+                eco["bank"] = 0
+                state["economy"] = eco
+        except Exception:
+            pass
+        state.setdefault("world_notes", []).append("[Security] Fighting a sting squad ended in a maximum fine and arrest.")
+        return _scene_return(ok=True, reason="arrest", phase_before=phase_before, phase_after="", ended=True, next_options=[], effects=[{"kind": "arrest", "reason": "sting_fight_auto_fail"}, {"kind": "fine_max", "reason": "sting_fight"}], messages=["You swing once. The response is overwhelming and final."])
+
+    return _scene_return(ok=False, reason="invalid_action", phase_before=phase_before, phase_after=phase_before, ended=False, next_options=list(sc.get("next_options") or []), effects=[], messages=["Invalid scene action."])
+
+
+def _burn_safehouse_after_raid(state: dict[str, Any], *, loc: str) -> None:
+    world = state.setdefault("world", {})
+    sh = world.setdefault("safehouses", {})
+    row = sh.get(loc) if isinstance(sh, dict) else None
+    if not isinstance(row, dict):
+        return
+    row["status"] = "none"
+    row["stash"] = []
+    row["stash_ammo"] = {}
+    sh[loc] = row
+    world["safehouses"] = sh
+
+
+def start_safehouse_raid_scene(state: dict[str, Any], *, payload: dict[str, Any]) -> dict[str, Any]:
+    if has_active_scene(state):
+        return {"ok": False, "reason": "scene_already_active"}
+    loc, did = _player_loc(state)
+    loc0 = str((payload or {}).get("location", loc) or loc).strip().lower()
+    day, tmin = _now(state)
+    scene_id = hashlib.md5(f"{_seed_key(state)}|safehouse_raid|{loc0}|{day}|{tmin}".encode("utf-8", errors="ignore")).hexdigest()[:10]
+    state["active_scene"] = {
+        "scene_id": scene_id,
+        "scene_type": "safehouse_raid",
+        "phase": "breach",
+        "context": {
+            "location": loc0,
+            "district": did,
+            "payload": dict(payload or {}),
+        },
+        "vars": {"wait_count": 0},
+        "expires_at": {"day": int(day), "time_min": min(1439, int(tmin) + 20)},
+        "next_options": ["SCENE COMPLY", "SCENE FLEE", "SCENE HIDE", "SCENE FIGHT"],
+    }
+    return {"ok": True, "scene_id": scene_id, "scene_type": "safehouse_raid"}
+
+
+def _auto_resolve_safehouse_raid(state: dict[str, Any], sc: dict[str, Any], *, phase_before: str) -> dict[str, Any]:
+    return _advance_safehouse_raid(state, sc, {"scene_action": "comply", "scene_timeout": True})
+
+
+def _advance_safehouse_raid(state: dict[str, Any], sc: dict[str, Any], action_ctx: dict[str, Any]) -> dict[str, Any]:
+    from engine.systems.arrest import execute_arrest
+
+    phase_before = str(sc.get("phase", "") or "")
+    act = str(action_ctx.get("scene_action", "") or "").strip().lower().replace("-", "_")
+    ctx = sc.get("context") if isinstance(sc.get("context"), dict) else {}
+    payload = (ctx or {}).get("payload") if isinstance((ctx or {}).get("payload"), dict) else {}
+    loc = str((payload or {}).get("location", "") or (ctx or {}).get("location", "") or _player_loc(state)[0]).strip().lower()
+    law = str((payload or {}).get("law_level", "") or (ctx or {}).get("law_level", "") or "").strip().lower()
+
+    def _escape_chance(stat_key: str) -> int:
+        base = 30
+        try:
+            row = (state.get("skills", {}) or {}).get(stat_key)
+            lvl = int((row or {}).get("level", 1) or 1)
+        except Exception:
+            lvl = 1
+        return min(85, base + max(0, (lvl - 1) * 4))
+
+    if act in ("comply", "cooperate"):
+        _burn_safehouse_after_raid(state, loc=loc)
+        execute_arrest(state)
+        state.setdefault("world_notes", []).append("[Arrest] You surrendered during the raid. The location is burned.")
+        return _scene_return(ok=True, reason="arrest", phase_before=phase_before, phase_after="", ended=True, next_options=[], effects=[{"kind": "arrest", "reason": "raid_comply"}], messages=["You raise your hands. The breach team owns the room in seconds."])
+
+    if act in ("flee", "run", "hide"):
+        stat_key = "evasion" if act in ("flee", "run") else "stealth"
+        chance = _escape_chance(stat_key)
+        roll = scene_rng(state, scene_id=str(sc.get("scene_id", "")), scene_type="safehouse_raid", salt=f"{act}|escape_v1")
+        _burn_safehouse_after_raid(state, loc=loc)
+        if int(roll) < int(chance):
+            clear_active_scene(state)
+            td = _bump_trace(state, 20)
+            state.setdefault("world_notes", []).append("[Security] You barely escaped the raid, but this location is burned.")
+            return _scene_return(ok=True, reason="", phase_before=phase_before, phase_after="", ended=True, next_options=[], effects=[{"kind": "trace_delta", "delta": int(td), "reason": "raid_escape"}, {"kind": "scene_end", "reason": act}], messages=["You get out by inches. The place behind you is finished."])
+        execute_arrest(state)
+        return _scene_return(ok=True, reason="arrest", phase_before=phase_before, phase_after="", ended=True, next_options=[], effects=[{"kind": "arrest", "reason": f"raid_{act}_failed"}], messages=["The tactical cordon closes before you can vanish."])
+
+    if act in ("fight",):
+        _burn_safehouse_after_raid(state, loc=loc)
+        execute_arrest(state)
+        return _scene_return(ok=True, reason="arrest", phase_before=phase_before, phase_after="", ended=True, next_options=[], effects=[{"kind": "arrest", "reason": "raid_fight_auto_fail"}], messages=["Trying to fight a tactical entry team lasts exactly one bad decision."])
+
+    return _scene_return(ok=False, reason="invalid_action", phase_before=phase_before, phase_after=phase_before, ended=False, next_options=list(sc.get("next_options") or []), effects=[], messages=["Invalid scene action."])
 
 
 def start_raid_response_scene(state: dict[str, Any], *, payload: dict[str, Any]) -> dict[str, Any]:

@@ -1,6 +1,25 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Any
+
+
+def deterministic_security_roll_percent(state: dict[str, Any]) -> int:
+    """Deterministic 0..99 roll for security encounter checks (tests may import this)."""
+    meta = state.get("meta", {}) or {}
+    seed = str(meta.get("world_seed", "") or meta.get("seed_pack", "") or "").strip() or "seed"
+    try:
+        day = int(meta.get("day", 1) or 1)
+    except Exception:
+        day = 1
+    try:
+        turn = int(meta.get("turn", 0) or 0)
+    except Exception:
+        turn = 0
+    loc = str((state.get("player", {}) or {}).get("location", "") or "").strip().lower()
+    s = "|".join([seed, str(day), str(turn), loc, "security_encounter_v1"])
+    h = hashlib.md5(s.encode("utf-8", errors="ignore")).hexdigest()
+    return int(h[:8], 16) % 100
 
 
 def _brief(state: dict[str, Any]) -> tuple[str, str, int, int]:
@@ -113,4 +132,100 @@ def schedule_travel_encounters(state: dict[str, Any], action_ctx: dict[str, Any]
     sched[key] = {"event_type": event_type, "due_day": int(day), "due_time": int(due_time)}
     world["encounter_sched"] = sched
     return {"scheduled": True, "event_type": event_type, "score": score}
+
+
+def evaluate_security_encounters(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[str, Any]:
+    """Heat check: at Wanted/Lockdown trace tiers, may force an active police_stop scene (deterministic RNG)."""
+    _ = action_ctx  # reserved (future: gate on travel/instant)
+    flags = state.get("flags", {}) or {}
+    if isinstance(flags, dict) and not bool(flags.get("scenes_enabled", True)):
+        return {"triggered": False, "reason": "scenes_disabled"}
+    if isinstance(state.get("active_scene"), dict) and state.get("active_scene"):
+        return {"triggered": False, "reason": "scene_active"}
+
+    try:
+        from engine.core.trace import get_trace_tier
+
+        tier_id = str((get_trace_tier(state) or {}).get("tier_id", "") or "")
+    except Exception:
+        tier_id = ""
+
+    if tier_id not in ("Wanted", "Lockdown"):
+        return {"triggered": False, "reason": "tier_below_wanted", "tier_id": tier_id}
+
+    meta = state.get("meta", {}) or {}
+    try:
+        day = int(meta.get("day", 1) or 1)
+    except Exception:
+        day = 1
+    try:
+        turn = int(meta.get("turn", 0) or 0)
+    except Exception:
+        turn = 0
+
+    world = state.setdefault("world", {})
+    if not isinstance(world, dict):
+        world = {}
+        state["world"] = world
+    sched = world.setdefault("encounter_sched", {})
+    if not isinstance(sched, dict):
+        sched = {}
+        world["encounter_sched"] = sched
+
+    key = f"security_heat:{day}:{turn}"
+    prev = sched.get(key)
+    if isinstance(prev, dict) and "roll" in prev:
+        return dict(prev)
+
+    roll = deterministic_security_roll_percent(state)
+    prob = 10 if tier_id == "Wanted" else 30
+    triggered = roll < prob
+
+    out: dict[str, Any] = {
+        "triggered": bool(triggered),
+        "reason": "heat_check" if triggered else "miss",
+        "tier_id": tier_id,
+        "roll": int(roll),
+        "prob_threshold": int(prob),
+    }
+
+    if not triggered:
+        sched[key] = out
+        world["encounter_sched"] = sched
+        return out
+
+    loc, did, day_brief, tmin = _brief(state)
+    try:
+        tmin_i = int(tmin)
+    except Exception:
+        tmin_i = 0
+    scene_id = hashlib.md5(f"{loc}|{did}|security_patrol|{day_brief}|{turn}".encode("utf-8", errors="ignore")).hexdigest()[:10]
+
+    sc: dict[str, Any] = {
+        "scene_id": scene_id,
+        "scene_type": "police_stop",
+        "phase": "approach",
+        "context": {
+            "location": loc or "unknown",
+            "district": did,
+            "weapon_ids": [],
+            "reason": "heat_check",
+            "country": "",
+            "law_level": "",
+            "firearm_policy": "",
+            "firearm_policy_narrative": "",
+            "permit_doc": {},
+            "dialog": {},
+        },
+        "vars": {"wait_count": 0},
+        "expires_at": {"day": int(day_brief), "time_min": min(1439, int(tmin_i) + 25)},
+        "next_options": ["SCENE COMPLY", "SCENE BRIBE 500", "SCENE RUN"],
+    }
+    state["active_scene"] = sc
+    state.setdefault("world_notes", []).append("[Security] A security patrol has intercepted you.")
+
+    out["scene_type"] = "police_stop"
+    sched[key] = out
+    world["encounter_sched"] = sched
+    return out
 
