@@ -1031,6 +1031,21 @@ def build_turn_package(
         rep_label = "shaky"
     else:
         rep_label = "notorious"
+    rel_lines = "-"
+    try:
+        from engine.npc.relationship import get_top_relationships
+
+        top_rels = get_top_relationships(state, limit=5)
+        rows: list[str] = []
+        for nm, rel in top_rels:
+            rr = rel if isinstance(rel, dict) else {}
+            rows.append(
+                f"- {nm}: type={str(rr.get('type', 'neutral'))} strength={int(rr.get('strength', 50) or 50)} trust={float(rr.get('trust', 50.0) or 50.0):.1f} susp={float(rr.get('suspicion', 0.0) or 0.0):.1f}"
+            )
+        if rows:
+            rel_lines = "\n".join(rows[:5])
+    except Exception:
+        pass
 
     return f"""[TURN PACKAGE - OMNI-ENGINE v6.9]
 [NARRATION LANGUAGE]
@@ -1091,6 +1106,8 @@ corporate: {rep_corporate}
 political: {rep_political}
 street: {rep_street}
 underground: {rep_underground}
+[KEY RELATIONSHIPS]
+{rel_lines}
 Cash: {eco.get('cash', 0)} | Bank: {eco.get('bank', 0)} | Debt: {eco.get('debt', 0)} | Daily Burn: {eco.get('daily_burn', 0)}
 FICO: {eco.get('fico', 600)} | AML: {eco.get('aml_status', 'CLEAR')}
 Trace: {trace_display} (tier={trace_tier_id})

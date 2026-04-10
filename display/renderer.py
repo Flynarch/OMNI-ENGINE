@@ -372,6 +372,19 @@ def _build_compact_monitor_vm(state: dict[str, Any]) -> dict[str, Any]:
     }
     rep_top_key, rep_top_val = max(rep_map.items(), key=lambda kv: kv[1])
     rep_emoji = "🏆" if rep_top_val >= 80 else "⭐" if rep_top_val >= 65 else "•"
+    rel_summary = "-"
+    try:
+        from engine.npc.relationship import get_top_relationships
+
+        top_rels = get_top_relationships(state, limit=3)
+        chunks: list[str] = []
+        for nm, rel in top_rels:
+            rtype = str((rel or {}).get("type", "neutral") or "neutral").replace("_", " ").title()
+            chunks.append(f"{nm}: {rtype}")
+        if chunks:
+            rel_summary = " | ".join(chunks)
+    except Exception:
+        pass
     if sleep_debt >= 8.0:
         energy_label = "Exhausted"
         energy_emoji = "😴"
@@ -407,6 +420,7 @@ def _build_compact_monitor_vm(state: dict[str, Any]) -> dict[str, Any]:
         "rep_top_key": rep_top_key,
         "rep_top_val": rep_top_val,
         "rep_emoji": rep_emoji,
+        "rel_summary": rel_summary,
         "energy_label": energy_label,
         "energy_emoji": energy_emoji,
     }
@@ -468,6 +482,7 @@ def _render_monitor_compact(state: dict[str, Any]) -> None:
     rep_top_key = str(vm.get("rep_top_key", "street") or "street")
     rep_top_val = float(vm.get("rep_top_val", 50.0) or 50.0)
     rep_emoji = str(vm.get("rep_emoji", "•") or "•")
+    rel_summary = str(vm.get("rel_summary", "-") or "-")
     energy_label = str(vm.get("energy_label", "Rested") or "Rested")
     energy_emoji = str(vm.get("energy_emoji", "💪") or "💪")
     if trace_pct > 75:
@@ -497,6 +512,10 @@ def _render_monitor_compact(state: dict[str, Any]) -> None:
     t.append(f"Hunger: {hunger_emoji} {hunger_label.title()}\n", style="magenta")
     t.append("[REP] ", style="bold white")
     t.append(f"Rep: {rep_emoji} {rep_top_key.title()} ({rep_top_val:.1f})\n", style="white")
+    if len(rel_summary) > 72:
+        rel_summary = rel_summary[:70] + "…"
+    t.append("[REL] ", style="bold white")
+    t.append(f"👥 {rel_summary}\n", style="white")
     t.append("[ENERGY] ", style="bold cyan")
     t.append(f"Energy: {energy_emoji} {energy_label}\n", style="cyan")
 

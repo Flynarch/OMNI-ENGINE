@@ -170,4 +170,36 @@ def decay_heat_and_suspicion(state: dict[str, Any], *, cur_day: int) -> None:
 
     world["heat_map"] = _decay_map(hm, decay_per_day=2)
     world["suspicion"] = _decay_map(sp, decay_per_day=5)
+    # Relationship relief: strong allies/close friends can cool local heat a bit.
+    try:
+        from engine.npc.relationship import get_top_relationships
+
+        rels = get_top_relationships(state, limit=8)
+        relief = 0
+        for _nm, rel in rels:
+            t = str(rel.get("type", "") or "").lower()
+            if t in ("ally", "close_friend", "friend", "partner"):
+                st = int(rel.get("strength", 50) or 50)
+                relief = max(relief, max(1, min(4, st // 30)))
+        if relief > 0:
+            loc0 = str(((state.get("player", {}) or {}).get("location", "") or "")).strip().lower()
+            did0 = str(((state.get("player", {}) or {}).get("district", "") or "")).strip().lower()
+            hm2 = world.get("heat_map", {}) if isinstance(world.get("heat_map"), dict) else {}
+            if isinstance(hm2, dict) and loc0 and isinstance(hm2.get(loc0), dict):
+                loc_map = hm2.get(loc0) or {}
+                for scope in ("__all__", did0):
+                    if not scope:
+                        continue
+                    row = loc_map.get(scope)
+                    if isinstance(row, dict):
+                        try:
+                            lv = int(row.get("level", 0) or 0)
+                        except Exception:
+                            lv = 0
+                        row["level"] = max(0, lv - int(relief))
+                        loc_map[scope] = row
+                hm2[loc0] = loc_map
+                world["heat_map"] = hm2
+    except Exception:
+        pass
 

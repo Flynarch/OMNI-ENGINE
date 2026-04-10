@@ -23,6 +23,21 @@ def update_economy(state: dict, action_ctx: dict) -> None:
             bank = 0
         econ["bank"] = bank
         econ["last_economic_cycle_day"] = day
+        # Relationship passive: business partners can generate a small deterministic daily income.
+        try:
+            from engine.npc.relationship import get_top_relationships
+
+            rels = get_top_relationships(state, limit=12)
+            partner_income = 0
+            for _nm, rel in rels:
+                if str(rel.get("type", "") or "").lower() == "business_partner":
+                    st = int(rel.get("strength", 50) or 50)
+                    partner_income += max(8, min(80, 8 + st // 2))
+            if partner_income > 0:
+                econ["cash"] = int(int(econ.get("cash", 0) or 0) + int(partner_income))
+                state.setdefault("world_notes", []).append(f"[Economy] Business partner income +${int(partner_income)}.")
+        except Exception:
+            pass
         # Market updates once per day (reactive economy layer).
         update_market(state)
         # Safehouse rent processing (optional system).

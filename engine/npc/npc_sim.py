@@ -308,6 +308,10 @@ def tick_npc_sim(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
         (sus, rep) = _belief_summary(npc)
         sec = _sec(npc)
         love, alarm, contempt = sec["love"], sec["alarm"], sec["contempt"]
+        try:
+            loyalty = int(npc.get("loyalty", 50) or 50)
+        except Exception:
+            loyalty = 50
 
         # Always respect hard caps.
         if kind in ("ripple", "warn", "rumor", "avoid", "seek_help", "move") and ripples_scheduled >= max_ripples:
@@ -336,7 +340,7 @@ def tick_npc_sim(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
             )
             ripples_scheduled += 1
             actions_scheduled += 1
-            _graph_bump_player_edge(state, name, delta=-2, rel_type="rival" if contempt >= 75 else None)
+            _graph_bump_player_edge(state, name, delta=-2, rel_type="nemesis" if contempt >= 90 else "rival" if contempt >= 75 else None)
             return
 
         if kind == "move":
@@ -412,7 +416,7 @@ def tick_npc_sim(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                 },
             )
             actions_scheduled += 1
-            _graph_set_player_edge(state, name, rel_type="informant" if buyer == "police" else "rival")
+            _graph_set_player_edge(state, name, rel_type="informant" if buyer == "police" else "nemesis" if contempt >= 90 else "rival")
             return
 
         if kind == "seek_help":
@@ -435,7 +439,9 @@ def tick_npc_sim(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
             )
             ripples_scheduled += 1
             actions_scheduled += 1
-            if love >= 85:
+            if love >= 85 and loyalty >= 85:
+                _graph_set_player_edge(state, name, rel_type="partner")
+            elif love >= 85:
                 _graph_set_player_edge(state, name, rel_type="lover")
             elif aff in ("corporate", "police"):
                 _graph_set_player_edge(state, name, rel_type="handler")
@@ -486,7 +492,9 @@ def tick_npc_sim(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
             svc = f"trade:{goods[pick]}"
             _queue_intent(npc, {"kind": "trade", "service": svc})
             # Merchant offers tend to create small "debt" relationship if respect is low.
-            if rep < 55 and sus < 60:
+            if rep >= 78 and sus <= 45:
+                _graph_set_player_edge(state, name, rel_type="business_partner")
+            elif rep < 55 and sus < 60:
                 _graph_set_player_edge(state, name, rel_type="debt")
             else:
                 _graph_bump_player_edge(state, name, delta=+1, rel_type="ally" if rep >= 70 else None)
@@ -723,7 +731,11 @@ def tick_npc_sim(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                 },
             )
             actions_scheduled += 1
-            _graph_set_player_edge(state, name, rel_type="informant" if role == "informant" or aff == "police" else "rival")
+            _graph_set_player_edge(
+                state,
+                name,
+                rel_type="informant" if role == "informant" or aff == "police" else "nemesis" if contempt >= 90 else "rival",
+            )
             _graph_bump_player_edge(state, name, delta=-2)
             if verbose:
                 state.setdefault("world_notes", []).append(f"[NPCSim] report by {name}")
@@ -751,7 +763,10 @@ def tick_npc_sim(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                 },
             )
             actions_scheduled += 1
-            if role == "fixer" and rep < 55:
+            if role == "fixer" and rep >= 82 and sus <= 35:
+                _graph_set_player_edge(state, name, rel_type="mentor")
+                _graph_bump_player_edge(state, name, delta=+1)
+            elif role == "fixer" and rep < 55:
                 _graph_set_player_edge(state, name, rel_type="debt")
                 _graph_bump_player_edge(state, name, delta=+1)
             else:
@@ -809,7 +824,7 @@ def tick_npc_sim(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                 },
             )
             actions_scheduled += 1
-            _graph_set_player_edge(state, name, rel_type="informant" if buyer == "police" else "rival")
+            _graph_set_player_edge(state, name, rel_type="informant" if buyer == "police" else "nemesis" if contempt >= 90 else "rival")
             _graph_bump_player_edge(state, name, delta=-1)
 
         elif best_action == "seek_help" and actions_scheduled < max_actions and ripples_scheduled < max_ripples:
@@ -834,7 +849,9 @@ def tick_npc_sim(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
             ripples_scheduled += 1
             actions_scheduled += 1
             # Edge typing: handler/lover depending on context.
-            if love >= 85:
+            if love >= 85 and loyalty >= 85:
+                _graph_set_player_edge(state, name, rel_type="partner")
+            elif love >= 85:
                 _graph_set_player_edge(state, name, rel_type="lover")
             elif aff in ("corporate", "police"):
                 _graph_set_player_edge(state, name, rel_type="handler")
@@ -862,7 +879,7 @@ def tick_npc_sim(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
             )
             ripples_scheduled += 1
             actions_scheduled += 1
-            _graph_bump_player_edge(state, name, delta=-2, rel_type="rival" if contempt >= 75 else None)
+            _graph_bump_player_edge(state, name, delta=-2, rel_type="nemesis" if contempt >= 90 else "rival" if contempt >= 75 else None)
 
         elif best_action == "move_location" and actions_scheduled < max_actions:
             cds["move_location"] = turn + 8

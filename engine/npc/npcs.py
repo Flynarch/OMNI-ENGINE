@@ -282,6 +282,34 @@ def check_social_triggers(state: dict[str, Any], npc_id: str) -> list[str]:
     suspicion = max(0, min(100, suspicion))
 
     fired: list[str] = []
+    # Relationship-specific trigger: nemesis applies recurring pressure.
+    try:
+        from engine.npc.relationship import get_relationship
+
+        rel = get_relationship(state, str(npc_id))
+        if str(rel.get("type", "") or "").lower() == "nemesis" and active.get("NEMESIS_PRESSURE") is not True:
+            active["NEMESIS_PRESSURE"] = True
+            fired.append("NEMESIS_PRESSURE")
+            meta = state.get("meta", {}) or {}
+            turn = int(meta.get("turn", 0) or 0)
+            delay = 1 + (_h32(meta.get("world_seed", ""), npc_id, "NEMESIS_PRESSURE", turn, "delay") % 3)  # 1..3
+            ev_id = f"se:{npc_id}:NEMESIS_PRESSURE:{turn}"
+            state.setdefault("pending_events", []).append(
+                {
+                    "id": ev_id,
+                    "type": "NEMESIS_PRESSURE",
+                    "source_npc": str(npc_id),
+                    "turns_to_trigger": int(delay),
+                    "payload": {
+                        "trigger": "NEMESIS_PRESSURE",
+                        "effect": "nemesis_pressure",
+                        "strength": int(rel.get("strength", 50) or 50),
+                    },
+                }
+            )
+            state.setdefault("world_notes", []).append(f"[Trigger] {npc_id}: NEMESIS_PRESSURE scheduled in {delay}t")
+    except Exception:
+        pass
     for key, req in SOCIAL_THRESHOLDS.items():
         if not isinstance(req, dict):
             continue
@@ -367,6 +395,47 @@ def process_pending_events(state: dict[str, Any]) -> dict[str, int]:
         ttt = max(0, min(50, ttt))
 
         npc_here = npcs.get(src)
+
+        if et == "NEMESIS_PRESSURE":
+            if ttt > 0:
+                ev2 = dict(ev)
+                ev2["turns_to_trigger"] = ttt - 1
+                keep.append(ev2)
+                ticked += 1
+                continue
+            executed += 1
+            try:
+                from engine.world.heat import bump_heat, bump_suspicion
+
+                pl = state.get("player", {}) or {}
+                loc0 = str(pl.get("location", "") or "").strip().lower()
+                did0 = str(pl.get("district", "") or "").strip().lower()
+                pld = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
+                st = int(pld.get("strength", 50) or 50)
+                dh = max(2, min(8, st // 15))
+                ds = max(3, min(10, st // 12))
+                bump_heat(state, loc=loc0, district=did0, delta=int(dh), reason=f"nemesis:{src}", ttl_days=4)
+                bump_suspicion(state, loc=loc0, district=did0, delta=int(ds), reason=f"nemesis:{src}", ttl_days=2)
+            except Exception:
+                pass
+            state.setdefault("world_notes", []).append(f"[Nemesis] {src} escalates pressure around you.")
+            state.setdefault("world_events", []).append(
+                {
+                    "kind": "NEMESIS_EVENT",
+                    "type": "NEMESIS_PRESSURE",
+                    "source_npc": src,
+                    "text": f"[Nemesis] {src} triggered pressure event.",
+                    "day": day,
+                    "payload": ev.get("payload") if isinstance(ev.get("payload"), dict) else {},
+                }
+            )
+            archived += 1
+            npc2 = npcs.get(src)
+            if isinstance(npc2, dict):
+                at2 = npc2.setdefault("active_triggers", {})
+                if isinstance(at2, dict):
+                    at2["NEMESIS_PRESSURE"] = False
+            continue
 
         # REPORTING_RISK: defuse if suspicion < 80; hysteresis 80–84 ticks but cannot file until >=85.
         if et == "REPORTING_RISK":

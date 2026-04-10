@@ -126,7 +126,25 @@ def apply_skill_xp_after_roll(state: dict[str, Any], action_ctx: dict[str, Any],
     if roll_pkg.get("roll") is None:
         base_xp = 1
 
-    xp = int(s.get("xp", 0) or 0) + base_xp
+    mentor_bonus = 0
+    try:
+        from engine.npc.relationship import get_relationship
+
+        targets = action_ctx.get("targets") if isinstance(action_ctx.get("targets"), list) else []
+        focus = str((state.get("meta", {}) or {}).get("npc_focus", "") or "").strip()
+        cand: list[str] = [str(x) for x in targets if isinstance(x, str)]
+        if focus:
+            cand.append(focus)
+        for nm in cand[:4]:
+            rel = get_relationship(state, nm)
+            if str(rel.get("type", "")).lower() == "mentor":
+                st = int(rel.get("strength", 50) or 50)
+                mentor_bonus = max(1, min(3, 1 + (st // 40)))
+                break
+    except Exception:
+        mentor_bonus = 0
+
+    xp = int(s.get("xp", 0) or 0) + base_xp + int(mentor_bonus)
     lvl = int(s.get("level", 1) or 1)
     # Level-up curve: 20, 35, 55, 80... (approx).
     need = 15 + (lvl * 5) + (lvl * lvl)

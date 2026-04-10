@@ -3282,6 +3282,9 @@ def _smoke() -> None:
 
     # Turn package should expose normalized reputation block for narrator context.
     from ai.turn_prompt import build_turn_package
+    from engine.npc.relationship import get_relationship
+    from engine.npc.npcs import check_social_triggers, process_pending_events
+    from engine.player.skills import apply_skill_xp_after_roll
 
     st_rep = initialize_state({"name": "RepPack", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_rep["reputation"] = {
@@ -3298,6 +3301,79 @@ def _smoke() -> None:
     assert "[REPUTATION]" in pkg_rep
     assert "criminal: 78.0" in pkg_rep
     assert "underground: 81.0" in pkg_rep
+    assert "[KEY RELATIONSHIPS]" in pkg_rep
+
+    # Relationship facade should unify social_graph + npc layers.
+    st_rel = initialize_state({"name": "RelFacade", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_rel.setdefault("npcs", {})["Budi"] = {
+        "name": "Budi",
+        "disposition_label": "Friendly",
+        "disposition_score": 74,
+        "trust": 77,
+        "belief_summary": {"suspicion": 21, "respect": 68},
+        "last_contact_day": 3,
+    }
+    st_rel.setdefault("world", {}).setdefault("social_graph", {}).setdefault("__player__", {})["Budi"] = {
+        "type": "ally",
+        "strength": 84,
+        "since_day": 2,
+        "last_interaction_day": 5,
+    }
+    rel_budi = get_relationship(st_rel, "Budi")
+    assert isinstance(rel_budi, dict)
+    for k in ("type", "strength", "disposition", "trust", "suspicion", "since_day", "last_interaction_day"):
+        assert k in rel_budi
+    assert str(rel_budi.get("type", "")) in ("ally", "close_friend")
+    assert int(rel_budi.get("strength", 0) or 0) >= 80
+
+    # Mentor relationship should boost XP gain in post-roll progression.
+    st_mx = initialize_state({"name": "MentorXP", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_mx.setdefault("npcs", {})["Mentor_A"] = {
+        "name": "Mentor_A",
+        "disposition_label": "Friendly",
+        "trust": 88,
+        "belief_summary": {"suspicion": 10, "respect": 80},
+        "last_contact_day": 1,
+    }
+    st_mx.setdefault("world", {}).setdefault("social_graph", {}).setdefault("__player__", {})["Mentor_A"] = {
+        "type": "mentor",
+        "strength": 92,
+        "since_day": 1,
+        "last_interaction_day": 1,
+    }
+    ctx_mx = {"domain": "social", "stakes": "low", "normalized_input": "talk mentor", "targets": ["Mentor_A"]}
+    apply_skill_xp_after_roll(st_mx, ctx_mx, {"outcome": "Success", "roll": 60, "mods": [], "net_threshold": 50})
+    xp_social = int((((st_mx.get("skills", {}) or {}).get("social", {}) or {}).get("xp", 0) or 0))
+    assert xp_social >= 6
+
+    # Nemesis relationship should schedule and execute a negative pressure event.
+    st_nem = initialize_state({"name": "Nemesis", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_nem.setdefault("npcs", {})["Rival_X"] = {
+        "name": "Rival_X",
+        "belief_summary": {"suspicion": 40, "respect": 30},
+        "trust": 25,
+        "fear": 20,
+        "active_triggers": {},
+    }
+    st_nem.setdefault("world", {}).setdefault("social_graph", {}).setdefault("__player__", {})["Rival_X"] = {
+        "type": "nemesis",
+        "strength": 90,
+        "since_day": 1,
+        "last_interaction_day": 1,
+    }
+    fired_nem = check_social_triggers(st_nem, "Rival_X")
+    assert "NEMESIS_PRESSURE" in fired_nem
+    pe_nem = st_nem.get("pending_events", []) or []
+    nem_event = None
+    for ev in pe_nem:
+        if isinstance(ev, dict) and str(ev.get("type", "")) == "NEMESIS_PRESSURE":
+            nem_event = ev
+            break
+    assert isinstance(nem_event, dict)
+    nem_event["turns_to_trigger"] = 0
+    process_pending_events(st_nem)
+    we_nem = st_nem.get("world_events", []) or []
+    assert any(isinstance(ev, dict) and str(ev.get("kind", "")) == "NEMESIS_EVENT" for ev in we_nem)
 
     # Hacking should set cyber_alert context when noise rises.
     from engine.systems.hacking import apply_hacking_after_roll
