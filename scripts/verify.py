@@ -5,6 +5,7 @@ Smoke + compile check. Run from repo root: python scripts/verify.py
 from __future__ import annotations
 
 import compileall
+import copy
 import hashlib
 import json
 import sys
@@ -41,7 +42,7 @@ def _smoke() -> None:
         validate_memory_hash_delimiters,
         validate_tag_balance,
     )
-    from engine.core.action_intent import parse_action_intent
+    from engine.core.action_intent import normalize_action_ctx, parse_action_intent
     from engine.systems.combat import apply_combat_gates, resolve_combat_after_roll
     from engine.player.economy import update_economy
     from engine.world.world import world_tick
@@ -49,7 +50,7 @@ def _smoke() -> None:
     from engine.systems.quests import generate_faction_strikes, generate_daily_news
     from engine.core.modifiers import compute_roll_package
     from engine.player.inventory_ops import apply_inventory_ops
-    from engine.world.timers import update_timers
+    from engine.world.timers import update_timers, update_timers_v2
     from engine.core.state import initialize_state
     from engine.systems.hacking import apply_hacking_after_roll, ensure_location_factions
     from engine.npc.npc_emotions import apply_npc_emotion_after_roll
@@ -2420,8 +2421,61 @@ def _smoke() -> None:
     assert any(isinstance(x, dict) and str(x.get("delivery_id", "")) == "d1" and bool(x.get("expired", False)) for x in pd)
     nearby = ((st_reg.get("world", {}) or {}).get("nearby_items", []) or [])
     assert not any(isinstance(x, dict) and str(x.get("delivery_id", "")) == "d1" for x in nearby)
-    assert int((st_reg.get("economy", {}) or {}).get("daily_burn", 0) or 0) >= 3
-    assert int((st_reg.get("trace", {}) or {}).get("trace_pct", 0) or 0) >= 11
+    assert int((st_reg.get("economy", {}) or {}).get("daily_burn", 0) or 0) == 3
+    assert int((st_reg.get("trace", {}) or {}).get("trace_pct", 0) or 0) == 11
+
+    # Exact ordering guard: same-timestamp due items process event before ripple.
+    st_order = initialize_state({"name": "DueOrder", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_order.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60})
+    st_order["pending_events"] = [
+        {"event_type": "debt_collection_ping", "due_day": 1, "due_time": 8 * 60, "triggered": False, "payload": {"debt": 10}}
+    ]
+    st_order["active_ripples"] = [
+        {
+            "kind": "test_order",
+            "text": "order check",
+            "triggered_day": 1,
+            "surface_day": 1,
+            "surface_time": 8 * 60,
+            "surfaced": False,
+            "propagation": "broadcast",
+            "origin_location": "london",
+            "origin_faction": "contacts",
+            "witnesses": [],
+            "surface_attempts": 0,
+        }
+    ]
+    update_timers(st_order, {"action_type": "instant", "instant_minutes": 0})
+    assert int((st_order.get("economy", {}) or {}).get("daily_burn", 0) or 0) >= 1
+    surf = st_order.get("surfacing_ripples_this_turn", []) or []
+    assert any(isinstance(rp, dict) and str(rp.get("kind", "")) == "test_order" for rp in surf)
+
+    # action_ctx normalizer shadow contract.
+    nctx = normalize_action_ctx({"domain": "combat", "action_type": "instant", "time_cost_min": 3})
+    assert nctx.get("action_type") == "combat"
+    assert nctx.get("roll_domain") == "combat"
+    assert int(nctx.get("instant_minutes", 0) or 0) == 3
+
+    # Dual-run equivalence (v1 vs v2): key timer surfaces must match.
+    st_dual_a = initialize_state({"name": "DualA", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_dual_b = copy.deepcopy(st_dual_a)
+    st_dual_a.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60})
+    st_dual_b.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60})
+    st_dual_a["pending_events"] = [
+        {"event_type": "npc_offer", "due_day": 1, "due_time": 8 * 60, "triggered": False, "payload": {"npc": "DualFixer", "role": "fixer", "service": "trade:weapons"}}
+    ]
+    st_dual_b["pending_events"] = copy.deepcopy(st_dual_a["pending_events"])
+    ctx_dual = {"action_type": "instant", "instant_minutes": 0}
+    update_timers(st_dual_a, copy.deepcopy(ctx_dual))
+    update_timers_v2(st_dual_b, copy.deepcopy(ctx_dual))
+    ma = st_dual_a.get("meta", {}) or {}
+    mb = st_dual_b.get("meta", {}) or {}
+    assert (int(ma.get("day", 0) or 0), int(ma.get("time_min", 0) or 0)) == (
+        int(mb.get("day", 0) or 0),
+        int(mb.get("time_min", 0) or 0),
+    )
+    assert len(st_dual_a.get("pending_events", []) or []) == len(st_dual_b.get("pending_events", []) or [])
+    assert len(st_dual_a.get("active_ripples", []) or []) == len(st_dual_b.get("active_ripples", []) or [])
 
     # Guard path: registered handler failure should not fall through and double-apply legacy side effects.
     from engine.world import timers as timers_mod

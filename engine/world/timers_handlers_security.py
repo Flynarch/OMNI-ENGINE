@@ -8,7 +8,8 @@ def handle_police_sweep(state: dict[str, Any], ev: dict[str, Any], *, day: int, 
 
 
 def handle_corporate_lockdown(state: dict[str, Any], ev: dict[str, Any], *, day: int, time_min: int) -> bool:
-    from engine.world.timers import _push_news, _queue_ripple
+    from engine.world.timers_bus import enqueue_ripple as _queue_ripple
+    from engine.world.timers_bus import push_news as _push_news
 
     payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
     loc = str(payload.get("location", "") or str(state.get("player", {}).get("location", "") or "")).strip().lower()
@@ -72,7 +73,8 @@ def handle_corporate_lockdown(state: dict[str, Any], ev: dict[str, Any], *, day:
 
 
 def handle_investigation_sweep(state: dict[str, Any], ev: dict[str, Any], *, day: int, time_min: int) -> bool:
-    from engine.world.timers import _push_news, _queue_ripple
+    from engine.world.timers_bus import enqueue_ripple as _queue_ripple
+    from engine.world.timers_bus import push_news as _push_news
 
     payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
     loc = str(payload.get("location", "") or str(state.get("player", {}).get("location", "") or "")).strip().lower()
@@ -118,7 +120,8 @@ def handle_investigation_sweep(state: dict[str, Any], ev: dict[str, Any], *, day
 
 
 def handle_manhunt_lockdown(state: dict[str, Any], ev: dict[str, Any], *, day: int, time_min: int) -> bool:
-    from engine.world.timers import _push_news, _queue_ripple
+    from engine.world.timers_bus import enqueue_ripple as _queue_ripple
+    from engine.world.timers_bus import push_news as _push_news
 
     payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
     loc = str(payload.get("location", "") or str(state.get("player", {}).get("location", "") or "")).strip().lower()
@@ -171,7 +174,8 @@ def handle_manhunt_lockdown(state: dict[str, Any], ev: dict[str, Any], *, day: i
 
 
 def handle_npc_sell_info(state: dict[str, Any], ev: dict[str, Any], *, day: int, time_min: int) -> bool:
-    from engine.world.timers import _push_news, _queue_ripple
+    from engine.world.timers_bus import enqueue_ripple as _queue_ripple
+    from engine.world.timers_bus import push_news as _push_news
 
     payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
     npc = str(payload.get("npc", "unknown") or "unknown")

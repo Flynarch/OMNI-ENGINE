@@ -5,7 +5,8 @@ from typing import Any
 
 def handle_delivery_drop(state: dict[str, Any], ev: dict[str, Any], *, day: int, time_min: int) -> bool:
     payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
-    from engine.world.timers import _push_news, _queue_ripple
+    from engine.world.timers_bus import enqueue_ripple as _queue_ripple
+    from engine.world.timers_bus import push_news as _push_news
 
     loc = str(payload.get("location", "") or str((state.get("player", {}) or {}).get("location", "") or "")).strip().lower()
     drop_district = str(payload.get("drop_district", "") or "").strip().lower()
@@ -90,7 +91,8 @@ def handle_delivery_drop(state: dict[str, Any], ev: dict[str, Any], *, day: int,
 
 def handle_delivery_expire(state: dict[str, Any], ev: dict[str, Any], *, day: int, time_min: int) -> bool:
     payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
-    from engine.world.timers import _push_news, _queue_ripple
+    from engine.world.timers_bus import enqueue_ripple as _queue_ripple
+    from engine.world.timers_bus import push_news as _push_news
 
     loc = str(payload.get("location", "") or "").strip().lower()
     drop_district = str(payload.get("drop_district", "") or "").strip().lower()
@@ -153,7 +155,8 @@ def handle_delivery_expire(state: dict[str, Any], ev: dict[str, Any], *, day: in
 
 def handle_black_market_offer(state: dict[str, Any], ev: dict[str, Any], *, day: int, time_min: int) -> bool:
     payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
-    from engine.world.timers import _push_news, _queue_ripple
+    from engine.world.timers_bus import enqueue_ripple as _queue_ripple
+    from engine.world.timers_bus import push_news as _push_news
 
     loc = str(payload.get("location", "") or str(state.get("player", {}).get("location", "") or "")).strip().lower()
     try:

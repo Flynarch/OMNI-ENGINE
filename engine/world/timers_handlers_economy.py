@@ -4,7 +4,8 @@ from typing import Any
 
 
 def handle_debt_collection_ping(state: dict[str, Any], ev: dict[str, Any], *, day: int, time_min: int) -> bool:
-    from engine.world.timers import _push_news, _queue_ripple
+    from engine.world.timers_bus import enqueue_ripple as _queue_ripple
+    from engine.world.timers_bus import push_news as _push_news
 
     payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
     try:

@@ -170,7 +170,7 @@ def apply_social_decay(state: dict[str, Any], npc_id: str) -> dict[str, int]:
 
 
 def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[str, Any]:
-    domain = action_ctx.get("domain", "evasion")
+    domain = str(action_ctx.get("roll_domain", action_ctx.get("domain", "evasion")) or "evasion")
     trained = bool(action_ctx.get("trained", True))
     pair = base_pair(domain)
     base = pair[0 if trained else 1]

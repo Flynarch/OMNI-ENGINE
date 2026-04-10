@@ -14,7 +14,7 @@ from ai.intent_resolver import resolve_intent
 from ai.parser import apply_memory_hash_to_state, enforce_stop_sequence_output, parse_memory_hash, record_ai_parse_health
 from ai.turn_prompt import build_system_prompt, build_turn_package, get_narration_lang
 from display.renderer import console, render_monitor, stream_render
-from engine.core.action_intent import apply_active_scene_intent_lock, parse_action_intent
+from engine.core.action_intent import apply_active_scene_intent_lock, normalize_action_ctx, parse_action_intent
 from engine.core.pipeline import run_pipeline
 from engine.player.boot_economy import format_boot_economy_preview
 from engine.core.seeds import list_seed_names
@@ -2498,7 +2498,7 @@ def main() -> None:
         # 1) Intent resolution: prefer LLM, fallback to heuristic parser.
         intent = resolve_intent(state, cmd)
         if intent:
-            from engine.core.action_intent import apply_step_to_action_ctx, merge_intent_into_action_ctx, select_best_step
+            from engine.core.action_intent import apply_step_to_action_ctx, merge_intent_into_action_ctx, normalize_action_ctx, select_best_step
 
             action_ctx = parse_action_intent(cmd)
             merge_intent_into_action_ctx(action_ctx, intent)
@@ -2532,20 +2532,27 @@ def main() -> None:
                     action_ctx["has_stakes"] = True
             if action_ctx.get("domain") == "combat" and action_ctx.get("action_type") != "combat":
                 action_ctx["action_type"] = "combat"
-            try:
-                tcm = int(action_ctx.get("time_cost_min", 0) or 0)
-            except Exception:
-                tcm = 0
-            if tcm > 0:
-                if action_ctx.get("action_type") == "travel":
-                    action_ctx["travel_minutes"] = max(5, min(240, tcm))
-                else:
-                    action_ctx["instant_minutes"] = max(1, min(60, tcm))
+            # Keep legacy path intact; normalizer runs in shadow mode below.
         else:
             action_ctx = parse_action_intent(cmd)
             meta = state.setdefault("meta", {})
             meta["last_intent_source"] = "parser_fallback"
             meta["last_intent_raw"] = None
+
+        try:
+            shadow_norm = normalize_action_ctx(action_ctx)
+            mismatches: list[str] = []
+            for k in ("action_type", "domain", "roll_domain", "instant_minutes", "travel_minutes"):
+                if k in shadow_norm and shadow_norm.get(k) != action_ctx.get(k):
+                    mismatches.append(k)
+            if mismatches:
+                meta = state.setdefault("meta", {})
+                meta["action_ctx_shadow_mismatch"] = int(meta.get("action_ctx_shadow_mismatch", 0) or 0) + 1
+                state.setdefault("world_notes", []).append(
+                    f"[ActionCtxShadow] mismatch keys={','.join(mismatches)}"
+                )
+        except Exception as e:
+            _record_soft_error(state, "main.action_ctx_shadow", e)
 
         # Visibility hint (for attention/trace scaling on combat/hacking).
         cmd_norm = str(action_ctx.get("normalized_input", cmd) or cmd).lower()

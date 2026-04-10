@@ -113,7 +113,8 @@ def handle_informant_tip(state: dict[str, Any], ev: dict[str, Any], *, day: int,
 
 def handle_npc_report(state: dict[str, Any], ev: dict[str, Any], *, day: int, time_min: int) -> bool:
     payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
-    from engine.world.timers import _push_news, _queue_ripple
+    from engine.world.timers_bus import enqueue_ripple as _queue_ripple
+    from engine.world.timers_bus import push_news as _push_news
 
     reporter = str(payload.get("reporter", "unknown") or "unknown")
     aff = str(payload.get("affiliation", "") or "").strip().lower()
@@ -215,7 +216,7 @@ def handle_paper_trail_ping(state: dict[str, Any], ev: dict[str, Any], *, day: i
 
 def handle_npc_offer(state: dict[str, Any], ev: dict[str, Any], *, day: int, time_min: int) -> bool:
     payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
-    from engine.world.timers import _queue_ripple
+    from engine.world.timers_bus import enqueue_ripple as _queue_ripple
 
     npc = str(payload.get("npc", "unknown") or "unknown")
     role = str(payload.get("role", "civilian") or "civilian")

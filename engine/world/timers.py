@@ -3,6 +3,12 @@ from __future__ import annotations
 from typing import Any
 import hashlib
 
+from engine.world.timers_bus import can_surface_ripple as _bus_can_surface_ripple
+from engine.world.timers_bus import enqueue_ripple as _bus_enqueue_ripple
+from engine.world.timers_bus import push_news as _bus_push_news
+from engine.world.timers_router import apply_triggered_events as _apply_triggered_events_v2
+from engine.world.timers_scheduler import collect_due_items as _collect_due_items_v2
+
 
 def _record_soft_error(state: dict[str, Any], scope: str, err: Exception) -> None:
     try:
@@ -30,85 +36,15 @@ def _reset_daily_attrition_counters(state: dict[str, Any]) -> None:
 
 
 def _can_surface_ripple(state: dict[str, Any], rp: dict[str, Any]) -> bool:
-    """Visibility/propagation gate: a ripple should only surface if player can logically know it."""
-    propagation = str(rp.get("propagation", "local_witness") or "local_witness").lower()
-    origin_loc = str(rp.get("origin_location", "") or "").strip().lower()
-    cur_loc = str(state.get("player", {}).get("location", "") or "").strip().lower()
-    origin_faction = str(rp.get("origin_faction", "") or "").strip().lower()
-
-    # Default rule: local witness/rumor requires being in the same location.
-    if propagation in ("local", "local_witness", "witness"):
-        return bool(origin_loc and cur_loc and origin_loc == cur_loc)
-
-    # Contacts can inform you across locations (phone/DM), if you have contacts at all.
-    if propagation in ("contacts", "contact_network"):
-        contacts = (state.get("world", {}) or {}).get("contacts", {}) or {}
-        if not isinstance(contacts, dict) or len(contacts) == 0:
-            return False
-        # If ripple is tagged with origin_faction, require a logical link:
-        # - a contact with matching affiliation, OR
-        # - a very high-trust contact (relay), but relay will be delayed (handled in update_timers).
-        if origin_faction:
-            for _n, c in contacts.items():
-                if not isinstance(c, dict):
-                    continue
-                aff = str(c.get("affiliation", "") or "").strip().lower()
-                if aff == origin_faction:
-                    return True
-            # Relay path: allow surfacing only after a delay window.
-            try:
-                for _n, c in contacts.items():
-                    if not isinstance(c, dict):
-                        continue
-                    if int(c.get("trust", 0) or 0) >= 85:
-                        # Only allow after at least one reschedule attempt (≈ "it takes time to reach you").
-                        return int(rp.get("surface_attempts", 0) or 0) >= 1
-            except Exception:
-                return False
-            # Indirect leak fallback: after multiple failed attempts, allow surfacing as "general chatter"
-            # so important contact ripples don't silently disappear forever.
-            try:
-                return int(rp.get("surface_attempts", 0) or 0) >= 2
-            except Exception:
-                return False
-        return True
-
-    # Faction networks can propagate across locations.
-    if propagation in ("faction_network", "global", "broadcast"):
-        return True
-
-    # Unknown propagation: be conservative.
-    return False
+    return _bus_can_surface_ripple(state, rp)
 
 
 def _push_news(state: dict[str, Any], *, text: str, source: str = "broadcast") -> None:
-    """Append a bounded, structured headline to world.news_feed (quests-compatible)."""
-    try:
-        from engine.social.news import push_news
-
-        push_news(state, text=text, source=source)
-    except Exception:
-        # Fallback to prior behavior if imports fail.
-        meta = state.get("meta", {}) or {}
-        day = int(meta.get("day", 1) or 1)
-        world = state.setdefault("world", {})
-        feed = world.setdefault("news_feed", [])
-        if not isinstance(feed, list):
-            feed = []
-            world["news_feed"] = feed
-        t = str(text)[:140]
-        src = str(source or "broadcast")
-        for it in feed[-12:]:
-            if isinstance(it, dict) and int(it.get("day", -1)) == day and str(it.get("text", "")) == t:
-                return
-        feed.append({"day": day, "text": t, "source": src})
-        world["news_feed"] = feed[-50:]
+    _bus_push_news(state, text=text, source=source)
 
 
 def _queue_ripple(state: dict[str, Any], rp: dict[str, Any]) -> None:
-    from engine.social.ripple_queue import enqueue_ripple
-
-    enqueue_ripple(state, rp)
+    _bus_enqueue_ripple(state, rp)
 
 
 EventHandler = Any
@@ -894,94 +830,15 @@ _register_event_handlers()
 
 
 def _apply_triggered_events(state: dict[str, Any], triggered: list[dict[str, Any]]) -> None:
-    """Apply deterministic effects for known event types."""
-    if not triggered:
-        return
-    meta = state.get("meta", {}) or {}
-    day = int(meta.get("day", 1) or 1)
-    time_min = int(meta.get("time_min", 0) or 0)
-
-    for ev in triggered:
-        if not isinstance(ev, dict):
-            continue
-        et = str(ev.get("event_type", "") or "")
-        payload = ev.get("payload") or {}
-        if not isinstance(payload, dict):
-            payload = {}
-        # Router audit trail (casefile) for high-signal events.
-        try:
-            from engine.systems.encounter_router import audit_casefile_for_event
-
-            audit_casefile_for_event(state, ev)
-        except Exception as e:
-            try:
-                from engine.core.errors import record_error
-
-                record_error(state, f"timers.audit_casefile.{et}", e)
-            except Exception:
-                pass
-
-        # Router-first for scene-backed encounters: start/queue scene + minimal foreshadow, then skip heavy resolution here.
-        routed_fp: dict[str, Any] | None = None
-        try:
-            from engine.systems.encounter_router import foreshadow_for_routed_event
-
-            fp = foreshadow_for_routed_event(state, ev)
-            if isinstance(fp, dict):
-                routed_fp = fp
-        except Exception as e:
-            try:
-                from engine.core.errors import record_error
-
-                record_error(state, f"timers.router_first.foreshadow.{et}", e)
-            except Exception:
-                pass
-        if isinstance(routed_fp, dict):
-            try:
-                from engine.systems.encounter_router import handle_triggered_event
-
-                handle_triggered_event(state, ev)
-                text = str(routed_fp.get("text", "") or "").strip()
-                if text:
-                    _push_news(state, text=text, source=str(routed_fp.get("news_source", "police") or "police"))
-                _queue_ripple(
-                    state,
-                    {
-                        "kind": str(routed_fp.get("ripple_kind", et) or et),
-                        "text": text or et,
-                        "triggered_day": day,
-                        "surface_day": day,
-                        "surface_time": min(1439, time_min + 2),
-                        "surfaced": False,
-                        "propagation": "local_witness",
-                        "origin_location": str(routed_fp.get("origin_location", "") or "").strip().lower(),
-                        "origin_faction": str(routed_fp.get("origin_faction", "") or "").strip().lower() or "police",
-                        "witnesses": [],
-                        "surface_attempts": 0,
-                        "meta": routed_fp.get("meta") if isinstance(routed_fp.get("meta"), dict) else {},
-                    },
-                )
-            except Exception as e:
-                try:
-                    from engine.core.errors import record_error
-
-                    record_error(state, f"timers.router_first.handle.{et}", e)
-                except Exception:
-                    pass
-                # Avoid falling through to registry/legacy after a routed-event partial failure.
-                state.setdefault("world_notes", []).append(f"[Timers] router-first handler failed for event_type={et}")
-            continue
-
-        handled_by_registry = _dispatch_registered_event_handler(state, ev, day=day, time_min=time_min)
-        if handled_by_registry:
-            continue
-        if et in EVENT_HANDLERS:
-            # Registered handler failed unexpectedly; avoid double-applying side effects.
-            state.setdefault("world_notes", []).append(f"[Timers] registered handler failed for event_type={et}")
-            continue
-
-        if _handle_event_legacy_by_type(state, et=et, payload=payload, day=day, time_min=time_min):
-            continue
+    _apply_triggered_events_v2(
+        state,
+        triggered,
+        push_news=_push_news,
+        queue_ripple=_queue_ripple,
+        dispatch_registered_event_handler=_dispatch_registered_event_handler,
+        handle_event_legacy_by_type=_handle_event_legacy_by_type,
+        event_handlers=EVENT_HANDLERS,
+    )
 
 
 def _collect_due_items(
@@ -990,27 +847,12 @@ def _collect_due_items(
     cur_day: int,
     cur_min: int,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[tuple[tuple[int, int], str, dict[str, Any]]]]:
-    due_events: list[dict[str, Any]] = []
-    for ev in state.get("pending_events", []):
-        if not isinstance(ev, dict) or ev.get("triggered"):
-            continue
-        if (int(ev.get("due_day", 99999)), int(ev.get("due_time", 99999))) <= (cur_day, cur_min):
-            due_events.append(ev)
+    return _collect_due_items_v2(state, cur_day=cur_day, cur_min=cur_min)
 
-    due_ripples: list[dict[str, Any]] = []
-    for rp in state.get("active_ripples", []):
-        if not isinstance(rp, dict) or rp.get("surfaced"):
-            continue
-        if (int(rp.get("surface_day", 99999)), int(rp.get("surface_time", 99999))) <= (cur_day, cur_min):
-            due_ripples.append(rp)
 
-    items: list[tuple[tuple[int, int], str, dict[str, Any]]] = []
-    for ev in due_events:
-        items.append(((int(ev.get("due_day", 99999)), int(ev.get("due_time", 99999))), "event", ev))
-    for rp in due_ripples:
-        items.append(((int(rp.get("surface_day", 99999)), int(rp.get("surface_time", 99999))), "ripple", rp))
-    items.sort(key=lambda x: (x[0][0], x[0][1], x[1]))
-    return due_events, due_ripples, items
+def update_timers_v2(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
+    """Composed-path alias used by dual-run equivalence harness."""
+    update_timers(state, action_ctx)
 
 
 def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:

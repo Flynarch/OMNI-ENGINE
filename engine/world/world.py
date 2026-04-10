@@ -480,7 +480,7 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                     state.setdefault("world_notes", []).append(f"[Geopol] Sanction {c1}↔{c2}")
                     # News surfaces via broadcast (player can know).
                     try:
-                        from engine.world.timers import _push_news  # internal helper used elsewhere in timers
+                        from engine.world.timers_bus import push_news as _push_news
 
                         _push_news(state, text=f"Sanksi dagang meningkat: {c1} ↔ {c2}.", source="broadcast")
                     except Exception:

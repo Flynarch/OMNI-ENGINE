@@ -848,3 +848,28 @@ def select_best_step(action_ctx: dict[str, Any], state: dict[str, Any]) -> str |
         pass
     return None
 
+
+def normalize_action_ctx(action_ctx: dict[str, Any]) -> dict[str, Any]:
+    """Pure normalizer for action_ctx, additive-only for compatibility."""
+    src = dict(action_ctx) if isinstance(action_ctx, dict) else {}
+    out = dict(src)
+    domain = str(out.get("domain", "evasion") or "evasion").strip().lower() or "evasion"
+    action_type = str(out.get("action_type", "instant") or "instant").strip().lower() or "instant"
+    if domain == "combat" and action_type != "combat":
+        action_type = "combat"
+
+    out["domain"] = domain
+    out["action_type"] = action_type
+    out["roll_domain"] = str(out.get("roll_domain", domain) or domain).strip().lower() or domain
+
+    try:
+        tcm = int(out.get("time_cost_min", 0) or 0)
+    except Exception:
+        tcm = 0
+    if tcm > 0:
+        if action_type == "travel":
+            out["travel_minutes"] = max(5, min(240, tcm))
+        else:
+            out["instant_minutes"] = max(1, min(60, tcm))
+    return out
+
