@@ -2934,7 +2934,7 @@ def _smoke() -> None:
     assert "Weather (engine)" in _tp or "Cuaca (engine)" in _tp
 
     # Bio: worst infection controls recovery block; shower intent resets hygiene clock; BAL-driven thresholds.
-    from engine.player.bio import update_bio
+    from engine.player.bio import update_bio, update_hunger, update_mood
 
     st_bio = initialize_state({"name": "BioVerify", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_bio.setdefault("bio", {})["hours_since_shower"] = 10.0
@@ -2971,6 +2971,51 @@ def _smoke() -> None:
         },
     )
     assert float((st_bio.get("bio", {}) or {}).get("hours_since_shower", 99)) == 0.0
+    # Hunger: boundary labels and elapsed-time growth should stay deterministic.
+    hb = st_bio.setdefault("bio", {})
+    for _h, _lbl in ((0.0, "full"), (20.0, "full"), (21.0, "okay"), (40.0, "okay"), (41.0, "hungry"), (65.0, "hungry"), (66.0, "starving"), (85.0, "starving"), (86.0, "critical"), (100.0, "critical")):
+        hb["hunger"] = _h
+        update_hunger(st_bio, {"action_type": "instant", "instant_minutes": 0, "time_breakdown": [{"label": "instant", "minutes": 0}]})
+        assert str((st_bio.get("bio", {}) or {}).get("hunger_label", "")) == _lbl
+    hb["hunger"] = 0.0
+    update_hunger(st_bio, {"action_type": "instant", "instant_minutes": 60, "time_breakdown": [{"label": "instant", "minutes": 60}]})
+    assert abs(float((st_bio.get("bio", {}) or {}).get("hunger", 0.0)) - 4.0) < 0.0001
+    # Mood: label boundaries should map deterministically across configured ranges.
+    st_bio.setdefault("economy", {}).update({"cash": 100, "debt": 0})
+    st_bio.setdefault("bio", {}).update(
+        {
+            "sleep_debt": 0.0,
+            "acute_stress": False,
+            "sanity_debt": 0,
+            "hygiene_tax_active": False,
+            "mood_history": [],
+            "mental_spiral": False,
+        }
+    )
+    for _score, _label in ((100.0, "great"), (80.0, "great"), (79.0, "okay"), (60.0, "okay"), (59.0, "meh"), (40.0, "meh"), (39.0, "bad"), (20.0, "bad"), (19.0, "broken"), (0.0, "broken")):
+        st_bio["bio"]["mood_score"] = _score
+        st_bio["bio"]["hunger"] = 0.0
+        update_mood(st_bio, {"action_type": "instant", "instant_minutes": 1, "time_breakdown": [{"label": "instant", "minutes": 1}]})
+        assert str((st_bio.get("bio", {}) or {}).get("mood_label", "")) == _label
+    # Mood should include hunger penalty integration.
+    st_bio["bio"].update({"mood_score": 90.0, "hunger": 41.0, "sleep_debt": 0.0, "acute_stress": False, "sanity_debt": 0, "hygiene_tax_active": False})
+    update_mood(st_bio, {"action_type": "instant", "instant_minutes": 1, "time_breakdown": [{"label": "instant", "minutes": 1}]})
+    assert abs(float((st_bio.get("bio", {}) or {}).get("mood_score", 0.0)) - 85.0) < 0.0001
+    st_bio["bio"]["mood_score"] = 90.0
+    st_bio["bio"]["hunger"] = 66.0
+    update_mood(st_bio, {"action_type": "instant", "instant_minutes": 1, "time_breakdown": [{"label": "instant", "minutes": 1}]})
+    assert abs(float((st_bio.get("bio", {}) or {}).get("mood_score", 0.0)) - 75.0) < 0.0001
+    st_bio["bio"]["mood_score"] = 90.0
+    st_bio["bio"]["hunger"] = 86.0
+    update_mood(st_bio, {"action_type": "instant", "instant_minutes": 1, "time_breakdown": [{"label": "instant", "minutes": 1}]})
+    assert abs(float((st_bio.get("bio", {}) or {}).get("mood_score", 0.0)) - 65.0) < 0.0001
+    # Mood: 3 latest bad/broken entries should activate mental spiral; positive rebound should clear it.
+    st_bio["bio"].update({"mood_score": 10.0, "mood_history": ["meh", "bad", "broken", "bad"]})
+    update_mood(st_bio, {"action_type": "instant", "instant_minutes": 1, "time_breakdown": [{"label": "instant", "minutes": 1}]})
+    assert bool((st_bio.get("bio", {}) or {}).get("mental_spiral", False)) is True
+    st_bio["bio"]["mood_score"] = 95.0
+    update_mood(st_bio, {"action_type": "instant", "instant_minutes": 1, "time_breakdown": [{"label": "instant", "minutes": 1}]})
+    assert bool((st_bio.get("bio", {}) or {}).get("mental_spiral", True)) is False
 
     # Intimacy: consensual path parses; aftermath sets satisfaction + partner mood (fade-to-black is LLM prompt).
     from engine.core.action_intent import parse_action_intent

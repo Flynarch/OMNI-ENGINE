@@ -31,6 +31,12 @@
     "hours_since_shower": 0,
     "hygiene_tax_active": false,
     "acute_stress": false,
+    "hunger": 0.0,
+    "hunger_label": "full",
+    "mood_score": 50.0,
+    "mood_label": "meh",
+    "mood_history": [],
+    "mental_spiral": false,
     "hallucination_type": "none",
     "narrator_drift_state": "stable"
   },

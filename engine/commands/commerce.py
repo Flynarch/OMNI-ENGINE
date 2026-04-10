@@ -3,6 +3,98 @@ from __future__ import annotations
 from typing import Any, Callable
 
 
+def _shop_item_row(state: dict[str, Any], item_id: str) -> dict[str, Any] | None:
+    world = state.get("world", {}) or {}
+    idx = (world.get("content_index", {}) or {}) if isinstance(world, dict) else {}
+    items = idx.get("items", {}) if isinstance(idx, dict) else {}
+    if not isinstance(items, dict):
+        return None
+    row = items.get(str(item_id or "").strip())
+    return row if isinstance(row, dict) else None
+
+
+def _item_tags(row: dict[str, Any]) -> list[str]:
+    tags = row.get("tags", [])
+    if not isinstance(tags, list):
+        return []
+    out: list[str] = []
+    for t in tags[:40]:
+        if isinstance(t, str) and t.strip():
+            s = t.strip().lower()
+            if s not in out:
+                out.append(s)
+    return out
+
+
+def _is_food_item(state: dict[str, Any], item_id: str) -> bool:
+    row = _shop_item_row(state, item_id)
+    if not isinstance(row, dict):
+        return False
+    tags = _item_tags(row)
+    return "food" in tags or "ration" in tags or "snack" in tags
+
+
+def _food_restore_value(state: dict[str, Any], item_id: str) -> float:
+    row = _shop_item_row(state, item_id)
+    if not isinstance(row, dict):
+        return 20.0
+    tags = _item_tags(row)
+    try:
+        calories = float(row.get("calories", 0) or 0)
+    except Exception:
+        calories = 0.0
+    if calories > 0:
+        return max(8.0, min(50.0, round(calories / 16.0, 2)))
+    if "meal" in tags:
+        return 35.0
+    if "ration" in tags:
+        return 30.0
+    if "snack" in tags:
+        return 18.0
+    if "drink" in tags or "water" in tags:
+        return 10.0
+    return 22.0
+
+
+def _remove_item_once_from_inventory(state: dict[str, Any], item_id: str) -> bool:
+    inv = state.setdefault("inventory", {})
+    if not isinstance(inv, dict):
+        return False
+    iid = str(item_id or "").strip()
+    if not iid:
+        return False
+    for key in ("pocket_contents", "bag_contents"):
+        arr = inv.get(key)
+        if isinstance(arr, list):
+            for i, x in enumerate(arr):
+                if str(x) == iid:
+                    del arr[i]
+                    return True
+    return False
+
+
+def _apply_hunger_reduction(state: dict[str, Any], amount: float) -> tuple[float, float, str]:
+    bio = state.setdefault("bio", {})
+    try:
+        before = float(bio.get("hunger", 0.0) or 0.0)
+    except Exception:
+        before = 0.0
+    after = max(0.0, min(100.0, round(before - max(0.0, amount), 2)))
+    if after <= 20.0:
+        label = "full"
+    elif after <= 40.0:
+        label = "okay"
+    elif after <= 65.0:
+        label = "hungry"
+    elif after <= 85.0:
+        label = "starving"
+    else:
+        label = "critical"
+    bio["hunger"] = after
+    bio["hunger_label"] = label
+    return before, after, label
+
+
 def handle_commerce(
     state: dict[str, Any],
     cmd: str,
@@ -18,6 +110,58 @@ def handle_commerce(
     get_capacity_status: Callable[[dict[str, Any]], Any],
 ) -> bool:
     up = cmd.upper()
+    if up == "EAT" or up.startswith("EAT "):
+        parts = cmd.split(maxsplit=1)
+        want_iid = parts[1].strip() if len(parts) >= 2 else ""
+        inv = state.get("inventory", {}) or {}
+        pocket = inv.get("pocket_contents", []) if isinstance(inv, dict) else []
+        bag = inv.get("bag_contents", []) if isinstance(inv, dict) else []
+        candidates: list[str] = []
+        if isinstance(pocket, list):
+            candidates.extend([str(x) for x in pocket if isinstance(x, str)])
+        if isinstance(bag, list):
+            candidates.extend([str(x) for x in bag if isinstance(x, str)])
+        food_in_inv = [iid for iid in candidates if _is_food_item(state, iid)]
+        chosen = ""
+        source = ""
+        if want_iid:
+            if any(iid == want_iid for iid in food_in_inv):
+                chosen = want_iid
+                source = "inventory"
+            else:
+                q = quote_item(state, want_iid)
+                if q and q.category == "food" and bool(q.available):
+                    b = buy_item(state, want_iid, prefer="pocket", delivery="counter")
+                    if bool(b.get("ok")):
+                        chosen = want_iid
+                        source = "market"
+        else:
+            if food_in_inv:
+                chosen = food_in_inv[0]
+                source = "inventory"
+            else:
+                for q in list_shop_quotes(state, limit=20):
+                    if q.category == "food" and bool(q.available):
+                        b = buy_item(state, q.item_id, prefer="pocket", delivery="counter")
+                        if bool(b.get("ok")):
+                            chosen = q.item_id
+                            source = "market"
+                            break
+        if not chosen:
+            console.print("[yellow]EAT: tidak ada makanan di inventory/market.[/yellow]")
+            return True
+        if not _remove_item_once_from_inventory(state, chosen):
+            console.print("[red]EAT failed: item tidak ditemukan di inventory.[/red]")
+            return True
+        restore = _food_restore_value(state, chosen)
+        before, after, hlabel = _apply_hunger_reduction(state, restore)
+        state.setdefault("world_notes", []).append(
+            f"[Bio] Ate {chosen} source={source} hunger {before:.2f}->{after:.2f} ({hlabel})."
+        )
+        console.print(
+            f"[green]EAT OK[/green] {chosen} ({source}) hunger {before:.1f} -> {after:.1f} [{hlabel}]"
+        )
+        return True
     if up == "MARKET":
         eco = state.get("economy", {}) or {}
         mkt = eco.get("market", {}) or {}
@@ -182,7 +326,7 @@ def handle_commerce(
                 stock = "OK" if q.available else "SOLD OUT"
                 tbl.add_row(str(i), q.item_id, q.name, q.category, stock, str(q.buy_price), str(q.sell_price))
             console.print(tbl)
-        console.print("[dim]Use: SHOP [role] [tag <x>] [available] [page N] | BUY <item_id> [xN] [bag|pocket] [counter|dead_drop|courier] | SELL <item_id> [ALL] | PRICE <item_id>[/dim]")
+        console.print("[dim]Use: SHOP [role] [tag <x>] [available] [page N] | BUY <item_id> [xN] [bag|pocket] [counter|dead_drop|courier] | SELL <item_id> [ALL] | PRICE <item_id> | EAT [item_id][/dim]")
         return True
     if up == "PRICE" or up.startswith("PRICE "):
         parts = cmd.split(maxsplit=2)

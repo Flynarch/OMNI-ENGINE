@@ -323,6 +323,24 @@ def _build_compact_monitor_vm(state: dict[str, Any]) -> dict[str, Any]:
     bank = int(eco.get("bank", 0) or 0)
     burn = int(eco.get("daily_burn", 0) or 0)
     bp = str(bio.get("bp_state", "Stable") or "Stable")
+    mood_label = str(bio.get("mood_label", "meh") or "meh").strip().lower()
+    hunger_label = str(bio.get("hunger_label", "full") or "full").strip().lower()
+    mood_emojis = {
+        "great": "😄",
+        "okay": "🙂",
+        "meh": "😐",
+        "bad": "😞",
+        "broken": "💔",
+    }
+    hunger_emojis = {
+        "full": "🍽️",
+        "okay": "🥗",
+        "hungry": "🍞",
+        "starving": "🥀",
+        "critical": "☠️",
+    }
+    mood_emoji = mood_emojis.get(mood_label, "😐")
+    hunger_emoji = hunger_emojis.get(hunger_label, "🍽️")
     try:
         from engine.core.trace import get_trace_tier
 
@@ -342,6 +360,10 @@ def _build_compact_monitor_vm(state: dict[str, Any]) -> dict[str, Any]:
         "bp": bp,
         "trace_pct": trace_pct,
         "tier_lbl": tier_lbl,
+        "mood_label": mood_label,
+        "mood_emoji": mood_emoji,
+        "hunger_label": hunger_label,
+        "hunger_emoji": hunger_emoji,
     }
 
 
@@ -394,6 +416,10 @@ def _render_monitor_compact(state: dict[str, Any]) -> None:
     trace_pct = int(vm["trace_pct"])
     tier_lbl = str(vm["tier_lbl"])
     bp = str(vm["bp"])
+    mood_label = str(vm.get("mood_label", "meh") or "meh")
+    mood_emoji = str(vm.get("mood_emoji", "😐") or "😐")
+    hunger_label = str(vm.get("hunger_label", "full") or "full")
+    hunger_emoji = str(vm.get("hunger_emoji", "🍽️") or "🍽️")
     if trace_pct > 75:
         trace_val_style = "bold red"
     elif trace_pct > 50:
@@ -415,6 +441,10 @@ def _render_monitor_compact(state: dict[str, Any]) -> None:
     gigs_done, _hacks_attempted, penalty, cond_style = _condition_parts(state)
     t.append("[CONDITION] ", style=cond_style)
     t.append(f"Gigs: {gigs_done}/2 | Hack Penalty: -{penalty}%\n", style=cond_style)
+    t.append("[MOOD] ", style="bold blue")
+    t.append(f"Mood: {mood_emoji} {mood_label.title()}\n", style="blue")
+    t.append("[HUNGER] ", style="bold magenta")
+    t.append(f"Hunger: {hunger_emoji} {hunger_label.title()}\n", style="magenta")
 
     nearby = world.get("nearby_items", []) or []
     ids: list[str] = []

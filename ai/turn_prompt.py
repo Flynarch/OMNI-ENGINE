@@ -1038,6 +1038,10 @@ Recent world_notes:
 Blood: {bio.get('blood_volume', 5.0)}L / {bio.get('blood_max', 5.0)}L | BP: {bio.get('bp_state', 'Stable')}
 Sleep Debt: {bio.get('sleep_debt', 0)}h | Infection: {bio.get('infection_pct', 0)}%
 Burnout: {bio.get('burnout', 0)}/10 | Sanity Debt: {bio.get('sanity_debt', 0)}
+[PLAYER MENTAL STATE]
+mood: {bio.get('mood_label', 'meh')} ({bio.get('mood_score', 50.0)})
+spiral: {bio.get('mental_spiral', False)}
+hunger: {bio.get('hunger_label', 'full')} ({bio.get('hunger', 0.0)})
 Cash: {eco.get('cash', 0)} | Bank: {eco.get('bank', 0)} | Debt: {eco.get('debt', 0)} | Daily Burn: {eco.get('daily_burn', 0)}
 FICO: {eco.get('fico', 600)} | AML: {eco.get('aml_status', 'CLEAR')}
 Trace: {trace_display} (tier={trace_tier_id})

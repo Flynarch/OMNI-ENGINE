@@ -135,6 +135,8 @@ def handle_underworld(
             if not bool(r.get("ok")):
                 if str(r.get("reason", "")) == "daily_gig_limit_reached":
                     ui_err("ERROR", "You are physically and mentally exhausted. Get some sleep before taking more gigs.")
+                elif str(r.get("reason", "")) == "hunger_critical":
+                    ui_err("ERROR", "You're starving and can't work. Eat first.")
                 else:
                     ui_err("ERROR", f"WORK failed: {r.get('reason','error')}")
                 return True

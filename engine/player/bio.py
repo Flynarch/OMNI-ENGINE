@@ -30,6 +30,124 @@ def _shower_intent(action_ctx: dict[str, Any]) -> bool:
     return any(w in norm for w in _SHOWER_WORDS)
 
 
+def _mood_label(score: float) -> str:
+    if score >= 80.0:
+        return "great"
+    if score >= 60.0:
+        return "okay"
+    if score >= 40.0:
+        return "meh"
+    if score >= 20.0:
+        return "bad"
+    return "broken"
+
+
+def _hunger_label(score: float) -> str:
+    if score <= 20.0:
+        return "full"
+    if score <= 40.0:
+        return "okay"
+    if score <= 65.0:
+        return "hungry"
+    if score <= 85.0:
+        return "starving"
+    return "critical"
+
+
+def update_hunger(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
+    bio = state.setdefault("bio", {})
+    prev_label = str(bio.get("hunger_label", "full") or "full").strip().lower()
+    try:
+        hunger = float(bio.get("hunger", 0.0) or 0.0)
+    except Exception:
+        hunger = 0.0
+    elapsed = _elapsed_minutes_from_ctx(action_ctx)
+    hunger += (max(0, elapsed) / 60.0) * 4.0
+    hunger = max(0.0, min(100.0, round(hunger, 2)))
+    label = _hunger_label(hunger)
+    bio["hunger"] = hunger
+    bio["hunger_label"] = label
+    if label == "critical" and prev_label != "critical":
+        state.setdefault("world_notes", []).append(
+            "[Bio] Critical hunger reached. Your body is shutting down; find food immediately."
+        )
+
+
+def update_mood(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
+    bio = state.setdefault("bio", {})
+    eco = state.setdefault("economy", {})
+
+    try:
+        raw_base = bio.get("mood_score", 50.0)
+        base = float(50.0 if raw_base is None else raw_base)
+    except Exception:
+        base = 50.0
+    score = max(0.0, min(100.0, base))
+
+    try:
+        sleep_debt = float(bio.get("sleep_debt", 0.0) or 0.0)
+    except Exception:
+        sleep_debt = 0.0
+    score -= min(20.0, sleep_debt * 1.5)
+
+    stress_raw = bio.get("acute_stress", False)
+    if isinstance(stress_raw, bool):
+        score -= 8.0 if stress_raw else 0.0
+    else:
+        try:
+            stress = float(stress_raw or 0.0)
+        except Exception:
+            stress = 0.0
+        score -= min(15.0, max(0.0, stress))
+
+    try:
+        sanity_debt = float(bio.get("sanity_debt", 0) or 0.0)
+    except Exception:
+        sanity_debt = 0.0
+    score -= min(35.0, sanity_debt * 1.25)
+
+    if bool(bio.get("hygiene_tax_active", False)):
+        score -= 4.0
+
+    try:
+        cash = float(eco.get("cash", 0) or 0.0)
+    except Exception:
+        cash = 0.0
+    if cash <= 0:
+        score -= 6.0
+
+    try:
+        debt = float(eco.get("debt", 0) or 0.0)
+    except Exception:
+        debt = 0.0
+    score -= min(18.0, max(0.0, debt) / 500.0)
+
+    hunger = float(bio.get("hunger", 0.0) or 0.0)
+    if hunger >= 86:
+        score -= 25
+    elif hunger >= 66:
+        score -= 15
+    elif hunger >= 41:
+        score -= 5
+
+    _ = action_ctx
+
+    score = max(0.0, min(100.0, round(score, 2)))
+    label = _mood_label(score)
+
+    hist_raw = bio.get("mood_history", [])
+    history = list(hist_raw) if isinstance(hist_raw, list) else []
+    history.append(label)
+    history = history[-5:]
+    recent = history[-3:]
+    mental_spiral = len(recent) == 3 and all(x in ("bad", "broken") for x in recent)
+
+    bio["mood_score"] = score
+    bio["mood_label"] = label
+    bio["mood_history"] = history
+    bio["mental_spiral"] = bool(mental_spiral)
+
+
 def update_bio(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
     """Blood pressure, infection vs recovery, sleep debt, hallucination tier, hygiene clock.
 
@@ -131,3 +249,5 @@ def update_bio(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
     bio["hygiene_tax_active"] = float(bio.get("hours_since_shower", 0) or 0) > float(h_tax)
 
     state.setdefault("flags", {})["hallucination_active"] = hall != "none"
+    update_hunger(state, action_ctx)
+    update_mood(state, action_ctx)

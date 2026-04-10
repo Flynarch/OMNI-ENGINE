@@ -138,9 +138,40 @@ def execute_gig(state: dict[str, Any], gig_id: str) -> dict[str, Any]:
     req = str(target.get("req_skill", "") or "")
     diff = int(target.get("difficulty", 1) or 1)
     lvl = _skill_level(state, req)
+    bio = state.get("bio", {}) or {}
+    try:
+        hunger = float(bio.get("hunger", 0.0) or 0.0)
+    except Exception:
+        hunger = 0.0
+    hunger_penalty = 0
+    if hunger >= 86.0:
+        state.setdefault("world_notes", []).append(
+            "[Bio] You are too hungry to work. Eat first before attempting another gig."
+        )
+        try:
+            b = state.setdefault("bio", {})
+            cur = float(b.get("mood_score", 50.0) or 50.0)
+            b["mood_score"] = max(0.0, round(cur - 15.0, 2))
+        except Exception:
+            pass
+        return {
+            "ok": False,
+            "reason": "hunger_critical",
+            "error_message": "[!] ERROR: You're starving and can't work. Eat first.",
+        }
+    if hunger >= 66.0:
+        hunger_penalty = 20
+        try:
+            b = state.setdefault("bio", {})
+            cur = float(b.get("mood_score", 50.0) or 50.0)
+            b["mood_score"] = max(0.0, round(cur - 6.0, 2))
+        except Exception:
+            pass
+    elif hunger >= 41.0:
+        hunger_penalty = 8
 
     # Chance model (simple, deterministic): higher skill offsets difficulty.
-    chance = 45 + max(0, (lvl - 1) * 6) - (diff * 5)
+    chance = 45 + max(0, (lvl - 1) * 6) - (diff * 5) - hunger_penalty
     chance = max(5, min(95, int(chance)))
     roll = det_roll_1_100(_seed_key(state), _day(state), _turn(state), _loc(state), req, diff, "gig_roll_v1", str(gig_id))
     success = int(roll) <= int(chance)
@@ -158,5 +189,6 @@ def execute_gig(state: dict[str, Any], gig_id: str) -> dict[str, Any]:
         "time_cost_mins": int(target.get("time_cost_mins", 120) or 120),
         "payout_cash": int(target.get("payout_cash", 0) or 0),
         "trace_delta": int(trace_delta),
+        "hunger_penalty": int(hunger_penalty),
     }
 
