@@ -26,6 +26,15 @@ def _ask(prompt: str) -> str:
     return input(prompt).strip()
 
 
+def _record_soft_error(state: dict[str, Any], scope: str, err: Exception) -> None:
+    try:
+        from engine.core.errors import record_error
+
+        record_error(state, scope, err)
+    except Exception:
+        pass
+
+
 def _load_occupation_templates() -> list[dict[str, Any]]:
     """Boot-time helper: read core occupations templates (optional)."""
     try:
@@ -388,8 +397,8 @@ def _snapshot_metrics(state: dict[str, Any]) -> dict[str, Any]:
             sh_status = str(row.get("status", "none") or "none")
             sh_sec = int(row.get("security_level", 0) or 0)
             sh_delin = int(row.get("delinquent_days", 0) or 0)
-    except Exception:
-        pass
+    except Exception as e:
+        _record_soft_error(state, "commands.dispatch_modules", e)
     # Disguise status.
     d = player.get("disguise", {}) or {}
     dis_active = bool(d.get("active", False)) if isinstance(d, dict) else False
@@ -920,8 +929,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             action_ctx["instant_minutes"] = 5
         try:
             run_pipeline(state, action_ctx)
-        except Exception:
-            pass
+        except Exception as e:
+            _record_soft_error(state, "intent.npc_targeting", e)
         if bool(res.get("ended")):
             console.print("[green]SCENE resolved[/green]")
         else:
@@ -1078,8 +1087,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                         console.print("- allies: " + ", ".join(allies[:6]) + (" ..." if len(allies) > 6 else ""))
                     if rivals:
                         console.print("- rivals: " + ", ".join(rivals[:6]) + (" ..." if len(rivals) > 6 else ""))
-        except Exception:
-            pass
+        except Exception as e:
+            _record_soft_error(state, "intent.auto_stay", e)
         return True
     if up == "COUNTRIES":
         try:

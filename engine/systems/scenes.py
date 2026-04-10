@@ -9,6 +9,15 @@ from engine.systems.scenes_raid import dispatch_raid_advance, dispatch_raid_auto
 from engine.systems.scenes_sting import dispatch_sting_advance, dispatch_sting_auto
 
 
+def _record_soft_error(state: dict[str, Any], scope: str, err: Exception) -> None:
+    try:
+        from engine.core.errors import record_error
+
+        record_error(state, scope, err)
+    except Exception:
+        pass
+
+
 def _now(state: dict[str, Any]) -> tuple[int, int]:
     meta = state.get("meta", {}) or {}
     try:
@@ -88,8 +97,8 @@ def enqueue_scene(state: dict[str, Any], row: dict[str, Any]) -> bool:
             for it in q[-12:]:
                 if isinstance(it, dict) and str(it.get("sig", "") or "").strip() == sig:
                     return False
-    except Exception:
-        pass
+    except Exception as e:
+        _record_soft_error(state, "scenes.enqueue_scene.dedupe", e)
     q.append(row)
     state["scene_queue"] = q[-24:]
     return True
@@ -677,8 +686,8 @@ def start_checkpoint_sweep_scene(state: dict[str, Any], *, payload: dict[str, An
                 "meta": {"attention": att},
             },
         )
-    except Exception:
-        pass
+    except Exception as e:
+        _record_soft_error(state, "scenes.sync_faction_statuses", e)
     return {"ok": True, "scene_id": scene_id, "scene_type": "checkpoint_sweep"}
 
 

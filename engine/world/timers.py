@@ -4,6 +4,15 @@ from typing import Any
 import hashlib
 
 
+def _record_soft_error(state: dict[str, Any], scope: str, err: Exception) -> None:
+    try:
+        from engine.core.errors import record_error
+
+        record_error(state, scope, err)
+    except Exception:
+        pass
+
+
 def _advance(meta: dict[str, Any], minutes: int) -> None:
     meta["time_min"] = int(meta.get("time_min", 0)) + minutes
     while meta["time_min"] >= 1440:
@@ -1330,8 +1339,8 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                 rp["surface_time"] = 8 * 60
                 if prop in ("contacts", "contact_network"):
                     rp["relay_pending"] = True
-    except Exception:
-        pass
+    except Exception as e:
+        _record_soft_error(state, "timers.tick_disguise_expiry", e)
 
     state["triggered_events_this_turn"] = triggered
     if triggered:
@@ -1418,16 +1427,16 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
         from engine.systems.disguise import tick_disguise_expiry
 
         tick_disguise_expiry(state)
-    except Exception:
-        pass
+    except Exception as e:
+        _record_soft_error(state, "timers.tick_effects_expiry", e)
 
     # Status effects expiry tick (player + NPCs).
     try:
         from engine.systems.effects import tick_effects_expiry
 
         tick_effects_expiry(state)
-    except Exception:
-        pass
+    except Exception as e:
+        _record_soft_error(state, "timers.apply_lay_low_bonus", e)
 
     # Safehouse lay-low bonus on rest/sleep.
     try:
@@ -1438,8 +1447,8 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
             from engine.systems.accommodation import apply_accommodation_rest_bonus
 
             apply_accommodation_rest_bonus(state)
-    except Exception:
-        pass
+    except Exception as e:
+        _record_soft_error(state, "timers.cleanup_dead_npcs", e)
 
     # Archive completed items to keep active queues clean.
     if triggered:
@@ -1456,8 +1465,8 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
         from engine.npc.dead_npc import cleanup_dead_npcs
 
         cleanup_dead_npcs(state)
-    except Exception:
-        pass
+    except Exception as e:
+        _record_soft_error(state, "timers.pending_deliveries_bound", e)
     try:
         # Bound pending_deliveries list to avoid unbounded save growth.
         world3 = state.get("world", {}) or {}
