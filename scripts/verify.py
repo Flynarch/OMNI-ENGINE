@@ -2354,6 +2354,62 @@ def _smoke() -> None:
     r_pt = buy_item(st_pt, "compact_pistol", prefer="bag", delivery="courier")
     assert bool(r_pt.get("ok"))
     assert any(isinstance(ev, dict) and ev.get("event_type") == "paper_trail_ping" for ev in (st_pt.get("pending_events") or []))
+    # Execute paper trail and make sure it materializes into npc_report.
+    st_pt.setdefault("meta", {}).update({"day": 1, "time_min": 9 * 60})
+    for ev in (st_pt.get("pending_events") or []):
+        if isinstance(ev, dict) and ev.get("event_type") == "paper_trail_ping":
+            ev["due_day"] = 1
+            ev["due_time"] = 9 * 60
+            ev["triggered"] = False
+    update_timers(st_pt, {"action_type": "instant", "instant_minutes": 0})
+    assert any(isinstance(ev, dict) and ev.get("event_type") == "npc_report" for ev in (st_pt.get("pending_events") or []))
+
+    # Direct registry handler coverage: npc_offer, delivery_expire, debt_collection_ping.
+    st_reg = initialize_state({"name": "RegistryGaps", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_reg.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60})
+    st_reg.setdefault("economy", {})["daily_burn"] = 2
+    st_reg.setdefault("trace", {})["trace_pct"] = 10
+    st_reg.setdefault("world", {}).setdefault("pending_deliveries", []).append(
+        {"delivery_id": "d1", "item_id": "fake_id", "location": "london", "drop_district": "", "delivery": "dead_drop", "delivered": False, "expired": False}
+    )
+    st_reg.setdefault("world", {}).setdefault("nearby_items", []).append(
+        {"id": "fake_id", "delivery": "dead_drop", "delivery_id": "d1"}
+    )
+    st_reg["pending_events"] = [
+        {"event_type": "npc_offer", "due_day": 1, "due_time": 8 * 60, "triggered": False, "payload": {"npc": "Fixer_Jane", "role": "fixer", "service": "trade:weapons"}},
+        {"event_type": "delivery_expire", "due_day": 1, "due_time": 8 * 60, "triggered": False, "payload": {"location": "london", "item_id": "fake_id", "delivery": "dead_drop", "delivery_id": "d1"}},
+        {"event_type": "debt_collection_ping", "due_day": 1, "due_time": 8 * 60, "triggered": False, "payload": {"debt": 50}},
+    ]
+    update_timers(st_reg, {"action_type": "instant", "instant_minutes": 0})
+    offers = (((st_reg.get("world", {}) or {}).get("npc_economy", {}) or {}).get("offers", {}) or {})
+    assert isinstance(offers, dict) and "Fixer_Jane" in offers
+    pd = ((st_reg.get("world", {}) or {}).get("pending_deliveries", []) or [])
+    assert any(isinstance(x, dict) and str(x.get("delivery_id", "")) == "d1" and bool(x.get("expired", False)) for x in pd)
+    nearby = ((st_reg.get("world", {}) or {}).get("nearby_items", []) or [])
+    assert not any(isinstance(x, dict) and str(x.get("delivery_id", "")) == "d1" for x in nearby)
+    assert int((st_reg.get("economy", {}) or {}).get("daily_burn", 0) or 0) >= 3
+    assert int((st_reg.get("trace", {}) or {}).get("trace_pct", 0) or 0) >= 11
+
+    # Guard path: registered handler failure should not fall through and double-apply legacy side effects.
+    from engine.world import timers as timers_mod
+
+    saved_h = timers_mod.EVENT_HANDLERS.get("debt_collection_ping")
+    try:
+        timers_mod.EVENT_HANDLERS["debt_collection_ping"] = lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom"))
+        st_guard = initialize_state({"name": "RegistryFailureGuard", "location": "london", "year": "2025"}, seed_pack="minimal")
+        st_guard.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60})
+        st_guard.setdefault("economy", {})["daily_burn"] = 5
+        st_guard.setdefault("trace", {})["trace_pct"] = 20
+        st_guard["pending_events"] = [
+            {"event_type": "debt_collection_ping", "due_day": 1, "due_time": 8 * 60, "triggered": False, "payload": {"debt": 100}}
+        ]
+        update_timers(st_guard, {"action_type": "instant", "instant_minutes": 0})
+        assert int((st_guard.get("economy", {}) or {}).get("daily_burn", 0) or 0) == 5
+        assert int((st_guard.get("trace", {}) or {}).get("trace_pct", 0) or 0) == 20
+        assert any("registered handler failed for event_type=debt_collection_ping" in str(n) for n in (st_guard.get("world_notes", []) or []))
+    finally:
+        if callable(saved_h):
+            timers_mod.EVENT_HANDLERS["debt_collection_ping"] = saved_h
 
     # SHOP polish: sold out is deterministic under high scarcity.
     st_so = initialize_state({"name": "SoldOutVerify", "location": "tokyo", "year": "2025"}, seed_pack="minimal")
@@ -2763,6 +2819,46 @@ def _smoke() -> None:
     assert st_stay_raid.get("active_scene") is None
     sh_after = (((st_stay_raid.get("world", {}) or {}).get("safehouses", {}) or {}).get("london", {}) or {})
     assert str(sh_after.get("status", "")) == "none"
+
+    # run_pipeline contract: scene_locked should short-circuit without timer advance.
+    from main import run_pipeline as _run_pipeline
+
+    st_pl = initialize_state({"name": "PipelineLock", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_pl.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60})
+    day_before = int(st_pl.get("meta", {}).get("day", 1) or 1)
+    time_before = int(st_pl.get("meta", {}).get("time_min", 0) or 0)
+    rp = _run_pipeline(
+        st_pl,
+        {
+            "action_type": "instant",
+            "domain": "other",
+            "normalized_input": "noop lock",
+            "scene_locked": True,
+            "instant_minutes": 30,
+        },
+    )
+    assert isinstance(rp, dict)
+    assert int(st_pl.get("meta", {}).get("day", 1) or 1) == day_before
+    assert int(st_pl.get("meta", {}).get("time_min", 0) or 0) == time_before
+
+    # handle_special integration should pump pipeline time for WORK/HACK/STAY command paths.
+    st_hs = initialize_state({"name": "SpecialPipeline", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_hs.setdefault("economy", {})["cash"] = 100000
+    st_hs.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60})
+    _handle_special(st_hs, "GIGS")
+    gigs = ((st_hs.get("world", {}) or {}).get("gigs", []) or [])
+    if isinstance(gigs, list) and gigs:
+        gid0 = str((gigs[0] or {}).get("id", "") or "")
+        if gid0:
+            t0 = int(st_hs.get("meta", {}).get("time_min", 0) or 0)
+            _handle_special(st_hs, f"WORK {gid0}")
+            t1 = int(st_hs.get("meta", {}).get("time_min", 0) or 0)
+            assert t1 != t0
+    st_hs.setdefault("inventory", {}).setdefault("bag_contents", []).extend(["laptop_basic", "exploit_kit"])
+    t2 = int(st_hs.get("meta", {}).get("time_min", 0) or 0)
+    _handle_special(st_hs, "HACK atm")
+    t3 = int(st_hs.get("meta", {}).get("time_min", 0) or 0)
+    assert t3 != t2
 
     # Skill level → meaningful roll modifier (BAL_SKILL_MOD_PER_LEVEL).
     from engine.core.modifiers import compute_roll_package

@@ -378,8 +378,13 @@ def _pipeline_post_roll(state: dict[str, Any], action_ctx: dict[str, Any], roll_
         from engine.player.skills import apply_skill_xp_after_roll
 
         apply_skill_xp_after_roll(state, action_ctx, roll_pkg)
-    except Exception:
-        pass
+    except Exception as e:
+        try:
+            from engine.core.errors import record_error
+
+            record_error(state, "pipeline.post_roll.skill_xp", e)
+        except Exception:
+            pass
 
     apply_hacking_after_roll(state, action_ctx, roll_pkg)
     apply_npc_emotion_after_roll(state, action_ctx, roll_pkg)
@@ -393,8 +398,13 @@ def _pipeline_post_roll(state: dict[str, Any], action_ctx: dict[str, Any], roll_
         from engine.social.social_diffusion import apply_social_decays
 
         apply_social_decays(state)
-    except Exception:
-        pass
+    except Exception as e:
+        try:
+            from engine.core.errors import record_error
+
+            record_error(state, "pipeline.post_roll.social_diffusion", e)
+        except Exception:
+            pass
 
     resolve_combat_after_roll(state, action_ctx, roll_pkg)
     stop_sequence_check(state, action_ctx)
@@ -441,8 +451,13 @@ def _snapshot_metrics(state: dict[str, Any]) -> dict[str, Any]:
             w = slot.get("weather", {}) or {}
             if isinstance(w, dict) and w.get("kind"):
                 weather_kind = str(w.get("kind"))
-    except Exception:
-        pass
+    except Exception as e:
+        try:
+            from engine.core.errors import record_error
+
+            record_error(state, "commands.bootstrap_dispatch", e)
+        except Exception:
+            pass
     # Safehouse status at current location.
     sh_status = "none"
     sh_sec = 0
@@ -583,6 +598,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         from engine.commands.underworld import handle_underworld
         from engine.commands.economy import handle_economy
         from engine.commands.scene import handle_scene_commands
+        from engine.commands.session import handle_session
+        from engine.commands.social_intel import handle_social_intel
 
         if handle_misc(state, cmd, fmt_clock=_fmt_clock):
             return True
@@ -591,6 +608,20 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         if handle_economy(state, cmd, run_pipeline=run_pipeline):
             return True
         if handle_scene_commands(state, cmd, run_pipeline=run_pipeline, scene_blocks_command=_scene_blocks_command):
+            return True
+        if handle_session(
+            state,
+            cmd,
+            console=console,
+            previous_path=PREVIOUS,
+            load_state=load_state,
+            get_narration_lang=get_narration_lang,
+            stream_response=stream_response,
+            build_system_prompt=build_system_prompt,
+            stream_render=stream_render,
+        ):
+            return True
+        if handle_social_intel(state, cmd, console=console, table_cls=Table):
             return True
     except Exception:
         pass

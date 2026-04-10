@@ -120,7 +120,13 @@ def _dispatch_registered_event_handler(
         return False
     try:
         return bool(h(state, ev, day=day, time_min=time_min))
-    except Exception:
+    except Exception as e:
+        try:
+            from engine.core.errors import record_error
+
+            record_error(state, f"timers.event_handler.{et}", e)
+        except Exception:
+            pass
         return False
 
 
@@ -833,32 +839,46 @@ def _handle_event_legacy_by_type(
 
 
 def _register_event_handlers() -> None:
-    # Conservative migration: keep behavior by reusing legacy handlers per event.
-    for et in (
-        "social_diffusion_hop",
-        "informant_tip",
-        "npc_report",
-        "paper_trail_ping",
-        "npc_offer",
-        "delivery_drop",
-        "delivery_expire",
-        "npc_sell_info",
-        "police_sweep",
-        "corporate_lockdown",
-        "black_market_offer",
-        "investigation_sweep",
-        "manhunt_lockdown",
-        "debt_collection_ping",
-    ):
-        EVENT_HANDLERS[et] = (
-            lambda state, ev, day, time_min, _et=et: _handle_event_legacy_by_type(
-                state,
-                et=_et,
-                payload=(ev.get("payload") if isinstance(ev.get("payload"), dict) else {}),
-                day=day,
-                time_min=time_min,
-            )
-        )
+    from engine.world.timers_handlers_delivery import (
+        handle_black_market_offer,
+        handle_delivery_drop,
+        handle_delivery_expire,
+    )
+    from engine.world.timers_handlers_economy import handle_debt_collection_ping
+    from engine.world.timers_handlers_security import (
+        handle_corporate_lockdown,
+        handle_investigation_sweep,
+        handle_manhunt_lockdown,
+        handle_npc_sell_info,
+        handle_police_sweep,
+    )
+    from engine.world.timers_handlers_social import (
+        handle_informant_tip,
+        handle_npc_offer,
+        handle_npc_report,
+        handle_paper_trail_ping,
+        handle_social_diffusion_hop,
+    )
+
+    EVENT_HANDLERS.clear()
+    EVENT_HANDLERS.update(
+        {
+            "social_diffusion_hop": handle_social_diffusion_hop,
+            "informant_tip": handle_informant_tip,
+            "npc_report": handle_npc_report,
+            "paper_trail_ping": handle_paper_trail_ping,
+            "npc_offer": handle_npc_offer,
+            "delivery_drop": handle_delivery_drop,
+            "delivery_expire": handle_delivery_expire,
+            "npc_sell_info": handle_npc_sell_info,
+            "police_sweep": handle_police_sweep,
+            "corporate_lockdown": handle_corporate_lockdown,
+            "black_market_offer": handle_black_market_offer,
+            "investigation_sweep": handle_investigation_sweep,
+            "manhunt_lockdown": handle_manhunt_lockdown,
+            "debt_collection_ping": handle_debt_collection_ping,
+        }
+    )
 
 
 _register_event_handlers()
@@ -884,8 +904,13 @@ def _apply_triggered_events(state: dict[str, Any], triggered: list[dict[str, Any
             from engine.systems.encounter_router import audit_casefile_for_event
 
             audit_casefile_for_event(state, ev)
-        except Exception:
-            pass
+        except Exception as e:
+            try:
+                from engine.core.errors import record_error
+
+                record_error(state, f"timers.audit_casefile.{et}", e)
+            except Exception:
+                pass
 
         # Router-first for scene-backed encounters: start/queue scene + minimal foreshadow, then skip heavy resolution here.
         try:
@@ -915,8 +940,13 @@ def _apply_triggered_events(state: dict[str, Any], triggered: list[dict[str, Any
                     },
                 )
                 continue
-        except Exception:
-            pass
+        except Exception as e:
+            try:
+                from engine.core.errors import record_error
+
+                record_error(state, f"timers.router_first.{et}", e)
+            except Exception:
+                pass
 
         handled_by_registry = _dispatch_registered_event_handler(state, ev, day=day, time_min=time_min)
         if handled_by_registry:
