@@ -3322,6 +3322,53 @@ def _smoke() -> None:
     assert all(isinstance(x, dict) for x in (st_q.get("pending_events", []) or []))
     assert all(isinstance(x, dict) for x in (st_q.get("active_ripples", []) or []))
 
+    # Router-first hardening: when routed handler errors, do not fall through to legacy side effects.
+    import engine.systems.encounter_router as _er
+    from engine.world.timers import _apply_triggered_events as _apply_ev
+    st_rf = initialize_state({"name": "RouterFirst", "location": "tokyo", "year": "2025"}, seed_pack="minimal")
+    st_rf.setdefault("player", {})["location"] = "tokyo"
+    ev_rf = {"event_type": "police_sweep", "due_day": 1, "due_time": 0, "triggered": True, "payload": {"location": "tokyo"}}
+    _orig_handle = _er.handle_triggered_event
+    _er.handle_triggered_event = lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom"))
+    try:
+        _apply_ev(st_rf, [ev_rf])
+    finally:
+        _er.handle_triggered_event = _orig_handle
+    notes_rf = st_rf.get("world_notes", []) or []
+    assert any("router-first handler failed" in str(x).lower() for x in notes_rf)
+    world_rf = st_rf.get("world", {}) or {}
+    locs_rf = world_rf.get("locations", {}) or {}
+    tokyo_rf = locs_rf.get("tokyo", {}) if isinstance(locs_rf, dict) else {}
+    restr_rf = (tokyo_rf.get("restrictions", {}) if isinstance(tokyo_rf, dict) else {}) or {}
+    assert int(restr_rf.get("police_sweep_until_day", 0) or 0) == 0
+
+    # Trace sync guard: vehicles + quests mutations should keep trace_status/faction_statuses consistent.
+    from engine.systems.vehicles import steal_vehicle
+    from engine.systems.quests import tick_quest_chains
+    st_ts = initialize_state({"name": "TraceSync", "location": "tokyo", "year": "2025"}, seed_pack="minimal")
+    st_ts.setdefault("meta", {})["day"] = 1
+    st_ts.setdefault("meta", {})["turn"] = 0
+    st_ts.setdefault("skills", {})["stealth"] = {"level": 1}
+    r_steal = steal_vehicle(st_ts, "car_sports")
+    if not bool(r_steal.get("ok")) and bool(r_steal.get("caught")):
+        tr_ts = st_ts.get("trace", {}) or {}
+        pct_ts = int(tr_ts.get("trace_pct", 0) or 0)
+        want = "Ghost" if pct_ts <= 25 else "Flagged" if pct_ts <= 50 else "Investigated" if pct_ts <= 75 else "Manhunt"
+        assert str(tr_ts.get("trace_status", "")) == want
+
+    st_qs = initialize_state({"name": "QuestTraceSync", "location": "tokyo", "year": "2025"}, seed_pack="minimal")
+    st_qs.setdefault("meta", {})["day"] = 5
+    st_qs.setdefault("quests", {})["active"] = [
+        {"id": "QX", "kind": "trace_cleanup", "status": "active", "deadline_day": 1, "failure": {"trace_delta": 7}}
+    ]
+    st_qs.setdefault("quests", {})["completed"] = []
+    st_qs.setdefault("quests", {})["failed"] = []
+    tick_quest_chains(st_qs, {"action_type": "instant", "normalized_input": "wait"})
+    tr_qs = st_qs.get("trace", {}) or {}
+    pct_qs = int(tr_qs.get("trace_pct", 0) or 0)
+    want_qs = "Ghost" if pct_qs <= 25 else "Flagged" if pct_qs <= 50 else "Investigated" if pct_qs <= 75 else "Manhunt"
+    assert str(tr_qs.get("trace_status", "")) == want_qs
+
     # Turn package should expose normalized reputation block for narrator context.
     from ai.turn_prompt import build_turn_package
     from engine.npc.relationship import get_relationship

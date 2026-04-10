@@ -913,40 +913,55 @@ def _apply_triggered_events(state: dict[str, Any], triggered: list[dict[str, Any
                 pass
 
         # Router-first for scene-backed encounters: start/queue scene + minimal foreshadow, then skip heavy resolution here.
+        routed_fp: dict[str, Any] | None = None
         try:
-            from engine.systems.encounter_router import foreshadow_for_routed_event, handle_triggered_event
+            from engine.systems.encounter_router import foreshadow_for_routed_event
 
             fp = foreshadow_for_routed_event(state, ev)
             if isinstance(fp, dict):
+                routed_fp = fp
+        except Exception as e:
+            try:
+                from engine.core.errors import record_error
+
+                record_error(state, f"timers.router_first.foreshadow.{et}", e)
+            except Exception:
+                pass
+        if isinstance(routed_fp, dict):
+            try:
+                from engine.systems.encounter_router import handle_triggered_event
+
                 handle_triggered_event(state, ev)
-                text = str(fp.get("text", "") or "").strip()
+                text = str(routed_fp.get("text", "") or "").strip()
                 if text:
-                    _push_news(state, text=text, source=str(fp.get("news_source", "police") or "police"))
+                    _push_news(state, text=text, source=str(routed_fp.get("news_source", "police") or "police"))
                 _queue_ripple(
                     state,
                     {
-                        "kind": str(fp.get("ripple_kind", et) or et),
+                        "kind": str(routed_fp.get("ripple_kind", et) or et),
                         "text": text or et,
                         "triggered_day": day,
                         "surface_day": day,
                         "surface_time": min(1439, time_min + 2),
                         "surfaced": False,
                         "propagation": "local_witness",
-                        "origin_location": str(fp.get("origin_location", "") or "").strip().lower(),
-                        "origin_faction": str(fp.get("origin_faction", "") or "").strip().lower() or "police",
+                        "origin_location": str(routed_fp.get("origin_location", "") or "").strip().lower(),
+                        "origin_faction": str(routed_fp.get("origin_faction", "") or "").strip().lower() or "police",
                         "witnesses": [],
                         "surface_attempts": 0,
-                        "meta": fp.get("meta") if isinstance(fp.get("meta"), dict) else {},
+                        "meta": routed_fp.get("meta") if isinstance(routed_fp.get("meta"), dict) else {},
                     },
                 )
-                continue
-        except Exception as e:
-            try:
-                from engine.core.errors import record_error
+            except Exception as e:
+                try:
+                    from engine.core.errors import record_error
 
-                record_error(state, f"timers.router_first.{et}", e)
-            except Exception:
-                pass
+                    record_error(state, f"timers.router_first.handle.{et}", e)
+                except Exception:
+                    pass
+                # Avoid falling through to registry/legacy after a routed-event partial failure.
+                state.setdefault("world_notes", []).append(f"[Timers] router-first handler failed for event_type={et}")
+            continue
 
         handled_by_registry = _dispatch_registered_event_handler(state, ev, day=day, time_min=time_min)
         if handled_by_registry:

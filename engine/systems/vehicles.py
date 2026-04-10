@@ -24,6 +24,19 @@ def _clamp(v: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, int(v)))
 
 
+def _set_trace_pct(state: dict[str, Any], pct: int) -> None:
+    tr = state.setdefault("trace", {})
+    p = _clamp(int(pct), 0, 100)
+    tr["trace_pct"] = p
+    tr["trace_status"] = "Ghost" if p <= 25 else "Flagged" if p <= 50 else "Investigated" if p <= 75 else "Manhunt"
+    try:
+        from engine.core.factions import sync_faction_statuses_from_trace
+
+        sync_faction_statuses_from_trace(state)
+    except Exception:
+        pass
+
+
 # Vehicle definitions
 VEHICLE_TYPES = {
     "bicycle": {
@@ -242,17 +255,10 @@ def apply_vehicle_to_travel(state: dict[str, Any], action_ctx: dict[str, Any]) -
             tr = state.setdefault("trace", {})
             cur = int(tr.get("trace_pct", 0) or 0)
             bump = 6 + (10 if bool(vdata.get("stolen")) else 0) + (2 if police_presence >= 4 else 0)
-            tr["trace_pct"] = _clamp(cur + bump, 0, 100)
-            tr["trace_status"] = "Ghost" if tr["trace_pct"] <= 25 else "Flagged" if tr["trace_pct"] <= 50 else "Investigated" if tr["trace_pct"] <= 75 else "Manhunt"
+            _set_trace_pct(state, cur + bump)
             state.setdefault("world_notes", []).append(
                 f"[Vehicle] Road check while using {vid} (trace +{bump}, district_police={police_presence})."
             )
-            try:
-                from engine.core.factions import sync_faction_statuses_from_trace
-
-                sync_faction_statuses_from_trace(state)
-            except Exception:
-                pass
 
 
 def buy_vehicle(state: dict[str, Any], vehicle_id: str) -> dict[str, Any]:
@@ -560,10 +566,9 @@ def travel_with_vehicle(state: dict[str, Any], vehicle_id: str, distance_km: flo
         encounter = {"type": "police_check", "vehicle": vehicle_id}
         # Stolen vehicle = serious trouble
         if vdata.get("stolen"):
-            from engine.core.trace import update_trace
             tr = state.setdefault("trace", {})
             current_trace = int(tr.get("trace_pct", 0) or 0)
-            tr["trace_pct"] = _clamp(current_trace + 15, 0, 100)
+            _set_trace_pct(state, current_trace + 15)
             encounter["stolen_vehicle"] = True
     
     # Condition degrades with use
@@ -676,11 +681,10 @@ def steal_vehicle(state: dict[str, Any], vehicle_id: str) -> dict[str, Any]:
     
     if roll < base_difficulty:
         # Failed - caught!
-        from engine.core.trace import update_trace
         tr = state.setdefault("trace", {})
         current_trace = int(tr.get("trace_pct", 0) or 0)
         trace_increase = 10 + vtype.get("crime_risk", 2) * 5
-        tr["trace_pct"] = _clamp(current_trace + trace_increase, 0, 100)
+        _set_trace_pct(state, current_trace + trace_increase)
         
         return {
             "ok": False,

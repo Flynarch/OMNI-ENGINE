@@ -335,7 +335,7 @@ def tick_quest_chains(state: dict[str, Any], action_ctx: dict[str, Any]) -> None
                     tr = state.setdefault("trace", {})
                     tp = int(tr.get("trace_pct", 0) or 0)
                     tp = max(0, min(100, tp + int((quest.get("failure") or {}).get("trace_delta", 0) or 0)))
-                    tr["trace_pct"] = tp
+                    _set_trace_pct(state, tp)
                 except Exception:
                     pass
                 q.setdefault("failed", []).append(quest)
@@ -352,7 +352,7 @@ def tick_quest_chains(state: dict[str, Any], action_ctx: dict[str, Any]) -> None
                 tr = state.setdefault("trace", {})
                 tp = int(tr.get("trace_pct", 0) or 0)
                 tp = max(0, min(100, tp + int((fail or {}).get("trace_delta", 0) or 0)))
-                tr["trace_pct"] = tp
+                _set_trace_pct(state, tp)
             except Exception:
                 pass
             try:
@@ -384,7 +384,7 @@ def tick_quest_chains(state: dict[str, Any], action_ctx: dict[str, Any]) -> None
                         tr = state.setdefault("trace", {})
                         tp = int(tr.get("trace_pct", 0) or 0)
                         tp = max(0, min(100, tp + int((rew or {}).get("trace_delta", 0) or 0)))
-                        tr["trace_pct"] = tp
+                        _set_trace_pct(state, tp)
                     except Exception:
                         pass
                     quest["status"] = "completed"
@@ -435,7 +435,7 @@ def tick_quest_chains(state: dict[str, Any], action_ctx: dict[str, Any]) -> None
                         tr = state.setdefault("trace", {})
                         tp = int(tr.get("trace_pct", 0) or 0)
                         tp = max(0, min(100, tp + int((rew or {}).get("trace_delta", 0) or 0)))
-                        tr["trace_pct"] = tp
+                        _set_trace_pct(state, tp)
                     except Exception:
                         pass
                     quest["status"] = "completed"
@@ -490,7 +490,7 @@ def tick_quest_chains(state: dict[str, Any], action_ctx: dict[str, Any]) -> None
                             tr = state.setdefault("trace", {})
                             tp = int(tr.get("trace_pct", 0) or 0)
                             tp = max(0, min(100, tp + int((rew or {}).get("trace_delta", 0) or 0)))
-                            tr["trace_pct"] = tp
+                            _set_trace_pct(state, tp)
                         except Exception:
                             pass
                         quest["status"] = "completed"
@@ -579,7 +579,7 @@ def tick_quest_chains(state: dict[str, Any], action_ctx: dict[str, Any]) -> None
                     if was_overdue:
                         trace_delta = max(trace_delta, +2)
                     tp = max(0, min(100, tp + trace_delta))
-                    tr["trace_pct"] = tp
+                    _set_trace_pct(state, tp)
                 except Exception:
                     pass
                 # Local market reward: slightly reduce weapons scarcity at drop location.
@@ -627,6 +627,19 @@ def _add_ripple_dict(state: dict[str, Any], rp: dict[str, Any]) -> None:
     from engine.social.ripple_queue import enqueue_ripple
 
     enqueue_ripple(state, rp)
+
+
+def _set_trace_pct(state: dict[str, Any], pct: int) -> None:
+    tr = state.setdefault("trace", {})
+    p = max(0, min(100, int(pct)))
+    tr["trace_pct"] = p
+    tr["trace_status"] = "Ghost" if p <= 25 else "Flagged" if p <= 50 else "Investigated" if p <= 75 else "Manhunt"
+    try:
+        from engine.core.factions import sync_faction_statuses_from_trace
+
+        sync_faction_statuses_from_trace(state)
+    except Exception:
+        pass
 
 
 def generate_daily_news(state: dict[str, Any]) -> None:
