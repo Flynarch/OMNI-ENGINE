@@ -20,6 +20,7 @@ env/
 ### Tools / editors
 .vscode/
 .idea/
+.cursor/
 
 ### OS
 Thumbs.db
