@@ -9,6 +9,7 @@ This module provides:
 from __future__ import annotations
 
 import hashlib
+import os
 from typing import Any
 
 
@@ -212,8 +213,12 @@ def propagate_rumor(state: dict[str, Any], origin_npc: str, rumor_text: str, inf
                 "strength": edge_strength,
             })
     
-    # Limit propagation (bounded)
-    max_hops = 2
+    # Limit propagation (bounded); default 3 hops for richer NPC-to-NPC spread (W2+).
+    try:
+        max_hops = int(os.getenv("OMNI_SOCIAL_DIFFUSION_MAX_HOPS", "3") or 3)
+    except ValueError:
+        max_hops = 3
+    max_hops = max(2, min(6, max_hops))
     if hop >= max_hops:
         return []
     

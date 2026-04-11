@@ -21,6 +21,7 @@ from engine.core.ffci import (
     ffci_enabled,
     ffci_shadow_only,
     record_custom_high_risk,
+    update_ffci_custom_streak,
 )
 from engine.core.pipeline import run_pipeline
 from engine.player.boot_economy import format_boot_economy_preview
@@ -2505,7 +2506,10 @@ def main() -> None:
 
     while True:
         render_monitor(state)
-        cmd = _expand_alias(_ask("> "))
+        cmd_raw = _expand_alias(_ask("> "))
+        from engine.core.security_intent import sanitize_player_command_text
+
+        cmd = sanitize_player_command_text(cmd_raw)
         if not cmd:
             continue
         # Global scene blocker (non-special path).
@@ -2524,10 +2528,17 @@ def main() -> None:
 
         # 1) Intent resolution: LLM-first when FFCI enabled; meta/special stay fast-path above.
         from engine.core.action_intent import apply_step_to_action_ctx, merge_intent_into_action_ctx, select_best_step
+        from engine.core.intent_plan_runtime import apply_pending_runtime_step, sync_plan_runtime_start
+        from engine.core.security_intent import security_flags_for_intent_input
 
         meta = state.setdefault("meta", {})
-        intent = resolve_intent(state, cmd) if ffci_enabled() else None
         action_ctx = parse_action_intent(cmd)
+        apply_pending_runtime_step(state, action_ctx)
+        intent = None
+        if ffci_enabled() and security_flags_for_intent_input(cmd).get("block_resolver"):
+            meta["fallback_reason"] = "security_blocked"
+        elif ffci_enabled():
+            intent = resolve_intent(state, cmd)
 
         if intent and ffci_shadow_only():
             meta["last_intent_source"] = "parser_fallback"
@@ -2538,9 +2549,13 @@ def main() -> None:
         elif intent:
             merge_intent_into_action_ctx(action_ctx, intent)
             clamp_suggested_dc_ctx(action_ctx)
+            if not ffci_shadow_only():
+                update_ffci_custom_streak(meta, action_ctx)
             allow_custom, ab_reason = abuse_allow_custom_intent(state, action_ctx)
             if not allow_custom:
+                meta["ffci_custom_streak"] = 0
                 action_ctx = parse_action_intent(cmd)
+                apply_pending_runtime_step(state, action_ctx)
                 meta["last_intent_source"] = "parser_fallback"
                 meta["last_intent_raw"] = None
                 meta["fallback_reason"] = ab_reason or "ffci_abuse_guard"
@@ -2579,6 +2594,15 @@ def main() -> None:
                                     apply_step_to_action_ctx(action_ctx, st)
                                     break
                     clamp_suggested_dc_ctx(action_ctx)
+                    if (
+                        isinstance(sid, str)
+                        and sid.strip()
+                        and not bool(action_ctx.get("intent_plan_blocked"))
+                    ):
+                        try:
+                            sync_plan_runtime_start(state, action_ctx, source="llm")
+                        except Exception:
+                            pass
 
                 stakes = action_ctx.get("stakes")
                 if isinstance(stakes, str):
@@ -2597,7 +2621,8 @@ def main() -> None:
         else:
             meta["last_intent_source"] = "parser_fallback" if ffci_enabled() else "ffci_disabled"
             meta["last_intent_raw"] = None
-            meta["fallback_reason"] = "resolver_none" if ffci_enabled() else "ffci_disabled"
+            if str(meta.get("fallback_reason", "") or "") != "security_blocked":
+                meta["fallback_reason"] = "resolver_none" if ffci_enabled() else "ffci_disabled"
             meta["normalized_domain"] = str(action_ctx.get("domain", "") or "").lower()
             meta["custom_path_used"] = str(action_ctx.get("action_type", "") or "").lower() == "custom"
             meta["llm_domain_raw"] = ""
@@ -2710,6 +2735,13 @@ def main() -> None:
 
         apply_active_scene_intent_lock(state, action_ctx, cmd)
 
+        try:
+            from engine.core.integration_hooks import apply_cross_system_policies
+
+            apply_cross_system_policies(state, action_ctx)
+        except Exception:
+            pass
+
         roll_pkg = run_pipeline(state, action_ctx)
         try:
             from engine.core.telemetry_contract import merge_telemetry_turn_last, snapshot_turn_telemetry
@@ -2719,6 +2751,19 @@ def main() -> None:
             pass
 
         metrics_after = _snapshot_metrics(state)
+        try:
+            from engine.core.integration_hooks import post_turn_integration
+
+            post_turn_integration(
+                state,
+                action_ctx,
+                roll_pkg,
+                player_cmd=cmd,
+                metrics_before=metrics_before,
+                metrics_after=metrics_after,
+            )
+        except Exception:
+            pass
         diff = _compute_diff(metrics_before, metrics_after)
         meta = state.setdefault("meta", {})
         meta["last_turn_diff"] = diff

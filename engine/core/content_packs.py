@@ -32,6 +32,12 @@ def validate_pack(doc: Any, *, path_hint: str = "") -> dict[str, Any]:
     _require(isinstance(pack_id, str) and pack_id.strip(), f"pack_id must be a non-empty string{': ' + path_hint if path_hint else ''}")
     version = doc.get("version")
     _require(isinstance(version, int) and version >= 1, f"version must be int >= 1{': ' + path_hint if path_hint else ''}")
+    psc = doc.get("pack_schema_version")
+    if psc is not None:
+        _require(
+            isinstance(psc, int) and 1 <= psc <= 99,
+            "pack_schema_version must be an integer from 1 to 99 when present",
+        )
     _require(isinstance(doc.get("name"), str) and doc.get("name").strip(), "name must be a non-empty string")
     _require(isinstance(doc.get("description"), str), "description must be a string")
 

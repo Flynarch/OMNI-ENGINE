@@ -366,6 +366,37 @@ def _fmt_character_stats(state: dict[str, Any]) -> str:
     )
 
 
+def _fmt_narrative_thread(state: dict[str, Any], lang: str) -> str:
+    meta = state.get("meta", {}) or {}
+    nc = meta.get("narrative_consistency")
+    if not isinstance(nc, dict):
+        return ""
+    anchor = str(nc.get("anchor", "") or "").strip()
+    if not anchor:
+        return ""
+    try:
+        left = int(nc.get("turns_left", 0) or 0)
+    except (TypeError, ValueError):
+        left = 0
+    if lang == "en":
+        return f"[NARRATIVE THREAD — short memory]\nCarry tone/thread from: {anchor} (coherence turns≈{left}). Do not contradict ROLL RESULT."
+    return f"[NARASI — memori pendek]\nLanjutkan benang: {anchor} (koherensi turn≈{left}). Jangan kontradiksi ROLL RESULT."
+
+
+def _fmt_narrative_safety(lang: str) -> str:
+    if lang == "en":
+        return (
+            "[NARRATIVE SAFETY]\n"
+            "No sexual content involving minors. No step-by-step instructions for real-world wrongdoing. "
+            "Keep violence stylized; obey ENGINE facts over shock value."
+        )
+    return (
+        "[KEAMANAN NARASI]\n"
+        "Tanpa konten seksual melibatkan anak. Tanpa panduan langkah demi langkah untuk kejahatan dunia nyata. "
+        "Kekerasan distilisasi; utamakan fakta ENGINE."
+    )
+
+
 def _fmt_action_ctx(action_ctx: dict[str, Any]) -> str:
     lines = [
         f"action_type={action_ctx.get('action_type', 'instant')}",
@@ -1127,6 +1158,8 @@ def build_turn_package(
 {lang_label} (code={lang})
 [PLAYER INPUT]
 {player_input}
+{_fmt_narrative_thread(state, lang)}
+{_fmt_narrative_safety(lang)}
 {act_title}
 {_fmt_actionable_hooks(state, lang)}
 {eng_title}

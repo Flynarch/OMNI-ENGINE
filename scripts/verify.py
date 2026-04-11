@@ -2619,6 +2619,58 @@ def _smoke() -> None:
         gc = parse_action_intent(phrase)
         assert isinstance(gc, dict) and gc.get("domain") and gc.get("action_type")
 
+    # Precondition kinds must stay listed in INTENT_SYSTEM_PROMPT (schema/prompt contract).
+    from ai.intent_resolver import ALLOWED_PRECONDITION_KINDS, INTENT_SYSTEM_PROMPT
+
+    for _pk in sorted(ALLOWED_PRECONDITION_KINDS):
+        assert _pk in INTENT_SYSTEM_PROMPT, _pk
+
+    from engine.core.counterfactual_roll import sample_threshold_outcomes
+
+    _cf = sample_threshold_outcomes(55, (50, 60, 70))
+    assert _cf[0]["would_pass"] is True and _cf[2]["would_pass"] is False
+
+    from engine.core.integration_hooks import append_state_change_journal, reconcile_cross_system
+    from engine.core.mutation_gateway import append_world_note
+
+    st_ij = initialize_state({"name": "Integ", "location": "london", "year": "2025"}, seed_pack="minimal")
+    append_state_change_journal(st_ij, turn=1, summary="verify", keys_touched=["cash"])
+    assert isinstance(st_ij.get("meta", {}).get("state_change_journal"), list)
+    st_bad = {"trace": {"trace_pct": 900}, "economy": {"cash": -5, "bank": 0}}
+    _warns = reconcile_cross_system(st_bad)
+    assert _warns and "RECONCILER_WARN" in _warns[0]
+    append_world_note(st_ij, "mutation gateway ok")
+    assert "mutation gateway ok" in str(st_ij.get("world_notes", [])[-1])
+
+    from engine.core.intent_plan_runtime import advance_plan_runtime_after_roll, sync_plan_runtime_start
+
+    st_rt = initialize_state({"name": "IRun", "location": "london", "year": "2025"}, seed_pack="minimal")
+    ac_rt = {
+        "intent_version": 2,
+        "intent_plan": {
+            "plan_id": "p_verify",
+            "steps": [
+                {
+                    "step_id": "a",
+                    "action_type": "instant",
+                    "domain": "other",
+                    "intent_note": "step_a",
+                    "suggested_dc": 50,
+                    "on_success": [{"next": "b", "when": "always"}],
+                },
+                {"step_id": "b", "action_type": "instant", "domain": "other", "intent_note": "step_b", "suggested_dc": 50},
+            ],
+        },
+        "step_now_id": "a",
+    }
+    sync_plan_runtime_start(st_rt, ac_rt, source="verify")
+    advance_plan_runtime_after_roll(st_rt, ac_rt, {"outcome": "Success (minor)", "roll": 80, "net_threshold": 50})
+    _rtm = st_rt.get("meta", {}).get("intent_runtime") or {}
+    assert str(_rtm.get("pending_next_step_id", "") or "") == "b"
+
+    # Semantic snapshot: core buckets exist on fresh state.
+    assert isinstance(st_ij.get("economy"), dict) and "cash" in st_ij["economy"]
+
     # MEMORY_HASH v2: JSON inside <MEMORY_HASH> should apply npc memories (bounded + clamped).
     from ai.parser import apply_memory_hash_to_state, parse_memory_hash
 

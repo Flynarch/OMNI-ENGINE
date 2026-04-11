@@ -1,6 +1,12 @@
 """
 Migrate a save file to the current schema (merge defaults, balance freeze, packs).
 
+Save contract policy:
+- Always take a .bak copy before rewriting.
+- Forward migration only: `load_state` merges `state_template` defaults; re-save normalizes.
+- When adding new required meta/world keys, bump `engine.core.state.SCHEMA_VERSION` and extend
+  `initialize_state` / template defaults in the same change set.
+
 Usage (from repo root):
   python scripts/migrate_save.py
   python scripts/migrate_save.py save/current.json

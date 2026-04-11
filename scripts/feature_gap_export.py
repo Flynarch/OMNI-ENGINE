@@ -34,9 +34,16 @@ def main() -> int:
         "suggested_gaps": [],
     }
     if str(tel.get("fallback_reason", "") or "").strip():
-        out["suggested_gaps"].append({"kind": "high_fallback", "detail": tel.get("fallback_reason")})
+        out["suggested_gaps"].append(
+            {"kind": "high_fallback", "detail": tel.get("fallback_reason"), "score": 5}
+        )
     if "[FFCI]" in " ".join(tail):
-        out["suggested_gaps"].append({"kind": "ffci_markers", "detail": "review world_notes"})
+        out["suggested_gaps"].append({"kind": "ffci_markers", "detail": "review world_notes", "score": 2})
+    for g in out["suggested_gaps"]:
+        if isinstance(g, dict) and "score" not in g:
+            g["score"] = 4
+    out["suggested_gaps"].sort(key=lambda x: int(x.get("score", 0)) if isinstance(x, dict) else 0, reverse=True)
+    out["gap_priority_head"] = out["suggested_gaps"][:5]
     print(json.dumps(out, ensure_ascii=False, indent=2))
     return 0
 

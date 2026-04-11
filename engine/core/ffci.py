@@ -42,20 +42,47 @@ def clamp_suggested_dc_ctx(action_ctx: dict[str, Any]) -> int:
     except (TypeError, ValueError):
         v = 50
     v = max(1, min(100, v))
+    if str(action_ctx.get("action_type", "") or "").lower() == "custom":
+        try:
+            lo = int(os.getenv("OMNI_FFCI_CUSTOM_DC_MIN", "12") or 12)
+            hi = int(os.getenv("OMNI_FFCI_CUSTOM_DC_MAX", "92") or 92)
+        except ValueError:
+            lo, hi = 12, 92
+        lo = max(1, min(98, lo))
+        hi = max(lo + 1, min(100, hi))
+        v = max(lo, min(hi, v))
     action_ctx["suggested_dc"] = v
     return v
+
+
+def update_ffci_custom_streak(meta: dict[str, Any], action_ctx: dict[str, Any]) -> None:
+    """Count consecutive custom intents for anti-chain abuse (deterministic)."""
+    if not isinstance(meta, dict):
+        return
+    if str(action_ctx.get("action_type", "") or "").lower() == "custom":
+        meta["ffci_custom_streak"] = int(meta.get("ffci_custom_streak", 0) or 0) + 1
+    else:
+        meta["ffci_custom_streak"] = 0
 
 
 def abuse_allow_custom_intent(state: dict[str, Any], action_ctx: dict[str, Any]) -> Tuple[bool, str]:
     """Rate-limit high-stakes custom intents per in-game day. Returns (allowed, reason_code)."""
     if str(action_ctx.get("action_type", "") or "").lower() != "custom":
         return True, ""
+    meta0 = state.setdefault("meta", {})
+    try:
+        smax = int(os.getenv("OMNI_FFCI_CUSTOM_STREAK_MAX", "14") or 14)
+    except ValueError:
+        smax = 14
+    smax = max(3, min(48, smax))
+    if int(meta0.get("ffci_custom_streak", 0) or 0) > smax:
+        return False, "ffci_custom_streak"
     stakes = str(action_ctx.get("stakes", "") or "").lower()
     risk = str(action_ctx.get("risk_level", "") or "").lower()
     high = stakes in ("high", "medium") or risk == "high"
     if not high:
         return True, ""
-    meta = state.get("meta", {}) or {}
+    meta = meta0
     try:
         day = int(meta.get("day", 1) or 1)
     except (TypeError, ValueError):

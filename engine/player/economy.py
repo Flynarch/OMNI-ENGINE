@@ -23,6 +23,12 @@ def update_economy(state: dict, action_ctx: dict) -> None:
             bank = 0
         econ["bank"] = bank
         econ["last_economic_cycle_day"] = day
+        try:
+            from engine.core.integration_hooks import record_economy_ledger_line
+
+            record_economy_ledger_line(state, "daily_burn", int(-burn), "housing/living costs")
+        except Exception:
+            pass
         # W2-9: career payroll + career-break rep decay (once per sim day).
         try:
             from engine.systems.occupation import accrue_career_salary_and_decay

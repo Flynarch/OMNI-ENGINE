@@ -1,0 +1,6 @@
+{
+  "pack_version": 1,
+  "custom_trace_bump_success": 1,
+  "custom_trace_bump_fail_stealth": 2,
+  "narrative_anchor_decay_turns": 8
+}

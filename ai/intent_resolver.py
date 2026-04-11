@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ai.llm_http import chat_completion_json
 
 # Contract version for intent JSON (bumped when required fields / shape changes).
 INTENT_SCHEMA_VERSION = 2
+# Minimum schema accepted by normalize_resolved_intent (roadmap: intent schema versioning).
+INTENT_SCHEMA_MIN_SUPPORTED = INTENT_SCHEMA_VERSION
 
 ALLOWED_ACTION_TYPES: Set[str] = frozenset(
     {"instant", "combat", "travel", "sleep", "rest", "talk", "investigate", "use_item", "custom"}
@@ -365,7 +367,7 @@ def normalize_resolved_intent(obj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             isv = int(base.get("intent_schema_version", INTENT_SCHEMA_VERSION) or INTENT_SCHEMA_VERSION)
         except (TypeError, ValueError):
             isv = INTENT_SCHEMA_VERSION
-        if isv != INTENT_SCHEMA_VERSION:
+        if isv != INTENT_SCHEMA_MIN_SUPPORTED:
             return None
         base["intent_schema_version"] = INTENT_SCHEMA_VERSION
         safety = _sanitize_safety(base.get("safety"))
@@ -487,6 +489,13 @@ def _flatten_intent_v2_for_compat(obj: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def _intent_llm_timeout_sec() -> float:
+    raw = os.getenv("OMNI_LLM_INTENT_TIMEOUT_SEC", "").strip()
+    if raw.replace(".", "", 1).isdigit():
+        return max(5.0, min(180.0, float(raw)))
+    return 60.0
+
+
 def _invoke_llm_for_intent(payload: Dict[str, Any]) -> str:
     _mt = os.getenv("LLM_INTENT_MAX_TOKENS", "").strip()
     if _mt.isdigit():
@@ -500,7 +509,7 @@ def _invoke_llm_for_intent(payload: Dict[str, Any]) -> str:
             {"role": "user", "content": payload["user"]},
         ],
         max_tokens=max_tokens,
-        timeout=60.0,
+        timeout=_intent_llm_timeout_sec(),
     )
     content = data["choices"][0]["message"]["content"]
     return str(content)
@@ -574,6 +583,18 @@ def _sleep_fastpath(player_input: str) -> Optional[Dict[str, Any]]:
     return normalize_resolved_intent(raw)
 
 
+def _intent_lru_cache_key(state: Dict[str, Any], player_input: str) -> Tuple[Any, ...]:
+    meta = state.get("meta", {}) or {}
+    player = state.get("player", {}) or {}
+    return (
+        INTENT_SCHEMA_VERSION,
+        int(meta.get("day", 1) or 1),
+        int(meta.get("time_min", 0) or 0) // 45,
+        str(player.get("location", "") or "")[:48].lower(),
+        str(player_input or "").strip().lower()[:520],
+    )
+
+
 def resolve_intent(state: Dict[str, Any], player_input: str) -> Optional[Dict[str, Any]]:
     """Best-effort LLM intent resolution. Returns dict or None if unusable."""
     meta = state.get("meta", {}) or {}
@@ -599,10 +620,23 @@ def resolve_intent(state: Dict[str, Any], player_input: str) -> Optional[Dict[st
     fast = _sleep_fastpath(player_input)
     if isinstance(fast, dict):
         return fast
+    if os.getenv("OMNI_INTENT_LRU", "1").strip().lower() not in ("0", "false", "no", "off"):
+        from engine.core.intent_lru import intent_cache_get, intent_cache_set
+
+        ck = _intent_lru_cache_key(state, player_input)
+        hit = intent_cache_get(ck)
+        if isinstance(hit, dict):
+            return hit
+    from engine.core.security_intent import check_llm_intent_budget, record_intent_budget_rollback
+
+    ok_budget, _br = check_llm_intent_budget(state)
+    if not ok_budget:
+        return None
     user = f"[ENGINE_SNAPSHOT]\n{summary}\n[PLAYER_INPUT]\n{player_input}\n"
     try:
         raw = _invoke_llm_for_intent({"user": user})
     except Exception:
+        record_intent_budget_rollback(state)
         return None
     blob = _safe_parse_json_blob(raw)
     if not blob:
@@ -618,4 +652,8 @@ def resolve_intent(state: Dict[str, Any], player_input: str) -> Optional[Dict[st
         conf = 0.0
     if conf < 0.15:
         return None
+    if os.getenv("OMNI_INTENT_LRU", "1").strip().lower() not in ("0", "false", "no", "off"):
+        from engine.core.intent_lru import intent_cache_set
+
+        intent_cache_set(_intent_lru_cache_key(state, player_input), obj)
     return obj

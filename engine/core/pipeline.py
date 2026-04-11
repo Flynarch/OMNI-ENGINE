@@ -190,6 +190,12 @@ def run_pipeline(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[str,
 def _pipeline_pre_roll(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
     """Pre-roll mutation stages. Keep ordering stable for deterministic behavior."""
     try:
+        from engine.core.domain_plugins import run_pre_roll_plugin
+
+        run_pre_roll_plugin(state, action_ctx)
+    except Exception:
+        pass
+    try:
         from engine.systems.smartphone import apply_smartphone_pipeline
 
         apply_smartphone_pipeline(state, action_ctx)
@@ -246,4 +252,10 @@ def _pipeline_post_roll(state: dict[str, Any], action_ctx: dict[str, Any], roll_
 
     resolve_combat_after_roll(state, action_ctx, roll_pkg)
     apply_custom_intent_consequences(state, action_ctx, roll_pkg)
+    try:
+        from engine.core.domain_plugins import run_post_roll_plugin
+
+        run_post_roll_plugin(state, action_ctx, roll_pkg)
+    except Exception:
+        pass
     stop_sequence_check(state, action_ctx)
