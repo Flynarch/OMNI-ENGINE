@@ -5,6 +5,8 @@ import random
 from pathlib import Path
 from typing import Any
 
+from engine.core.ffci import feasibility_custom_intent
+
 ROOT = Path(__file__).resolve().parents[2]
 SKILLS_TABLE_PATH = ROOT / "data" / "skills_table.json"
 
@@ -187,6 +189,10 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
             "net_threshold_locked": True,
         }
 
+    feas = feasibility_custom_intent(state, action_ctx)
+    if feas is not None:
+        return feas
+
     bio = state.get("bio", {})
     # Hacking tiers + gating (soft gate + selective hard gate).
     if str(domain).lower() == "hacking":
@@ -238,6 +244,16 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
         except Exception:
             pass
     # Ordered modifier stack (v6.9 deterministic order).
+    # 0. FFCI custom: translate suggested_dc into threshold pressure (50 = neutral; higher DC = harder).
+    if str(act_type).lower() == "custom":
+        try:
+            dc = int(action_ctx.get("suggested_dc", 50) or 50)
+        except (TypeError, ValueError):
+            dc = 50
+        dc = max(1, min(100, dc))
+        action_ctx["suggested_dc"] = dc
+        mods.append(("Custom intent DC offset", int(50 - dc)))
+
     # 1. Skill decay
     decay_pen = int(action_ctx.get("skill_decay_penalty", 0))
     if decay_pen != 0:
@@ -719,6 +735,16 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
             }
 
     net = max(0, min(100, base + sum(v for _, v in mods)))
+    # High suggested_dc custom intents: hard cap net so luck cannot trivially bypass difficulty.
+    if str(act_type).lower() == "custom":
+        try:
+            dc_hi = int(action_ctx.get("suggested_dc", 50) or 50)
+        except (TypeError, ValueError):
+            dc_hi = 50
+        if dc_hi >= 85:
+            net = min(net, 58)
+        elif dc_hi >= 75:
+            net = min(net, 68)
     if action_ctx.get("physically_impossible"):
         return {
             "base": base,

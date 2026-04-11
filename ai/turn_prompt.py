@@ -384,6 +384,28 @@ def _fmt_action_ctx(action_ctx: dict[str, Any]) -> str:
         lines.append(f"vehicle_id={action_ctx.get('vehicle_id')}")
     if action_ctx.get("vehicle_used"):
         lines.append(f"vehicle_used={action_ctx.get('vehicle_used')}")
+    if action_ctx.get("suggested_dc") is not None:
+        try:
+            lines.append(f"suggested_dc={int(action_ctx.get('suggested_dc', 50) or 50)}")
+        except (TypeError, ValueError):
+            lines.append("suggested_dc=50")
+    if action_ctx.get("player_goal"):
+        pg = str(action_ctx.get("player_goal", "") or "").replace("\n", " ").strip()
+        if len(pg) > 220:
+            pg = pg[:217] + "..."
+        lines.append(f"player_goal={pg}")
+    if action_ctx.get("intent_confidence") is not None:
+        try:
+            lines.append(f"intent_confidence={float(action_ctx.get('intent_confidence', 0.0) or 0.0):.2f}")
+        except (TypeError, ValueError):
+            pass
+    if action_ctx.get("step_now_id"):
+        lines.append(f"step_now_id={action_ctx.get('step_now_id')}")
+    if str(action_ctx.get("action_type", "") or "").lower() == "custom":
+        lines.append(
+            "[FFCI — NARRATION ANCHOR] Describe THIS turn using intent_note + player_goal as the spine. "
+            "Do not substitute a generic beat; tie prose to that specific intent while obeying ROLL RESULT."
+        )
     return "\n".join(lines)
 
 

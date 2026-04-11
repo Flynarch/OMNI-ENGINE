@@ -51,6 +51,7 @@ If you want a “grown-up” sandbox where actions have persistent, systemic con
 
 - **Shared LLM HTTP layer** (`ai/llm_http.py`): retries + backoff for **narration (streaming)** and **intent (JSON)** — see `LLM_HTTP_RETRIES`.
 - **Intent schema v2 (plan-based)**: the LLM can return `version=2` with `plan.steps[]` + `preconditions`. The engine selects the first valid step for this turn (not always `steps[0]`) and overlays it into `action_ctx` for execution.
+- **FFCI (free-form custom intent)**: resolver output includes `suggested_dc`, schema whitelist, custom roll path + feasibility gates in the engine; optional env toggles below.
 - **“Facts changed this turn”** line in the narration package (`ai/turn_prompt.py`) + **`commerce_notes`** in `meta.last_turn_audit` (Shop / Bank / Stay).
 - **Hygiene commands**: `SHOWER` / `HYGIENE` / `MANDI` (reset hygiene clock, ~15 engine minutes).
 - **Phase 3.5 systems integration**:
@@ -105,6 +106,16 @@ Model directories:
 - Groq: https://console.groq.com/docs/models  
 
 Optional: `LLM_MAX_TOKENS`, `LLM_INTENT_MAX_TOKENS`, `LLM_HTTP_RETRIES`, `BAL_*` and bio tuning — see `.env.example`.
+
+### FFCI / intent resolver (optional)
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `OMNI_FFCI_ENABLED` | `1` | When `0`, the game skips the LLM intent resolver and uses only the regex/heuristic parser. |
+| `OMNI_FFCI_SHADOW_ONLY` | `0` | When `1`, the resolver still runs (for logging / `meta.ffci_shadow_llm_intent`), but **mechanics** use the parser path only. |
+| `OMNI_FFCI_CUSTOM_HIGH_RISK_CAP_PER_DAY` | `4` | Max high/medium-stakes **`custom`** intents merged from the LLM per in-game day (anti-spam). |
+
+Also documented in `.env.example` next to `OMNI_AUTO_STAY_INTENT`.
 
 ### Save files
 

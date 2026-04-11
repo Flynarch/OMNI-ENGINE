@@ -2005,6 +2005,7 @@ def _smoke() -> None:
     action_ctx_plan = parse_action_intent("test plan")
     intent_v2 = {
         "version": 2,
+        "intent_schema_version": 2,
         "confidence": 0.9,
         "player_goal": "test",
         "context_assumptions": [],
@@ -2016,6 +2017,8 @@ def _smoke() -> None:
                     "label": "expensive",
                     "action_type": "instant",
                     "domain": "other",
+                    "intent_note": "need_cash",
+                    "suggested_dc": 50,
                     "preconditions": [{"kind": "money_gte", "op": "gte", "value": 10}],
                 },
                 {
@@ -2023,6 +2026,8 @@ def _smoke() -> None:
                     "label": "cheap",
                     "action_type": "instant",
                     "domain": "other",
+                    "intent_note": "free_action",
+                    "suggested_dc": 45,
                     "preconditions": [{"kind": "money_gte", "op": "gte", "value": 0}],
                 },
             ],
@@ -2039,6 +2044,7 @@ def _smoke() -> None:
     action_ctx_skill = parse_action_intent("test plan skill")
     intent_v2_skill = {
         "version": 2,
+        "intent_schema_version": 2,
         "confidence": 0.9,
         "player_goal": "test",
         "context_assumptions": [],
@@ -2050,6 +2056,8 @@ def _smoke() -> None:
                     "label": "needs_hacking3",
                     "action_type": "instant",
                     "domain": "hacking",
+                    "intent_note": "hack_hard",
+                    "suggested_dc": 70,
                     "preconditions": [{"kind": "skill_gte", "op": "gte", "value": {"skill": "hacking", "level": 3}}],
                 },
                 {
@@ -2057,6 +2065,8 @@ def _smoke() -> None:
                     "label": "fallback",
                     "action_type": "instant",
                     "domain": "other",
+                    "intent_note": "hack_easy",
+                    "suggested_dc": 50,
                     "preconditions": [{"kind": "skill_gte", "op": "gte", "value": {"skill": "hacking", "level": 1}}],
                 },
             ],
@@ -2066,6 +2076,143 @@ def _smoke() -> None:
     merge_intent_into_action_ctx(action_ctx_skill, intent_v2_skill)
     sid2 = select_best_step(action_ctx_skill, st_skill)
     assert sid2 == "s1"
+
+    # FFCI Fase 1: intent_resolver schema whitelist + suggested_dc clamp (no LLM).
+    from ai.intent_resolver import INTENT_SCHEMA_VERSION, clamp_suggested_dc, normalize_resolved_intent
+
+    assert clamp_suggested_dc(None) == 50
+    assert clamp_suggested_dc(101) == 100
+    assert clamp_suggested_dc(-3) == 1
+    assert clamp_suggested_dc("62") == 62
+    assert normalize_resolved_intent({"version": 2, "plan": {}, "safety": {"refuse": False}}) is None
+    assert normalize_resolved_intent({"version": 2, "intent_schema_version": 1, "plan": {"plan_id": "x", "steps": []}, "safety": {"refuse": False}}) is None
+    _ok_ffci = normalize_resolved_intent(
+        {
+            "version": 2,
+            "intent_schema_version": INTENT_SCHEMA_VERSION,
+            "confidence": 0.8,
+            "player_goal": "walk",
+            "context_assumptions": ["assume streets"],
+            "plan": {
+                "plan_id": "ffci_t",
+                "steps": [
+                    {
+                        "step_id": "a",
+                        "label": "go",
+                        "action_type": "instant",
+                        "domain": "other",
+                        "intent_note": "wait_around",
+                        "suggested_dc": 200,
+                        "noise_key": "strip_me",
+                    }
+                ],
+            },
+            "safety": {"refuse": False, "refuse_reason": ""},
+        }
+    )
+    assert _ok_ffci is not None
+    assert _ok_ffci["plan"]["steps"][0].get("noise_key") is None
+    assert int(_ok_ffci["plan"]["steps"][0]["suggested_dc"]) == 100
+    _v1_norm = normalize_resolved_intent(
+        {
+            "version": 1,
+            "confidence": 0.9,
+            "action_type": "talk",
+            "domain": "social",
+            "intent_note": "dialogue",
+            "suggested_dc": 0,
+        }
+    )
+    assert _v1_norm == {
+        "version": 1,
+        "intent_schema_version": INTENT_SCHEMA_VERSION,
+        "confidence": 0.9,
+        "action_type": "talk",
+        "domain": "social",
+        "intent_note": "dialogue",
+        "suggested_dc": 1,
+        "combat_style": "none",
+        "social_mode": "none",
+        "social_context": "none",
+        "stakes": "none",
+        "risk_level": "low",
+        "travel_destination": "",
+        "time_cost_min": 0,
+    }
+
+    # Fase 2: suggested_dc flows through merge + apply_step.
+    _ctx_dc = parse_action_intent("probe dc")
+    _intent_dc = {
+        "version": 2,
+        "intent_schema_version": INTENT_SCHEMA_VERSION,
+        "confidence": 0.9,
+        "player_goal": "test dc",
+        "context_assumptions": [],
+        "plan": {
+            "plan_id": "p_dc",
+            "steps": [
+                {
+                    "step_id": "s0",
+                    "label": "a",
+                    "action_type": "custom",
+                    "domain": "other",
+                    "intent_note": "weird_move",
+                    "suggested_dc": 77,
+                },
+                {
+                    "step_id": "s1",
+                    "label": "b",
+                    "action_type": "instant",
+                    "domain": "other",
+                    "intent_note": "fallback_step",
+                    "suggested_dc": 40,
+                },
+            ],
+        },
+        "safety": {"refuse": False, "refuse_reason": ""},
+    }
+    merge_intent_into_action_ctx(_ctx_dc, _intent_dc)
+    assert int(_ctx_dc.get("suggested_dc", 0) or 0) == 77
+    from engine.core.action_intent import apply_step_to_action_ctx
+
+    apply_step_to_action_ctx(_ctx_dc, {"step_id": "s1", "suggested_dc": 44, "action_type": "instant", "domain": "other", "intent_note": "fallback_step"})
+    assert int(_ctx_dc.get("suggested_dc", 0) or 0) == 44
+
+    # Fase 3 + 6: custom roll uses suggested_dc; same seed → same roll (deterministic replay guard).
+    from engine.core.modifiers import compute_roll_package
+    from engine.core.rng import roll_for_action
+
+    st_roll = initialize_state({"name": "DetRoll", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_roll.setdefault("meta", {})["turn"] = 42
+    st_roll.setdefault("meta", {})["day"] = 3
+    ac_custom = {
+        "normalized_input": "do something abstract and risky",
+        "action_type": "custom",
+        "domain": "stealth",
+        "trained": True,
+        "uncertain": True,
+        "has_stakes": True,
+        "suggested_dc": 80,
+        "stakes": "high",
+        "risk_level": "high",
+    }
+    r1 = roll_for_action(st_roll, ac_custom, salt="roll_pkg")
+    r2 = roll_for_action(st_roll, ac_custom, salt="roll_pkg")
+    assert r1 == r2
+    pkg_a = compute_roll_package(st_roll, dict(ac_custom))
+    pkg_b = compute_roll_package(st_roll, dict(ac_custom))
+    assert pkg_a.get("roll") == pkg_b.get("roll")
+
+    # Golden corpus (parser): slang / mixed / abstract — must return coherent ctx without crash.
+    for phrase in (
+        "gaskeun ambil laptop di meja tanpa ketauan",
+        "gw mau chill dulu bentar, lihat-lihat sekitar",
+        "push luck: nekat breach server kantor",
+        "maybe try sweet-talk the guard?",
+        "抽象的に状況を探る",
+    ):
+        gc = parse_action_intent(phrase)
+        assert isinstance(gc, dict) and gc.get("domain") and gc.get("action_type")
 
     # MEMORY_HASH v2: JSON inside <MEMORY_HASH> should apply npc memories (bounded + clamped).
     from ai.parser import apply_memory_hash_to_state, parse_memory_hash

@@ -15,6 +15,13 @@ from ai.parser import apply_memory_hash_to_state, enforce_stop_sequence_output, 
 from ai.turn_prompt import build_system_prompt, build_turn_package, get_narration_lang
 from display.renderer import console, render_monitor, stream_render
 from engine.core.action_intent import apply_active_scene_intent_lock, normalize_action_ctx, parse_action_intent
+from engine.core.ffci import (
+    abuse_allow_custom_intent,
+    clamp_suggested_dc_ctx,
+    ffci_enabled,
+    ffci_shadow_only,
+    record_custom_high_risk,
+)
 from engine.core.pipeline import run_pipeline
 from engine.player.boot_economy import format_boot_economy_preview
 from engine.core.seeds import list_seed_names
@@ -2495,49 +2502,74 @@ def main() -> None:
                 _finalize_special_turn(state, cmd, metrics_before)
             continue
 
-        # 1) Intent resolution: prefer LLM, fallback to heuristic parser.
-        intent = resolve_intent(state, cmd)
-        if intent:
-            from engine.core.action_intent import apply_step_to_action_ctx, merge_intent_into_action_ctx, normalize_action_ctx, select_best_step
+        # 1) Intent resolution: LLM-first when FFCI enabled; meta/special stay fast-path above.
+        from engine.core.action_intent import apply_step_to_action_ctx, merge_intent_into_action_ctx, select_best_step
 
-            action_ctx = parse_action_intent(cmd)
-            merge_intent_into_action_ctx(action_ctx, intent)
-            meta = state.setdefault("meta", {})
-            meta["last_intent_source"] = "llm"
-            meta["last_intent_raw"] = intent
+        meta = state.setdefault("meta", {})
+        intent = resolve_intent(state, cmd) if ffci_enabled() else None
+        action_ctx = parse_action_intent(cmd)
 
-            # Intent v2 plan execution: pick the first valid step by preconditions and overlay it.
-            if int(action_ctx.get("intent_version", 1) or 1) == 2 and isinstance(action_ctx.get("intent_plan"), dict):
-                sid = select_best_step(action_ctx, state)
-                if isinstance(sid, str) and sid.strip():
-                    action_ctx["step_now_id"] = sid.strip()
-                    steps = (action_ctx.get("intent_plan") or {}).get("steps")
-                    if isinstance(steps, list):
-                        for st in steps:
-                            if isinstance(st, dict) and str(st.get("step_id", "") or "").strip() == action_ctx["step_now_id"]:
-                                apply_step_to_action_ctx(action_ctx, st)
-                                break
-
-            stakes = action_ctx.get("stakes")
-            if isinstance(stakes, str):
-                action_ctx["has_stakes"] = stakes not in ("none", "low")
-                if action_ctx.get("domain") == "social" and action_ctx.get("social_mode") == "conflict":
-                    action_ctx["has_stakes"] = True
-                if action_ctx.get("domain") == "combat":
-                    if str(action_ctx.get("intent_note", "")).strip().lower() not in ("switch_weapon", "equip_weapon_only"):
-                        action_ctx["has_stakes"] = True
-            norm = str(action_ctx.get("normalized_input", cmd)).lower()
-            if action_ctx.get("domain") == "combat" and action_ctx.get("combat_style") == "ranged":
-                if any(w in norm for w in ("tembak", "menembak", "shoot", "fire")):
-                    action_ctx["has_stakes"] = True
-            if action_ctx.get("domain") == "combat" and action_ctx.get("action_type") != "combat":
-                action_ctx["action_type"] = "combat"
-            # Keep legacy path intact; normalizer runs in shadow mode below.
-        else:
-            action_ctx = parse_action_intent(cmd)
-            meta = state.setdefault("meta", {})
+        if intent and ffci_shadow_only():
             meta["last_intent_source"] = "parser_fallback"
             meta["last_intent_raw"] = None
+            meta["fallback_reason"] = "ffci_shadow_only"
+            meta["ffci_shadow_llm_intent"] = dict(intent) if isinstance(intent, dict) else intent
+            meta["llm_domain_raw"] = str((intent or {}).get("domain", "") or "").lower()
+        elif intent:
+            merge_intent_into_action_ctx(action_ctx, intent)
+            clamp_suggested_dc_ctx(action_ctx)
+            allow_custom, ab_reason = abuse_allow_custom_intent(state, action_ctx)
+            if not allow_custom:
+                action_ctx = parse_action_intent(cmd)
+                meta["last_intent_source"] = "parser_fallback"
+                meta["last_intent_raw"] = None
+                meta["fallback_reason"] = ab_reason or "ffci_abuse_guard"
+                meta["ffci_abuse_blocked"] = True
+                state.setdefault("world_notes", []).append("[FFCI] High-risk custom intent rate-limited for today; using parser path.")
+            else:
+                meta["last_intent_source"] = "llm"
+                meta["last_intent_raw"] = intent
+                meta["fallback_reason"] = None
+                meta["ffci_abuse_blocked"] = False
+                record_custom_high_risk(state, action_ctx)
+                meta["llm_domain_raw"] = str((intent or {}).get("domain", "") or "").lower()
+                meta["normalized_domain"] = str(action_ctx.get("domain", "") or "").lower()
+                meta["custom_path_used"] = str(action_ctx.get("action_type", "") or "").lower() == "custom"
+
+            if meta.get("last_intent_source") == "llm":
+                # Intent v2 plan execution: pick the first valid step by preconditions and overlay it.
+                if int(action_ctx.get("intent_version", 1) or 1) == 2 and isinstance(action_ctx.get("intent_plan"), dict):
+                    sid = select_best_step(action_ctx, state)
+                    if isinstance(sid, str) and sid.strip():
+                        action_ctx["step_now_id"] = sid.strip()
+                        steps = (action_ctx.get("intent_plan") or {}).get("steps")
+                        if isinstance(steps, list):
+                            for st in steps:
+                                if isinstance(st, dict) and str(st.get("step_id", "") or "").strip() == action_ctx["step_now_id"]:
+                                    apply_step_to_action_ctx(action_ctx, st)
+                                    break
+                    clamp_suggested_dc_ctx(action_ctx)
+
+                stakes = action_ctx.get("stakes")
+                if isinstance(stakes, str):
+                    action_ctx["has_stakes"] = stakes not in ("none", "low")
+                    if action_ctx.get("domain") == "social" and action_ctx.get("social_mode") == "conflict":
+                        action_ctx["has_stakes"] = True
+                    if action_ctx.get("domain") == "combat":
+                        if str(action_ctx.get("intent_note", "")).strip().lower() not in ("switch_weapon", "equip_weapon_only"):
+                            action_ctx["has_stakes"] = True
+                norm = str(action_ctx.get("normalized_input", cmd)).lower()
+                if action_ctx.get("domain") == "combat" and action_ctx.get("combat_style") == "ranged":
+                    if any(w in norm for w in ("tembak", "menembak", "shoot", "fire")):
+                        action_ctx["has_stakes"] = True
+                if action_ctx.get("domain") == "combat" and action_ctx.get("action_type") != "combat":
+                    action_ctx["action_type"] = "combat"
+        else:
+            meta["last_intent_source"] = "parser_fallback" if ffci_enabled() else "ffci_disabled"
+            meta["last_intent_raw"] = None
+            meta["fallback_reason"] = "resolver_none" if ffci_enabled() else "ffci_disabled"
+            if not ffci_enabled():
+                meta["ffci_disabled"] = True
 
         try:
             shadow_norm = normalize_action_ctx(action_ctx)

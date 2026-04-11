@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from engine.core.ffci import apply_custom_intent_consequences
 from engine.core.modifiers import compute_roll_package, stop_sequence_check
 from engine.core.trace import update_trace
 from engine.npc.npc_emotions import apply_npc_emotion_after_roll
@@ -238,4 +239,5 @@ def _pipeline_post_roll(state: dict[str, Any], action_ctx: dict[str, Any], roll_
             pass
 
     resolve_combat_after_roll(state, action_ctx, roll_pkg)
+    apply_custom_intent_consequences(state, action_ctx, roll_pkg)
     stop_sequence_check(state, action_ctx)

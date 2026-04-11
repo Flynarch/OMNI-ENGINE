@@ -481,6 +481,11 @@ def parse_action_intent(player_input: str) -> dict[str, Any]:
     if ctx.get("domain") == "social" and ctx.get("social_mode") not in ("non_conflict", "conflict"):
         ctx["social_mode"] = "non_conflict"
 
+    try:
+        ctx["suggested_dc"] = max(1, min(100, int(ctx.get("suggested_dc", 50) or 50)))
+    except (TypeError, ValueError):
+        ctx["suggested_dc"] = 50
+
     return ctx
 
 
@@ -550,6 +555,7 @@ def flatten_intent_v2(intent: dict[str, Any]) -> dict[str, Any]:
         "social_mode",
         "social_context",
         "intent_note",
+        "suggested_dc",
         "targets",
         "stakes",
         "risk_level",
@@ -582,6 +588,7 @@ def merge_intent_into_action_ctx(action_ctx: dict[str, Any], intent: dict[str, A
         "social_mode",
         "social_context",
         "intent_note",
+        "suggested_dc",
         "targets",
         "stakes",
         "risk_level",
@@ -601,6 +608,25 @@ def merge_intent_into_action_ctx(action_ctx: dict[str, Any], intent: dict[str, A
         action_ctx["intent_plan"] = intent.get("plan")
         if "step_now_id" in src:
             action_ctx["step_now_id"] = src.get("step_now_id")
+        pg = str(intent.get("player_goal", "") or "").strip()
+        if pg:
+            action_ctx["player_goal"] = pg[:400]
+        try:
+            isv = int(intent.get("intent_schema_version", 0) or 0)
+            if isv:
+                action_ctx["intent_schema_version"] = isv
+        except Exception:
+            pass
+    else:
+        pg1 = str((intent or {}).get("player_goal", "") or "").strip()
+        if pg1:
+            action_ctx["player_goal"] = pg1[:400]
+        try:
+            isv1 = int((intent or {}).get("intent_schema_version", 0) or 0)
+            if isv1:
+                action_ctx["intent_schema_version"] = isv1
+        except Exception:
+            pass
     return action_ctx
 
 
@@ -803,6 +829,7 @@ def apply_step_to_action_ctx(action_ctx: dict[str, Any], step: dict[str, Any]) -
         "social_mode",
         "social_context",
         "intent_note",
+        "suggested_dc",
         "targets",
         "stakes",
         "risk_level",
