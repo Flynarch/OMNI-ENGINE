@@ -7,6 +7,45 @@
     "medical": { "trained": 55, "unskilled": 20 },
     "driving": { "trained": 65, "unskilled": 30 },
     "stealth": { "trained": 55, "unskilled": 30 },
-    "evasion": { "trained": 50, "unskilled": 50 }
+    "evasion": { "trained": 50, "unskilled": 50 },
+    "economy": { "trained": 58, "unskilled": 28 }
+  },
+  "character_stats": {
+    "defaults": {
+      "charisma": 50,
+      "agility": 50,
+      "strength": 50,
+      "intelligence": 50,
+      "perception": 50,
+      "luck": 50,
+      "willpower": 50
+    },
+    "mod_per_point": 0.12,
+    "mod_cap_per_stat": 7,
+    "luck_mod_cap_high_dc_75": 2,
+    "luck_mod_cap_high_dc_85": 0,
+    "spiral_willpower_slope": 0.45,
+    "spiral_willpower_max_penalty": 16,
+    "domain_primary_stat": {
+      "social": "charisma",
+      "combat": "strength",
+      "hacking": "intelligence",
+      "medical": "intelligence",
+      "driving": "agility",
+      "stealth": "agility",
+      "evasion": "agility",
+      "economy": "intelligence",
+      "other": "intelligence"
+    },
+    "domain_secondary_stat": {
+      "stealth": "perception"
+    },
+    "other_domain_stat_hints": {
+      "finance": "intelligence",
+      "legal": "charisma",
+      "negotiation": "charisma",
+      "operations": "agility",
+      "management": "charisma"
+    }
   }
 }

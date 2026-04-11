@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Freelance gigs (WORK). W2-9 employed salary is paid in the daily economy cycle via occupation.accrue_career_salary_and_decay."""
+
 import hashlib
 from typing import Any
 

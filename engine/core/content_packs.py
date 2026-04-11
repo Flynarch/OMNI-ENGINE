@@ -119,6 +119,16 @@ def _load_pack_extras(pack_id: str) -> dict[str, Any]:
             raise PackError(f"occupations.json must be object: {occ_path}")
         if not isinstance(doc.get("templates", []), list):
             raise PackError(f"occupations.json templates must be list: {occ_path}")
+        cps = doc.get("career_paths", None)
+        if cps is not None:
+            if not isinstance(cps, list):
+                raise PackError(f"occupations.json career_paths must be list: {occ_path}")
+            for i, p in enumerate(cps):
+                _require(isinstance(p, dict), f"occupations.json career_paths[{i}] must be object: {occ_path}")
+                pid = p.get("id")
+                _require(isinstance(pid, str) and pid.strip(), f"occupations.json career_paths[{i}].id required: {occ_path}")
+                lv = p.get("levels", [])
+                _require(isinstance(lv, list) and lv, f"occupations.json career_paths[{i}].levels must be non-empty list: {occ_path}")
         out["occupations"] = doc
     return out
 

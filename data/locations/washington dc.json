@@ -1,9 +1,26 @@
 {
-  "notes": ["Badges, paper trails, and contractor backchannels; small mistakes become dossiers."],
-  "nearby_items": ["smartphone", "keys", "burner_phone"],
+  "notes": [
+    "Badges, paper trails, and contractor backchannels; small mistakes become dossiers."
+  ],
+  "nearby_items": [
+    "smartphone",
+    "keys",
+    "burner_phone"
+  ],
   "npcs": {
-    "Analyst_Carter": { "role": "analyst", "affiliation": "corporate", "disposition_score": 52, "disposition_label": "Neutral", "is_contact": true },
-    "Officer_Bennett": { "role": "cop", "affiliation": "police", "disposition_score": 48, "disposition_label": "Cold" }
+    "Analyst_Carter": {
+      "role": "analyst",
+      "affiliation": "corporate",
+      "disposition_score": 52,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    },
+    "Officer_Bennett": {
+      "role": "cop",
+      "affiliation": "police",
+      "disposition_score": 48,
+      "disposition_label": "Cold"
+    }
   },
   "city_stats": {
     "daily_food_cost_usd": 38.0,
@@ -15,7 +32,10 @@
     "avg_rent_monthly_usd": 2211.0,
     "cost_of_living_index": 84.0,
     "unemployment_rate_pct": 6.7,
-    "crime_index": 60.0
+    "crime_index": 60.0,
+    "avg_apartment_price_usd": 172500.0,
+    "avg_house_price_usd": 474400.0,
+    "avg_car_price_usd": 14400.0,
+    "avg_small_business_revenue_monthly_usd": 22720.0
   }
 }
-

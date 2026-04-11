@@ -55,6 +55,7 @@ def _hunger_label(score: float) -> str:
 
 
 def execute_sleep(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
+    """W2-7: full sleep loop — debt recovery by duration, hunger ½ rate, quality labels, mood hook."""
     bio = state.setdefault("bio", {})
     if str(action_ctx.get("action_type", "") or "").lower() != "sleep":
         return
@@ -66,6 +67,7 @@ def execute_sleep(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
     hrs = mins / 60.0
     action_ctx["rested_minutes"] = mins
     action_ctx["sleep_duration_h"] = round(hrs, 2)
+    # Quality: good ≥7h, okay 4–7h (exclusive of 7 on top band), poor <4h.
     if hrs >= 7.0:
         action_ctx["sleep_quality"] = "good"
     elif hrs >= 4.0:
@@ -78,12 +80,20 @@ def execute_sleep(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
         debt = float(bio.get("sleep_debt", 0.0) or 0.0)
     except Exception:
         debt = 0.0
-    if hrs >= 8.0:
+    debt = max(0.0, debt)
+
+    if hrs >= 7.0:
         debt = 0.0
-        if hrs > 8.0:
-            action_ctx["sleep_mood_bonus"] = 4
+        action_ctx["sleep_mood_bonus"] = 4
+    elif hrs >= 4.0:
+        t = (hrs - 4.0) / 3.0
+        debt = max(0.0, round(debt * (1.0 - t), 2))
+        action_ctx["sleep_mood_bonus"] = 1
     else:
-        debt = max(0.0, round(debt * max(0.0, 1.0 - (hrs / 8.0)), 2))
+        keep = max(0.88, 1.0 - 0.07 * hrs)
+        debt = max(0.0, round(debt * keep, 2))
+        action_ctx["sleep_mood_bonus"] = 0
+
     bio["sleep_debt"] = max(0.0, round(debt, 2))
 
 
@@ -292,6 +302,13 @@ def update_bio(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
     bio["hygiene_tax_active"] = float(bio.get("hours_since_shower", 0) or 0) > float(h_tax)
 
     state.setdefault("flags", {})["hallucination_active"] = hall != "none"
+    # W2-8: long travel adds mild fatigue (energy / sleep_debt).
+    if str(action_ctx.get("action_type", "") or "").lower() == "travel":
+        el_tr = _elapsed_minutes_from_ctx(action_ctx)
+        if el_tr >= 120:
+            debt_tr = float(bio.get("sleep_debt", 0.0) or 0.0)
+            add_tr = min(5.5, round((el_tr / 60.0) * 0.085, 2))
+            bio["sleep_debt"] = min(45.0, round(debt_tr + add_tr, 2))
     execute_sleep(state, action_ctx)
     update_hunger(state, action_ctx)
     update_mood(state, action_ctx)

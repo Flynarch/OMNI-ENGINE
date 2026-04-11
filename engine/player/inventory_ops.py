@@ -7,6 +7,7 @@ def apply_inventory_ops(state: dict[str, Any], action_ctx: dict[str, Any]) -> No
     """Apply safe micro-operations suggested by intent resolver.
 
     Deterministic: mutates inventory and increases action_ctx['instant_minutes'] as time cost.
+    W2-10: real-estate / business assets are not created here — use ``PROPERTY`` + ``engine.systems.property`` (passive income ignores action_ctx).
     """
 
     inv = state.setdefault("inventory", {})

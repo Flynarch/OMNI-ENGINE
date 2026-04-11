@@ -189,6 +189,12 @@ def run_pipeline(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[str,
 
 def _pipeline_pre_roll(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
     """Pre-roll mutation stages. Keep ordering stable for deterministic behavior."""
+    try:
+        from engine.systems.smartphone import apply_smartphone_pipeline
+
+        apply_smartphone_pipeline(state, action_ctx)
+    except Exception:
+        pass
     world_tick(state, action_ctx)
     apply_inventory_ops(state, action_ctx)
     update_timers(state, action_ctx)

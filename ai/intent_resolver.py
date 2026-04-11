@@ -66,6 +66,7 @@ STEP_KEYS: Set[str] = frozenset(
         "on_success",
         "on_failure",
         "accommodation_intent",
+        "smartphone_op",
         "params",
     }
 )
@@ -88,6 +89,7 @@ TOP_LEVEL_V1_KEYS: Set[str] = frozenset(
         "time_cost_min",
         "travel_destination",
         "inventory_ops",
+        "smartphone_op",
         "player_goal",
         "context_assumptions",
     }
@@ -144,9 +146,11 @@ Optional step keys:
 - targets: array of short strings
 - stakes: one of ["none","low","medium","high"]
 - risk_level: one of ["low","medium","high"]
-- time_cost_min: integer minutes 0-240 (0 means use engine default)
+- time_cost_min: integer minutes 0-720 for sleep, 0-240 for other action types (0 means use engine default)
 - travel_destination: short place name if action_type="travel", else "".
 - inventory_ops: array of inventory micro-ops (same shapes as v1)
+- smartphone_op: optional object for phone UI (action_type usually "instant", domain "other", intent_note "smartphone"):
+  {"op":"power","value":"on|off|status"} OR {"op":"call","target":"<name>"} OR {"op":"message","target":"<name>","body":"<text>"} OR {"op":"dark_web"}
 - preconditions: array (may be empty). Each item is ONLY {"kind","op","value"} with kind one of:
   ["hands_free","has_item","scene_phase","target_visible","npc_alive","location_is","district_is","money_gte","skill_gte"]
   and op one of ["eq","neq","in","gte"] (use gte for money_gte/skill_gte).
@@ -232,6 +236,31 @@ def _sanitize_on_links(raw: Any, *, failure: bool) -> List[Dict[str, str]]:
     return out
 
 
+def _sanitize_smartphone_op(raw: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(raw, dict):
+        return None
+    op = str(raw.get("op", "") or "").strip().lower()
+    if op == "power":
+        v = str(raw.get("value", "") or "").strip().lower()
+        if v not in ("on", "off", "status"):
+            return None
+        return {"op": "power", "value": v}
+    if op == "call":
+        tgt = str(raw.get("target", "") or "").strip()[:80]
+        if not tgt:
+            return None
+        return {"op": "call", "target": tgt}
+    if op == "message":
+        tgt = str(raw.get("target", "") or "").strip()[:80]
+        body = str(raw.get("body", "") or "").strip()[:500]
+        if not tgt:
+            return None
+        return {"op": "message", "target": tgt, "body": body}
+    if op in ("dark_web", "darkweb"):
+        return {"op": "dark_web"}
+    return None
+
+
 def _sanitize_step(step: Any) -> Optional[Dict[str, Any]]:
     if not isinstance(step, dict):
         return None
@@ -275,8 +304,8 @@ def _sanitize_step(step: Any) -> Optional[Dict[str, Any]]:
         out["risk_level"] = rk
     try:
         tcm = int(s.get("time_cost_min", 0) or 0)
-        tcm = max(0, min(240, tcm))
-        out["time_cost_min"] = tcm
+        cap_m = 12 * 60 if at == "sleep" else 240
+        out["time_cost_min"] = max(0, min(cap_m, tcm))
     except (TypeError, ValueError):
         out["time_cost_min"] = 0
     if at == "travel":
@@ -301,6 +330,10 @@ def _sanitize_step(step: Any) -> Optional[Dict[str, Any]]:
         out["on_failure"] = ofail
     if isinstance(s.get("accommodation_intent"), dict):
         out["accommodation_intent"] = dict(s["accommodation_intent"])
+    if isinstance(s.get("smartphone_op"), dict):
+        spo = _sanitize_smartphone_op(s["smartphone_op"])
+        if spo:
+            out["smartphone_op"] = spo
     if isinstance(s.get("params"), dict):
         out["params"] = dict(s["params"])
     return out
@@ -392,12 +425,21 @@ def normalize_resolved_intent(obj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         flat["risk_level"] = rk
     try:
         tcm = int(flat.get("time_cost_min", 0) or 0)
-        flat["time_cost_min"] = max(0, min(240, tcm))
+        if at == "sleep":
+            flat["time_cost_min"] = max(0, min(12 * 60, tcm))
+        else:
+            flat["time_cost_min"] = max(0, min(240, tcm))
     except (TypeError, ValueError):
         flat["time_cost_min"] = 0
     flat["travel_destination"] = str(flat.get("travel_destination", "") or "").strip()[:120]
     if isinstance(flat.get("inventory_ops"), list):
         flat["inventory_ops"] = flat["inventory_ops"][:24]
+    if isinstance(flat.get("smartphone_op"), dict):
+        spo = _sanitize_smartphone_op(flat["smartphone_op"])
+        if spo:
+            flat["smartphone_op"] = spo
+        else:
+            flat.pop("smartphone_op", None)
     try:
         conf = float(flat.get("confidence", 0.0))
     except (TypeError, ValueError):
@@ -426,6 +468,7 @@ def _flatten_intent_v2_for_compat(obj: Dict[str, Any]) -> Dict[str, Any]:
         "time_cost_min",
         "travel_destination",
         "inventory_ops",
+        "smartphone_op",
     ):
         if k in step0 and step0.get(k) is not None:
             out[k] = step0.get(k)
@@ -485,11 +528,17 @@ def _sleep_fastpath(player_input: str) -> Optional[Dict[str, Any]]:
     if not t:
         return None
     hrs: int | None = None
-    if t in ("sleep", "tidur", "aku mau tidur", "saya mau tidur"):
+    import re
+
+    m = re.search(r"\b(?:aku|saya)\s+mau\s+tidur\s+(\d{1,2})(?:\s*(?:jam|hours?|h))?\b", t)
+    if m:
+        try:
+            hrs = int(m.group(1))
+        except Exception:
+            hrs = 8
+    elif t in ("sleep", "tidur", "aku mau tidur", "saya mau tidur"):
         hrs = 8
     else:
-        import re
-
         m = re.search(r"\b(?:sleep|tidur)\s+(\d{1,2})(?:\s*(?:jam|hours?|h))?\b", t)
         if not m:
             m = re.search(r"\b(\d{1,2})\s*(?:jam|hours?|h)\b", t)

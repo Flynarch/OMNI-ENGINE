@@ -1,11 +1,39 @@
 {
-  "tags": ["informal_networks", "traffic_friction", "humidity", "street_bureaucracy"],
-  "notes": ["Humid heat, dense traffic, and informal networks that move faster than paperwork."],
-  "nearby_items": ["burner_phone", "keys", "phrasebook"],
+  "tags": [
+    "informal_networks",
+    "traffic_friction",
+    "humidity",
+    "street_bureaucracy"
+  ],
+  "notes": [
+    "Humid heat, dense traffic, and informal networks that move faster than paperwork."
+  ],
+  "nearby_items": [
+    "burner_phone",
+    "keys",
+    "phrasebook"
+  ],
   "npcs": {
-    "Fixer_Cikini_Rara": { "role": "fixer", "affiliation": "black_market", "disposition_score": 57, "disposition_label": "Neutral", "is_contact": true },
-    "Intel_Clerk_Dimas": { "role": "clerk", "affiliation": "corporate", "disposition_score": 52, "disposition_label": "Neutral", "is_contact": true },
-    "Officer_Sutanto": { "role": "cop", "affiliation": "police", "disposition_score": 46, "disposition_label": "Cold" }
+    "Fixer_Cikini_Rara": {
+      "role": "fixer",
+      "affiliation": "black_market",
+      "disposition_score": 57,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    },
+    "Intel_Clerk_Dimas": {
+      "role": "clerk",
+      "affiliation": "corporate",
+      "disposition_score": 52,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    },
+    "Officer_Sutanto": {
+      "role": "cop",
+      "affiliation": "police",
+      "disposition_score": 46,
+      "disposition_label": "Cold"
+    }
   },
   "city_stats": {
     "daily_food_cost_usd": 18.0,
@@ -17,7 +45,10 @@
     "avg_rent_monthly_usd": 374.0,
     "cost_of_living_index": 30.1,
     "unemployment_rate_pct": 5.3,
-    "crime_index": 53.0
+    "crime_index": 53.0,
+    "avg_apartment_price_usd": 29200.0,
+    "avg_house_price_usd": 69100.0,
+    "avg_car_price_usd": 4700.0,
+    "avg_small_business_revenue_monthly_usd": 2560.0
   }
 }
-

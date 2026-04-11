@@ -17,6 +17,7 @@
     "location": "",
     "year": 2025,
     "econ_tier": "-",
+    "has_passport": false,
     "language": "id",
     "languages": { "id": 70 },
     "disguise": { "active": false, "persona": "", "until_day": 0, "until_time": 0, "risk": 0 },
@@ -25,6 +26,35 @@
       "outfit": 0,
       "hygiene": 0,
       "speaking": 0
+    },
+    "character_stats": {
+      "charisma": 50,
+      "agility": 50,
+      "strength": 50,
+      "intelligence": 50,
+      "perception": 50,
+      "luck": 50,
+      "willpower": 50
+    },
+    "career": {
+      "active_track": "normal",
+      "on_break": false,
+      "permanent_stain": false,
+      "tracks": {},
+      "events_done": [],
+      "last_career_econ_day": 0,
+      "cross_track_switches": 0
+    },
+    "assets": {
+      "version": 1,
+      "entries": []
+    },
+    "smartphone": {
+      "phone_on": true,
+      "number": "",
+      "messages": [],
+      "contacts": [],
+      "apps_installed": ["dialer", "messages", "wallet", "browser"]
     }
   },
   "bio": {

@@ -1,11 +1,40 @@
 {
-  "tags": ["intel_fast", "corp_dense", "police_stretched", "crowded_grid"],
-  "notes": ["A crowded grid: cops are stretched, corps are everywhere, intel travels fast—and gets monetized faster."],
-  "nearby_items": ["burner_phone", "lockpick_set", "keys"],
+  "tags": [
+    "intel_fast",
+    "corp_dense",
+    "police_stretched",
+    "crowded_grid"
+  ],
+  "notes": [
+    "A crowded grid: cops are stretched, corps are everywhere, intel travels fast—and gets monetized faster."
+  ],
+  "nearby_items": [
+    "burner_phone",
+    "lockpick_set",
+    "keys"
+  ],
   "npcs": {
-    "Runner_Kai": { "role": "runner", "affiliation": "civilian", "disposition_score": 56, "disposition_label": "Neutral", "is_contact": true },
-    "Detective_Morrow": { "role": "detective", "affiliation": "police", "disposition_score": 45, "disposition_label": "Cold", "is_contact": true },
-    "Corp_Legal_Avery": { "role": "corporate_rep", "affiliation": "corporate", "disposition_score": 50, "disposition_label": "Cold", "is_contact": true }
+    "Runner_Kai": {
+      "role": "runner",
+      "affiliation": "civilian",
+      "disposition_score": 56,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    },
+    "Detective_Morrow": {
+      "role": "detective",
+      "affiliation": "police",
+      "disposition_score": 45,
+      "disposition_label": "Cold",
+      "is_contact": true
+    },
+    "Corp_Legal_Avery": {
+      "role": "corporate_rep",
+      "affiliation": "corporate",
+      "disposition_score": 50,
+      "disposition_label": "Cold",
+      "is_contact": true
+    }
   },
   "city_stats": {
     "daily_food_cost_usd": 43.0,
@@ -17,7 +46,10 @@
     "avg_rent_monthly_usd": 2367.0,
     "cost_of_living_index": 100.0,
     "unemployment_rate_pct": 4.5,
-    "crime_index": 48.0
+    "crime_index": 48.0,
+    "avg_apartment_price_usd": 184600.0,
+    "avg_house_price_usd": 528700.0,
+    "avg_car_price_usd": 17300.0,
+    "avg_small_business_revenue_monthly_usd": 22100.0
   }
 }
-

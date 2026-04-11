@@ -1,9 +1,27 @@
 {
-  "notes": ["Hard edges, layered neighborhoods, and union quiet-power; heat attracts attention fast."],
-  "nearby_items": ["burner_phone", "keys", "lockpick_set"],
+  "notes": [
+    "Hard edges, layered neighborhoods, and union quiet-power; heat attracts attention fast."
+  ],
+  "nearby_items": [
+    "burner_phone",
+    "keys",
+    "lockpick_set"
+  ],
   "npcs": {
-    "Detective_Sloan": { "role": "detective", "affiliation": "police", "disposition_score": 46, "disposition_label": "Cold", "is_contact": true },
-    "Fixer_SouthLoop_Ren": { "role": "fixer", "affiliation": "black_market", "disposition_score": 55, "disposition_label": "Neutral", "is_contact": true }
+    "Detective_Sloan": {
+      "role": "detective",
+      "affiliation": "police",
+      "disposition_score": 46,
+      "disposition_label": "Cold",
+      "is_contact": true
+    },
+    "Fixer_SouthLoop_Ren": {
+      "role": "fixer",
+      "affiliation": "black_market",
+      "disposition_score": 55,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    }
   },
   "city_stats": {
     "daily_food_cost_usd": 35.0,
@@ -15,7 +33,10 @@
     "avg_rent_monthly_usd": 2000.0,
     "cost_of_living_index": 82.0,
     "unemployment_rate_pct": 4.4,
-    "crime_index": 65.0
+    "crime_index": 65.0,
+    "avg_apartment_price_usd": 156000.0,
+    "avg_house_price_usd": 426800.0,
+    "avg_car_price_usd": 14000.0,
+    "avg_small_business_revenue_monthly_usd": 21000.0
   }
 }
-

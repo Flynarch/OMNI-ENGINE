@@ -51,6 +51,13 @@ def execute_arrest(state: dict[str, Any], *, bribery_attempt: bool = False) -> N
 
     state["active_scene"] = None
 
+    try:
+        from engine.systems.property import seize_owned_vehicles_on_arrest
+
+        seize_owned_vehicles_on_arrest(state)
+    except Exception:
+        pass
+
     msg = "[Arrest] You were arrested, fined heavily, and contraband was confiscated. Released after 2 days."
     if bribery_attempt:
         msg += " Additional charges for attempted bribery."

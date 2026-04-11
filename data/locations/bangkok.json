@@ -1,9 +1,27 @@
 {
-  "notes": ["Heat, density, and informal rules; everyone knows someone who knows."],
-  "nearby_items": ["burner_phone", "keys", "lockpick_set"],
+  "notes": [
+    "Heat, density, and informal rules; everyone knows someone who knows."
+  ],
+  "nearby_items": [
+    "burner_phone",
+    "keys",
+    "lockpick_set"
+  ],
   "npcs": {
-    "Fixer_Sukhumvit_Pim": { "role": "fixer", "affiliation": "black_market", "disposition_score": 58, "disposition_label": "Neutral", "is_contact": true },
-    "Doc_Somchai": { "role": "doc", "affiliation": "civilian", "disposition_score": 56, "disposition_label": "Neutral", "is_contact": true }
+    "Fixer_Sukhumvit_Pim": {
+      "role": "fixer",
+      "affiliation": "black_market",
+      "disposition_score": 58,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    },
+    "Doc_Somchai": {
+      "role": "doc",
+      "affiliation": "civilian",
+      "disposition_score": 56,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    }
   },
   "city_stats": {
     "daily_food_cost_usd": 12.0,
@@ -15,7 +33,10 @@
     "avg_rent_monthly_usd": 600.0,
     "cost_of_living_index": 41.2,
     "unemployment_rate_pct": 0.7,
-    "crime_index": 40.0
+    "crime_index": 40.0,
+    "avg_apartment_price_usd": 46800.0,
+    "avg_house_price_usd": 114400.0,
+    "avg_car_price_usd": 6700.0,
+    "avg_small_business_revenue_monthly_usd": 2240.0
   }
 }
-

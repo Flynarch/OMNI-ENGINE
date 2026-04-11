@@ -1,9 +1,27 @@
 {
-  "notes": ["Glass towers, quiet banking corridors, and cross-border logistics; clean fronts hide messy pipes."],
-  "nearby_items": ["burner_phone", "keys", "laptop_basic"],
+  "notes": [
+    "Glass towers, quiet banking corridors, and cross-border logistics; clean fronts hide messy pipes."
+  ],
+  "nearby_items": [
+    "burner_phone",
+    "keys",
+    "laptop_basic"
+  ],
   "npcs": {
-    "Broker_Lin": { "role": "fixer", "affiliation": "black_market", "disposition_score": 56, "disposition_label": "Neutral", "is_contact": true },
-    "Doc_Gupta": { "role": "doc", "affiliation": "civilian", "disposition_score": 57, "disposition_label": "Neutral", "is_contact": true }
+    "Broker_Lin": {
+      "role": "fixer",
+      "affiliation": "black_market",
+      "disposition_score": 56,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    },
+    "Doc_Gupta": {
+      "role": "doc",
+      "affiliation": "civilian",
+      "disposition_score": 57,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    }
   },
   "city_stats": {
     "daily_food_cost_usd": 30.0,
@@ -15,7 +33,10 @@
     "avg_rent_monthly_usd": 1800.0,
     "cost_of_living_index": 72.0,
     "unemployment_rate_pct": 6.6,
-    "crime_index": 42.0
+    "crime_index": 42.0,
+    "avg_apartment_price_usd": 140400.0,
+    "avg_house_price_usd": 374100.0,
+    "avg_car_price_usd": 12200.0,
+    "avg_small_business_revenue_monthly_usd": 15000.0
   }
 }
-

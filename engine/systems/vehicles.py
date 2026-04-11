@@ -261,8 +261,8 @@ def apply_vehicle_to_travel(state: dict[str, Any], action_ctx: dict[str, Any]) -
             )
 
 
-def buy_vehicle(state: dict[str, Any], vehicle_id: str) -> dict[str, Any]:
-    """Purchase a vehicle."""
+def buy_vehicle(state: dict[str, Any], vehicle_id: str, *, price_override: int | None = None) -> dict[str, Any]:
+    """Purchase a vehicle. Optional ``price_override`` for W2-10 city-scaled pricing."""
     vtype = VEHICLE_TYPES.get(vehicle_id)
     if not vtype:
         return {"ok": False, "reason": "unknown_vehicle", "message": f"Unknown vehicle: {vehicle_id}"}
@@ -290,7 +290,13 @@ def buy_vehicle(state: dict[str, Any], vehicle_id: str) -> dict[str, Any]:
         "helicopter": 100000,
     }
     
-    price = base_prices.get(vehicle_id, 1000)
+    if price_override is not None:
+        try:
+            price = max(1, int(price_override))
+        except Exception:
+            price = int(base_prices.get(vehicle_id, 1000) or 1000)
+    else:
+        price = int(base_prices.get(vehicle_id, 1000) or 1000)
     if cash < price:
         return {"ok": False, "reason": "not_enough_cash", "need": price, "cash": cash}
     
@@ -308,6 +314,7 @@ def buy_vehicle(state: dict[str, Any], vehicle_id: str) -> dict[str, Any]:
         "condition": 100,
         "owned_since_day": day,
         "stolen": False,
+        "purchase_price_usd": int(price),
     }
     
     state.setdefault("world_notes", []).append(f"[Vehicle] Purchased {vtype['name']}.")
@@ -337,7 +344,12 @@ def sell_vehicle(state: dict[str, Any], vehicle_id: str) -> dict[str, Any]:
         "car_sports": 10000, "car_van": 3000, "taxi": 0,
         "boat_small": 5000, "boat_speed": 15000, "helicopter": 100000,
     }
-    original = base_prices.get(vehicle_id, 1000)
+    try:
+        original = int(vdata.get("purchase_price_usd", 0) or 0)
+    except Exception:
+        original = 0
+    if original <= 0:
+        original = int(base_prices.get(vehicle_id, 1000) or 1000)
     sell_price = int(original * 0.5)
     
     # Reduce for poor condition

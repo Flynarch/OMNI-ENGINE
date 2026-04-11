@@ -1,9 +1,26 @@
 {
-  "notes": ["Old stone, old favors; bureaucracy moves slow until it doesn’t."],
-  "nearby_items": ["burner_phone", "keys", "phrasebook"],
+  "notes": [
+    "Old stone, old favors; bureaucracy moves slow until it doesn’t."
+  ],
+  "nearby_items": [
+    "burner_phone",
+    "keys",
+    "phrasebook"
+  ],
   "npcs": {
-    "Fixer_Trastevere_Nico": { "role": "fixer", "affiliation": "black_market", "disposition_score": 56, "disposition_label": "Neutral", "is_contact": true },
-    "Officer_Rossi": { "role": "cop", "affiliation": "police", "disposition_score": 47, "disposition_label": "Cold" }
+    "Fixer_Trastevere_Nico": {
+      "role": "fixer",
+      "affiliation": "black_market",
+      "disposition_score": 56,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    },
+    "Officer_Rossi": {
+      "role": "cop",
+      "affiliation": "police",
+      "disposition_score": 47,
+      "disposition_label": "Cold"
+    }
   },
   "city_stats": {
     "daily_food_cost_usd": 28.0,
@@ -15,7 +32,10 @@
     "avg_rent_monthly_usd": 1100.0,
     "cost_of_living_index": 65.0,
     "unemployment_rate_pct": 5.3,
-    "crime_index": 50.0
+    "crime_index": 50.0,
+    "avg_apartment_price_usd": 85800.0,
+    "avg_house_price_usd": 224300.0,
+    "avg_car_price_usd": 10900.0,
+    "avg_small_business_revenue_monthly_usd": 7500.0
   }
 }
-

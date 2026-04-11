@@ -1,9 +1,26 @@
 {
-  "notes": ["Compressed vertical city; finance, port routes, and surveillance overlap everywhere."],
-  "nearby_items": ["smartphone", "keys", "burner_phone"],
+  "notes": [
+    "Compressed vertical city; finance, port routes, and surveillance overlap everywhere."
+  ],
+  "nearby_items": [
+    "smartphone",
+    "keys",
+    "burner_phone"
+  ],
   "npcs": {
-    "Fixer_Central_Mei": { "role": "fixer", "affiliation": "black_market", "disposition_score": 56, "disposition_label": "Neutral", "is_contact": true },
-    "Corp_Auditor_Lau": { "role": "corporate_rep", "affiliation": "corporate", "disposition_score": 50, "disposition_label": "Cold" }
+    "Fixer_Central_Mei": {
+      "role": "fixer",
+      "affiliation": "black_market",
+      "disposition_score": 56,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    },
+    "Corp_Auditor_Lau": {
+      "role": "corporate_rep",
+      "affiliation": "corporate",
+      "disposition_score": 50,
+      "disposition_label": "Cold"
+    }
   },
   "city_stats": {
     "daily_food_cost_usd": 30.0,
@@ -15,7 +32,10 @@
     "avg_rent_monthly_usd": 2200.0,
     "cost_of_living_index": 65.6,
     "unemployment_rate_pct": 3.3,
-    "crime_index": 20.0
+    "crime_index": 20.0,
+    "avg_apartment_price_usd": 171600.0,
+    "avg_house_price_usd": 449300.0,
+    "avg_car_price_usd": 11000.0,
+    "avg_small_business_revenue_monthly_usd": 9600.0
   }
 }
-

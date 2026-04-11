@@ -569,6 +569,14 @@ def _special_turn_profile(cmd: str) -> dict[str, Any]:
     # Mutating or time-consuming special commands.
     if up.startswith("HACK"):
         return {"consume": True, "action_type": "instant", "domain": "hacking"}
+    if up == "PHONE" or up.startswith("PHONE HELP") or up == "SMARTPHONE" or up.startswith("SMARTPHONE HELP"):
+        return {"consume": False, "action_type": "instant", "domain": "other"}
+    if up.startswith("PHONE STATUS") or up.startswith("SMARTPHONE STATUS"):
+        return {"consume": False, "action_type": "instant", "domain": "other"}
+    if up.startswith("PHONE ") or up.startswith("SMARTPHONE "):
+        return {"consume": True, "action_type": "instant", "domain": "other"}
+    if up.startswith("CAREER PROMOTE"):
+        return {"consume": True, "action_type": "instant", "domain": "other"}
     if up.startswith("WORK"):
         return {"consume": True, "action_type": "work", "domain": "other"}
     if up.startswith("DRIVE") or up.startswith("TRAVELTO"):
@@ -626,7 +634,16 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         from engine.commands.social_intel import handle_social_intel
         from engine.commands.mobility import handle_mobility
         from engine.commands.commerce import handle_commerce
+        from engine.commands.career import handle_career
+        from engine.commands.property_cmd import handle_property
+        from engine.commands.smartphone_cmd import handle_smartphone
 
+        if handle_property(state, cmd):
+            return True
+        if handle_smartphone(state, cmd, run_pipeline=run_pipeline):
+            return True
+        if handle_career(state, cmd):
+            return True
         if handle_misc(state, cmd, fmt_clock=_fmt_clock):
             return True
         if handle_underworld(state, cmd, run_pipeline=run_pipeline, ui_err=_ui_err):
@@ -995,6 +1012,9 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         console.print("- STAY status|hotel|boarding|suite <nights>")
         console.print("- GIGS | JOBS       (list freelance contracts)")
         console.print("- WORK <gig_id>     (spend hours to complete a gig)")
+        console.print("- CAREER | CAREER PROMOTE [track] | CAREER TRACK <id> | CAREER BREAK ON|OFF")
+        console.print("- PROPERTY (assets) | PROPERTY PRICES <city> | PROPERTY BUY APARTMENT|HOUSE|BUSINESS <city>")
+        console.print("- PROPERTY RENT APARTMENT <city> | PROPERTY SELL <asset_id> | PROPERTY BUY VEHICLE <vehicle_id>")
         console.print("[dim]  boarding = budget/shared room (Indonesian: kost); aliases: kos kost dorm hostel guesthouse[/dim]")
         console.print("- NPCSIM_STATS")
         console.print("- WHEREAMI")

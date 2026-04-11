@@ -12,6 +12,11 @@ import hashlib
 from typing import Any
 
 
+def travel_is_district_mode(action_ctx: dict[str, Any]) -> bool:
+    """True for TRAVELTO-style moves; W2-8 intercity gates use natural travel only."""
+    return str((action_ctx or {}).get("travel_mode", "") or "").strip().lower() == "district"
+
+
 def _h32(*parts: Any) -> int:
     """Deterministic hash for district generation."""
     s = "|".join(str(p) for p in parts)

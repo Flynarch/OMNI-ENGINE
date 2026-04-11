@@ -64,6 +64,8 @@ CONTRACT:
 - If [ENGINE] says combat_blocked or lists triggered events/ripples, the story MUST reflect that (no alternate physics).
 - MEMORY_HASH is the continuity channel (max 5 lines this turn); keep NPC lines and ripples consistent with [WORLD QUEUE] when possible.
 - If travel uses a vehicle (see `vehicle_used` in action_ctx or the vehicle line), narration must reflect the chosen vehicle (noise/visibility), and must not contradict fuel/condition changes recorded by the engine.
+- If the player uses `PROPERTY` (buy/rent/sell), those transactions are already resolved in Python before narration; never invent extra properties, passive business income, or maintenance waivers from prose. Vehicle seizure after custody is authoritative if [ENGINE] says so.
+- If the player uses `CAREER` / `CAREER PROMOTE` / `CAREER TRACK` / `CAREER BREAK`, those outcomes are already locked by Python: never grant promotions, salary, or record expungement from prose alone. A permanent criminal record flag in [ENGINE] cannot be narrated away.
 - If the player uses `WORK <gig_id>`, narrate it as hours of focused labor appropriate to their occupation/skill. Emphasize fatigue (mental/physical) and the final outcome (paid on success; empty-handed on failure) without reading raw numbers from [ENGINE] aloud in fiction blocks.
 - If `WORK <gig_id>` fails because daily exhaustion limit is reached, describe blurred vision, stiff fingers, and a body that refuses to cooperate under more labor. Keep it gritty, immediate, and non-numeric.
 - If the player uses `HACK <target>`, narrate digital intrusion tension (connections, firewalls, code pressure) mixed with real-world physical risk (glowing screen in a dark alley, footsteps, sirens). Reflect success vs detection outcomes, and NEVER read raw numbers from [ENGINE] aloud in fiction blocks.
@@ -119,6 +121,8 @@ KONTRAK:
 - Jika [ENGINE] menyebut combat_blocked atau event/ripple terpicu, cerita HARUS selaras (bukan fisika lain).
 - MEMORY_HASH adalah saluran kontinuitas (maks. 5 baris turn ini); samakan NPC/ripple dengan [ANTREAN DUNIA] bila relevan.
 - Jika travel memakai kendaraan (lihat `vehicle_used` di action_ctx atau baris vehicle), narasi wajib menyebut kendaraan itu (suara/visibilitas) dan tidak boleh bertentangan dengan fuel/condition yang sudah diubah engine.
+- Jika pemain memakai `PROPERTY` (beli/sewa/jual), transaksi sudah diselesaikan Python sebelum narasi; dilarang mengarang properti tambahan, pemasukan bisnis pasif, atau pembebasan biaya perawatan dari prosa. Penyitaan kendaraan pasca penangkapan mengikuti [ENGINE] jika tercantum.
+- Jika pemain memakai `CAREER` / `CAREER PROMOTE` / `CAREER TRACK` / `CAREER BREAK`, hasilnya sudah diputuskan Python: dilarang mengarang promosi, gaji, atau penghapusan rekam jejak dari prosa saja. Bendera rekam pidana permanen di [ENGINE] tidak boleh ditiadakan lewat narasi.
 - Jika pemain memakai `WORK <gig_id>`, narasi WAJIB menggambarkan proses kerja berjam-jam yang realistis sesuai profesi/skill, termasuk lelah mental/fisik, dan hasil akhirnya (dibayar jika sukses; nihil jika gagal) tanpa membaca angka mentah dari [ENGINE] dalam prosa fiksi.
 - Jika `WORK <gig_id>` gagal karena limit kelelahan harian tercapai, narasi WAJIB menekankan pandangan yang kabur, jari yang kaku, atau tubuh yang menolak diajak kerja sama. Tetap terasa kasar, mendesak, dan tanpa angka mentah.
 - Jika pemain memakai `HACK <target>`, narasi WAJIB menggambarkan ketegangan intrusi digital (koneksi, firewall, baris kode) yang berpadu dengan kewaspadaan fisik di dunia nyata (layar menyala di gang gelap, suara langkah kaki/sirene). Bedakan sukses vs terdeteksi, dan JANGAN membaca angka mentah dari [ENGINE] dalam prosa fiksi.
@@ -348,6 +352,20 @@ def _fmt_social_stats(state: dict[str, Any]) -> str:
     )
 
 
+def _fmt_character_stats(state: dict[str, Any]) -> str:
+    try:
+        from engine.core.character_stats import ensure_player_character_stats
+
+        cs = ensure_player_character_stats(state)
+    except Exception:
+        return "character_stats: (unavailable)"
+    return (
+        "character_stats "
+        f"CHA={cs['charisma']} AGI={cs['agility']} STR={cs['strength']} INT={cs['intelligence']} "
+        f"PER={cs['perception']} LUCK={cs['luck']} WILL={cs['willpower']}"
+    )
+
+
 def _fmt_action_ctx(action_ctx: dict[str, Any]) -> str:
     lines = [
         f"action_type={action_ctx.get('action_type', 'instant')}",
@@ -365,6 +383,17 @@ def _fmt_action_ctx(action_ctx: dict[str, Any]) -> str:
         lines.append(f"social_mode={action_ctx['social_mode']}")
     if action_ctx.get("stakes"):
         lines.append(f"stakes={action_ctx['stakes']}")
+    if str(action_ctx.get("action_type", "") or "").lower() == "sleep":
+        try:
+            sdh = float(action_ctx.get("sleep_duration_h", 0) or 0)
+        except (TypeError, ValueError):
+            sdh = 0.0
+        lines.append(f"sleep_duration_h={sdh:.2f}")
+        lines.append(f"sleep_quality={action_ctx.get('sleep_quality', 'okay')}")
+        try:
+            lines.append(f"rested_minutes={int(action_ctx.get('rested_minutes', 0) or 0)}")
+        except (TypeError, ValueError):
+            lines.append("rested_minutes=0")
     if action_ctx.get("time_cost_min") is not None:
         tcm = action_ctx.get("time_cost_min")
         if isinstance(tcm, (int, float, str)) and str(tcm).strip() != "":
@@ -401,6 +430,14 @@ def _fmt_action_ctx(action_ctx: dict[str, Any]) -> str:
             pass
     if action_ctx.get("step_now_id"):
         lines.append(f"step_now_id={action_ctx.get('step_now_id')}")
+    sr = action_ctx.get("smartphone_result")
+    if isinstance(sr, dict) and (sr.get("msg") is not None or sr.get("reason") is not None):
+        sm = str(sr.get("msg", "") or "").replace("\n", " ").strip()
+        if len(sm) > 160:
+            sm = sm[:157] + "..."
+        lines.append(
+            f"smartphone ok={bool(sr.get('ok'))} reason={sr.get('reason', '')} summary={sm}"
+        )
     if str(action_ctx.get("action_type", "") or "").lower() == "custom":
         lines.append(
             "[FFCI — NARRATION ANCHOR] Describe THIS turn using intent_note + player_goal as the spine. "
@@ -1069,6 +1106,22 @@ def build_turn_package(
     except Exception:
         pass
 
+    career_engine = "-"
+    try:
+        from engine.systems.occupation import fmt_career_engine_brief
+
+        career_engine = fmt_career_engine_brief(state)
+    except Exception:
+        pass
+
+    property_engine = "-"
+    try:
+        from engine.systems.property import fmt_property_engine_brief
+
+        property_engine = fmt_property_engine_brief(state)
+    except Exception:
+        pass
+
     return f"""[TURN PACKAGE - OMNI-ENGINE v6.9]
 [NARRATION LANGUAGE]
 {lang_label} (code={lang})
@@ -1099,6 +1152,7 @@ def build_turn_package(
 {_fmt_narration_sync_hint(lang)}
 {_fmt_weapon_line(state)}
 {_fmt_social_stats(state)}
+{_fmt_character_stats(state)}
 flags: weapon_jammed={flags.get('weapon_jammed')} stop_seq={flags.get('stop_sequence_active')}
 {beat_title}
 {_fmt_beat_this_turn(state, lang)}
@@ -1128,6 +1182,10 @@ corporate: {rep_corporate}
 political: {rep_political}
 street: {rep_street}
 underground: {rep_underground}
+[CAREER / W2-9 — per-track progression; narrator: no digits in fiction]
+{career_engine}
+[PROPERTY / W2-10 — assets & quotes; narrator: no digits in fiction]
+{property_engine}
 [KEY RELATIONSHIPS]
 {rel_lines}
 Cash: {eco.get('cash', 0)} | Bank: {eco.get('bank', 0)} | Debt: {eco.get('debt', 0)} | Daily Burn: {eco.get('daily_burn', 0)}

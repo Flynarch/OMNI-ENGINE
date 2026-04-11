@@ -19,6 +19,7 @@ _BASE_FALLBACK: dict[str, tuple[int, int]] = {
     "driving": (65, 30),
     "stealth": (55, 30),
     "evasion": (50, 50),
+    "economy": (58, 28),
 }
 
 _cached_base: dict[str, tuple[int, int]] | None = None
@@ -189,6 +190,23 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
             "net_threshold_locked": True,
         }
 
+    if bool(action_ctx.get("smartphone_handled")):
+        sr = action_ctx.get("smartphone_result")
+        if not isinstance(sr, dict):
+            sr = {}
+        ok = bool(sr.get("ok"))
+        reason = str(sr.get("reason", "") or "").strip()
+        msg = str(sr.get("msg", "") or "").strip() or ("OK" if ok else "Blocked")
+        outcome = msg if ok else (f"No Roll ({reason})" if reason else "No Roll (BLOCK)")
+        return {
+            "base": 50,
+            "mods": [("Smartphone", 0)],
+            "net_threshold": 50,
+            "roll": 55 if ok else None,
+            "outcome": outcome,
+            "net_threshold_locked": True,
+        }
+
     feas = feasibility_custom_intent(state, action_ctx)
     if feas is not None:
         return feas
@@ -346,6 +364,13 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
                         b = min(10, max(0, (_lvl("management") - 1) * per))
                         if b:
                             mods.append(("Management skill", b))
+        except Exception:
+            pass
+        # 1c. W2-6 character stats (attributes): after skill lines; small bounded mods from skills_table.json.
+        try:
+            from engine.core.character_stats import append_character_stat_modifiers
+
+            append_character_stat_modifiers(state, action_ctx, mods)
         except Exception:
             pass
     except Exception:

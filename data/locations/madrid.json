@@ -1,9 +1,27 @@
 {
-  "notes": ["Late nights, fast talk, and quiet networks; deals form over small favors."],
-  "nearby_items": ["burner_phone", "keys", "phrasebook"],
+  "notes": [
+    "Late nights, fast talk, and quiet networks; deals form over small favors."
+  ],
+  "nearby_items": [
+    "burner_phone",
+    "keys",
+    "phrasebook"
+  ],
   "npcs": {
-    "Fixer_Sol_Lucia": { "role": "fixer", "affiliation": "black_market", "disposition_score": 57, "disposition_label": "Neutral", "is_contact": true },
-    "Courier_Ivan": { "role": "runner", "affiliation": "civilian", "disposition_score": 54, "disposition_label": "Neutral", "is_contact": true }
+    "Fixer_Sol_Lucia": {
+      "role": "fixer",
+      "affiliation": "black_market",
+      "disposition_score": 57,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    },
+    "Courier_Ivan": {
+      "role": "runner",
+      "affiliation": "civilian",
+      "disposition_score": 54,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    }
   },
   "city_stats": {
     "daily_food_cost_usd": 22.0,
@@ -15,7 +33,10 @@
     "avg_rent_monthly_usd": 1200.0,
     "cost_of_living_index": 55.0,
     "unemployment_rate_pct": 10.5,
-    "crime_index": 30.0
+    "crime_index": 30.0,
+    "avg_apartment_price_usd": 93600.0,
+    "avg_house_price_usd": 238000.0,
+    "avg_car_price_usd": 9100.0,
+    "avg_small_business_revenue_monthly_usd": 9380.0
   }
 }
-

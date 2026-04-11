@@ -208,6 +208,7 @@ def handle_mobility(state: dict[str, Any], cmd: str, *, console: Any, run_pipeli
             if len(parts) < 2:
                 console.print("[yellow]Usage: TRAVELTO <district_id>[/yellow]")
                 console.print("[dim]Use DISTRICTS to see available districts.[/dim]")
+                console.print("[dim]W2-8: pergi ke kota lain lewat bahasa alami / travel — tiket & paspor (internasional).[/dim]")
                 return True
             target = parts[1].strip().lower()
             ctx: dict[str, Any] = {

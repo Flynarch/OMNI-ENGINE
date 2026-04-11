@@ -203,3 +203,22 @@ def decay_heat_and_suspicion(state: dict[str, Any], *, cur_day: int) -> None:
     except Exception:
         pass
 
+
+def clear_local_pressure_for_city(state: dict[str, Any], loc_key: str) -> None:
+    """W2-8: on intercity/international arrival, reset heat/suspicion buckets for the destination city.
+
+    Per-location maps stay separate; this clears stale local pressure for *this* city key so it does not
+    feel 'carried' from prior simulation state on the same slot.
+    """
+    lk = str(loc_key or "").strip().lower()
+    if not lk:
+        return
+    world = state.setdefault("world", {})
+    if not isinstance(world, dict):
+        return
+    for root in ("heat_map", "suspicion"):
+        m = world.get(root)
+        if isinstance(m, dict) and lk in m:
+            m[lk] = {}
+            world[root] = m
+

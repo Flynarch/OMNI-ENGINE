@@ -293,6 +293,20 @@ def _compact_hook_text(state: dict[str, Any], *, max_len: int = 72) -> str:
     return ""
 
 
+def _fmt_character_stats_line(state: dict[str, Any]) -> str:
+    """W2-6 HUD: one-line seven core stats (abbrev)."""
+    try:
+        from engine.core.character_stats import ensure_player_character_stats
+
+        cs = ensure_player_character_stats(state)
+    except Exception:
+        return "C50 A50 S50 I50 P50 L50 W50"
+    return (
+        f"C{cs['charisma']} A{cs['agility']} S{cs['strength']} I{cs['intelligence']} "
+        f"P{cs['perception']} L{cs['luck']} W{cs['willpower']}"
+    )
+
+
 def _condition_parts(state: dict[str, Any]) -> tuple[int, int, int, str]:
     meta = state.get("meta", {}) or {}
     try:
@@ -385,12 +399,10 @@ def _build_compact_monitor_vm(state: dict[str, Any]) -> dict[str, Any]:
             rel_summary = " | ".join(chunks)
     except Exception:
         pass
-    if sleep_debt >= 8.0:
+    # W2-7: binary energy readout (sleep survival).
+    if sleep_debt >= 4.0:
         energy_label = "Exhausted"
         energy_emoji = "😴"
-    elif sleep_debt >= 3.0:
-        energy_label = "Tired"
-        energy_emoji = "😪"
     else:
         energy_label = "Rested"
         energy_emoji = "💪"
@@ -403,6 +415,57 @@ def _build_compact_monitor_vm(state: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         trace_pct = int(tr.get("trace_pct", 0) or 0)
         tier_lbl = str(tr.get("trace_status", "Ghost") or "Ghost")
+    career_hud = ""
+    try:
+        from engine.systems.occupation import career_daily_salary_usd, career_title_for_level, ensure_career
+
+        ensure_career(state)
+        c = (state.get("player", {}) or {}).get("career", {}) or {}
+        if isinstance(c, dict):
+            at = str(c.get("active_track", "-") or "-")
+            tr = (c.get("tracks", {}) or {}).get(at) or {}
+            lvl = int((tr or {}).get("level", 0) or 0) if isinstance(tr, dict) else 0
+            title = career_title_for_level(state, at, lvl)
+            br = "break" if bool(c.get("on_break")) else "aktif"
+            bits = [f"{at}: {title}", br]
+            if bool(c.get("permanent_stain")):
+                bits.append("noda permanen")
+            if not bool(c.get("on_break")):
+                pay = int(career_daily_salary_usd(state) or 0)
+                if pay > 0:
+                    bits.append(f"~${pay}/hari")
+            career_hud = " | ".join(bits)
+    except Exception:
+        career_hud = ""
+    property_hud = ""
+    try:
+        from engine.systems.property import ensure_player_assets, list_asset_entries
+
+        ensure_player_assets(state)
+        ent = list_asset_entries(state)
+        if ent:
+            n = len(ent)
+            kinds = {}
+            for e in ent[:12]:
+                if not isinstance(e, dict):
+                    continue
+                k = str(e.get("kind", "?") or "?")
+                kinds[k] = kinds.get(k, 0) + 1
+            bits = [f"{n} aset", ", ".join(f"{k}:{v}" for k, v in sorted(kinds.items()))]
+            property_hud = " | ".join(bits)[:110]
+    except Exception:
+        property_hud = ""
+    smartphone_hud = ""
+    try:
+        from engine.systems.smartphone import ensure_smartphone
+
+        sp = ensure_smartphone(state)
+        on = bool(sp.get("phone_on", True))
+        num = str(sp.get("number", "") or "").strip()
+        tail = num[-4:] if len(num) >= 4 else num
+        smartphone_hud = f"{'ON' if on else 'OFF'}" + (f" ···{tail}" if tail else "")
+    except Exception:
+        smartphone_hud = ""
     return {
         "day": day,
         "clock": clock,
@@ -423,6 +486,9 @@ def _build_compact_monitor_vm(state: dict[str, Any]) -> dict[str, Any]:
         "rel_summary": rel_summary,
         "energy_label": energy_label,
         "energy_emoji": energy_emoji,
+        "career_hud": career_hud,
+        "property_hud": property_hud,
+        "smartphone_hud": smartphone_hud,
     }
 
 
@@ -498,11 +564,25 @@ def _render_monitor_compact(state: dict[str, Any]) -> None:
 
     t.append("[ECON] ", style="bold green")
     t.append(f"Cash: ${cash} | Bank: ${bank} | Burn: {burn}/d\n", style="green")
+    ch = str(vm.get("career_hud", "") or "").strip()
+    if ch:
+        t.append("[CAREER] ", style="bold green")
+        t.append(f"{ch}\n", style="green")
+    ph = str(vm.get("property_hud", "") or "").strip()
+    if ph:
+        t.append("[ASSETS] ", style="bold green")
+        t.append(f"{ph}\n", style="green")
+    sh = str(vm.get("smartphone_hud", "") or "").strip()
+    if sh:
+        t.append("[PHONE] ", style="bold cyan")
+        t.append(f"{sh}\n", style="cyan")
 
     t.append("[STAT] ", style="bold yellow")
     t.append("Trace: ", style="yellow")
     t.append(f"{trace_pct}% [{tier_lbl}]", style=trace_val_style)
     t.append(f" | BP: {bp}\n", style="yellow")
+    t.append("[ATTR] ", style="bold yellow")
+    t.append(f"{_fmt_character_stats_line(state)}\n", style="yellow")
     gigs_done, _hacks_attempted, penalty, cond_style = _condition_parts(state)
     t.append("[CONDITION] ", style=cond_style)
     t.append(f"Gigs: {gigs_done}/2 | Hack Penalty: -{penalty}%\n", style=cond_style)
@@ -645,6 +725,15 @@ def _render_monitor_full(state: dict[str, Any]) -> None:
             f"hygiene={int(social.get('hygiene', 0) or 0)} | speaking={int(social.get('speaking', 0) or 0)}\n",
             style="dim",
         )
+    left.append(f"Attrs: {_fmt_character_stats_line(state)}\n", style="dim")
+    try:
+        sd_e = float(bio.get("sleep_debt", 0.0) or 0.0)
+    except Exception:
+        sd_e = 0.0
+    if sd_e >= 4.0:
+        left.append("Energy: 😴 Exhausted\n", style="cyan")
+    else:
+        left.append("Energy: 💪 Rested\n", style="cyan")
     left.append(f"[+] BP: {bp}\n", style=bp_style)
     left.append(
         f"[+] Blood: {bio.get('blood_volume', 5.0)}/{bio.get('blood_max', 5.0)}L\n",

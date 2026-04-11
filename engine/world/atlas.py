@@ -1067,3 +1067,197 @@ def fmt_profile_short(profile: dict[str, Any]) -> str:
     tech = str(profile.get("tech_level", "-"))
     return f"{name} ({country}) | lang={lang} | cur={cur} | law={law} | tech={tech}"
 
+
+def get_city_stats_for_travel(state: dict[str, Any], loc_key: str) -> dict[str, float]:
+    """Load city_stats for ticket/burn scaling from the location slot or data/locations JSON."""
+    lk = str(loc_key or "").strip().lower()
+    if not lk:
+        return {}
+    world = state.get("world", {}) or {}
+    locs = world.get("locations", {}) or {}
+    if isinstance(locs, dict):
+        slot = locs.get(lk)
+        if isinstance(slot, dict):
+            cs = slot.get("city_stats")
+            if isinstance(cs, dict) and cs:
+                out: dict[str, float] = {}
+                for k, v in cs.items():
+                    if isinstance(k, str) and isinstance(v, (int, float)):
+                        out[k] = float(v)
+                return out
+    try:
+        from engine.world.location_presets import load_location_preset
+
+        preset = load_location_preset(lk)
+        if isinstance(preset, dict):
+            cs2 = preset.get("city_stats")
+            if isinstance(cs2, dict):
+                return {str(k): float(v) for k, v in cs2.items() if isinstance(k, str) and isinstance(v, (int, float))}
+    except Exception:
+        pass
+    return {}
+
+
+def travel_route_kind(origin_key: str, dest_key: str) -> str:
+    """W2-8: local (same city), intercity (same country), or international."""
+    o = _norm_place_key(origin_key)
+    d = _norm_place_key(dest_key)
+    if not o or not d or o == d:
+        return "local"
+    co = _CITY_TO_COUNTRY_NORM.get(o)
+    cd = _CITY_TO_COUNTRY_NORM.get(d)
+    if co and cd and co == cd:
+        return "intercity"
+    if co and cd:
+        return "international"
+    return "intercity"
+
+
+def player_has_passport(state: dict[str, Any]) -> bool:
+    p = state.get("player", {}) or {}
+    if not isinstance(p, dict):
+        return False
+    if bool(p.get("has_passport", False)):
+        return True
+    docs = p.get("documents")
+    if isinstance(docs, dict) and bool(docs.get("passport")):
+        return True
+    inv = state.get("inventory", {}) or {}
+    if not isinstance(inv, dict):
+        return False
+    for k in ("r_hand", "l_hand", "worn"):
+        v = inv.get(k)
+        if isinstance(v, str) and "passport" in v.lower():
+            return True
+    for key in ("pocket_contents", "bag_contents"):
+        arr = inv.get(key) or []
+        if not isinstance(arr, list):
+            continue
+        for x in arr[:48]:
+            if isinstance(x, str) and "passport" in x.lower():
+                return True
+            if isinstance(x, dict):
+                iid = str(x.get("id", x.get("name", "")) or "").lower()
+                if "passport" in iid:
+                    return True
+    return False
+
+
+def _w2_ticket_cash(stats_o: dict[str, float], stats_d: dict[str, float], kind: str, origin: str, dest: str) -> int:
+    col_o = float(stats_o.get("cost_of_living_index", 55.0) or 55.0)
+    col_d = float(stats_d.get("cost_of_living_index", 55.0) or 55.0)
+    h = _h32(origin, dest, "w2_ticket")
+    dist_bump = int(h % 55) + 12
+    base = int((col_o + col_d) * 2.15 + dist_bump + 40)
+    if kind == "international":
+        base = int(base * 1.58 + 160 + (h % 80))
+    return max(10, min(8500, base))
+
+
+def _w2_travel_minutes(origin: str, dest: str, kind: str) -> int:
+    h = _h32(origin, dest, "w2_mins")
+    if kind == "local":
+        return max(8, min(35, 10 + h % 20))
+    if kind == "intercity":
+        return max(40, min(220, 70 + h % 95))
+    return max(180, min(700, 300 + h % 260))
+
+
+def sync_daily_burn_from_city_stats(state: dict[str, Any], loc_key: str) -> None:
+    """Nudge daily_burn toward city_stats.daily_food_cost_usd (+ COL) after arrival."""
+    stats = get_city_stats_for_travel(state, loc_key)
+    if not stats:
+        return
+    try:
+        dfc = float(stats.get("daily_food_cost_usd", 35.0) or 35.0)
+        col = float(stats.get("cost_of_living_index", 50.0) or 50.0)
+    except (TypeError, ValueError):
+        return
+    target = max(18, min(420, int(dfc + col * 0.35)))
+    econ = state.setdefault("economy", {})
+    try:
+        cur = int(econ.get("daily_burn", target) or target)
+    except (TypeError, ValueError):
+        cur = target
+    econ["daily_burn"] = int(max(15, min(450, round(cur * 0.4 + target * 0.6))))
+
+
+def apply_w2_travel_gates(state: dict[str, Any], action_ctx: dict[str, Any], origin_key: str, dest_key: str) -> str:
+    """Return a non-empty message to block travel, else ''. Mutates action_ctx (minutes, charges, flags)."""
+    if str(action_ctx.get("travel_mode", "") or "").strip().lower() == "district":
+        return ""
+    o = str(origin_key or "").strip().lower()
+    d = str(dest_key or "").strip().lower()
+    if not d:
+        return ""
+    if not o:
+        o = d
+    kind = travel_route_kind(o, d)
+    action_ctx["travel_route_kind"] = kind
+    action_ctx["w2_travel_precalc"] = False
+    action_ctx.pop("travel_ticket_charge", None)
+    action_ctx["travel_cash_cost"] = 0
+
+    if kind == "local":
+        action_ctx["travel_minutes"] = max(8, min(35, int(action_ctx.get("travel_minutes", 15) or 15)))
+        return ""
+
+    if kind == "international":
+        if not player_has_passport(state):
+            return "[Travel] Bandara/terminal menolak: tidak ada paspor."
+        try:
+            from engine.core.trace import get_trace_tier
+
+            tid = str(get_trace_tier(state).get("tier_id", "") or "")
+            if tid in ("Wanted", "Lockdown"):
+                return "[Travel] Bandara/terminal menolak: status keamanan terlalu tinggi (wanted)."
+        except Exception:
+            pass
+
+    stats_o = get_city_stats_for_travel(state, o) if o else {}
+    stats_d = get_city_stats_for_travel(state, d)
+    if not stats_d and kind != "local":
+        stats_d = {"cost_of_living_index": 55.0, "daily_food_cost_usd": 35.0}
+    if not stats_o:
+        stats_o = {"cost_of_living_index": 55.0, "daily_food_cost_usd": 35.0}
+
+    ticket = _w2_ticket_cash(stats_o, stats_d, kind, o, d)
+    mins = _w2_travel_minutes(o, d, kind)
+
+    try:
+        from engine.core.trace import apply_trace_travel_friction, get_trace_tier
+
+        new_m, _ = apply_trace_travel_friction(state, mins)
+        action_ctx["travel_minutes"] = int(new_m)
+        tier = get_trace_tier(state)
+        mult = float(tier.get("friction_multiplier", 1.0) or 1.0)
+        if mult > 1.0:
+            ticket = max(10, int(round(ticket * mult)))
+    except Exception:
+        action_ctx["travel_minutes"] = int(mins)
+
+    action_ctx["travel_ticket_charge"] = int(ticket)
+    action_ctx["w2_travel_precalc"] = True
+
+    eco = state.get("economy", {}) or {}
+    try:
+        cash = int(eco.get("cash", 0) or 0)
+    except (TypeError, ValueError):
+        cash = 0
+    if cash < ticket:
+        return f"[Travel] Tiket {o or '?'}→{d} memerlukan ${ticket} cash (punya ${cash})."
+
+    try:
+        prof = ensure_location_profile(state, d)
+        dom = str(prof.get("language", "en") or "en").lower().split("+")[0].strip()
+        from engine.core.language import player_language_proficiency
+
+        pl = player_language_proficiency(state)
+        best = int(pl.get(dom, 0) or 0)
+        action_ctx["travel_dest_dominant_lang"] = dom
+        action_ctx["travel_language_proficiency"] = best
+    except Exception:
+        pass
+
+    return ""
+

@@ -1,11 +1,38 @@
 {
-  "tags": ["rules_strict", "finance_hub", "surveillance_high", "clean_fronts"],
-  "notes": ["Clean streets, strict rules, and finance-hub timing; small mistakes echo loudly and get logged."],
-  "nearby_items": ["burner_phone", "keys"],
+  "tags": [
+    "rules_strict",
+    "finance_hub",
+    "surveillance_high",
+    "clean_fronts"
+  ],
+  "notes": [
+    "Clean streets, strict rules, and finance-hub timing; small mistakes echo loudly and get logged."
+  ],
+  "nearby_items": [
+    "burner_phone",
+    "keys"
+  ],
   "npcs": {
-    "Broker_Lim": { "role": "broker", "affiliation": "corporate", "disposition_score": 60, "disposition_label": "Neutral", "is_contact": true },
-    "Courier_Aisyah": { "role": "courier", "affiliation": "civilian", "disposition_score": 57, "disposition_label": "Neutral", "is_contact": true },
-    "Enforcement_Ong": { "role": "cop", "affiliation": "police", "disposition_score": 47, "disposition_label": "Cold" }
+    "Broker_Lim": {
+      "role": "broker",
+      "affiliation": "corporate",
+      "disposition_score": 60,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    },
+    "Courier_Aisyah": {
+      "role": "courier",
+      "affiliation": "civilian",
+      "disposition_score": 57,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    },
+    "Enforcement_Ong": {
+      "role": "cop",
+      "affiliation": "police",
+      "disposition_score": 47,
+      "disposition_label": "Cold"
+    }
   },
   "city_stats": {
     "daily_food_cost_usd": 25.0,
@@ -17,7 +44,10 @@
     "avg_rent_monthly_usd": 2500.0,
     "cost_of_living_index": 80.9,
     "unemployment_rate_pct": 2.0,
-    "crime_index": 20.0
+    "crime_index": 20.0,
+    "avg_apartment_price_usd": 195000.0,
+    "avg_house_price_usd": 531900.0,
+    "avg_car_price_usd": 13800.0,
+    "avg_small_business_revenue_monthly_usd": 14400.0
   }
 }
-

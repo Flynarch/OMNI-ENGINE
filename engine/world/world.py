@@ -208,6 +208,27 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                     action_ctx["travel_destination"] = dc
             except Exception:
                 pass
+            # W2-8: ticket / passport / wanted / city_stats pricing (skip TRAVELTO district mode).
+            dest_gate = str(action_ctx.get("travel_destination", "") or "").strip().lower()
+            cur_loc_gate = str((state.get("player", {}) or {}).get("location", "") or "").strip().lower()
+            try:
+                from engine.world.atlas import apply_w2_travel_gates
+
+                block_msg = apply_w2_travel_gates(state, action_ctx, cur_loc_gate, dest_gate)
+                if block_msg:
+                    notes.append(str(block_msg))
+                    action_ctx["action_type"] = "instant"
+                    action_ctx.pop("travel_destination", None)
+                    action_ctx["instant_minutes"] = int(action_ctx.get("instant_minutes", 2) or 2)
+                    action_ctx.pop("w2_travel_precalc", None)
+                    return
+            except Exception as e:
+                try:
+                    from engine.core.errors import record_error
+
+                    record_error(state, "world.apply_w2_travel_gates", e)
+                except Exception:
+                    pass
             # Persist current location scene before moving.
             cur_loc = str(state.get("player", {}).get("location", "") or "").strip().lower()
             world = state.setdefault("world", {})
@@ -381,6 +402,32 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                             vv["current_location"] = dest_key_norm
                         new_npcs[str(k)] = vv
             state["npcs"] = new_npcs
+
+            # W2-8: pay intercity/international ticket; fresh heat/suspicion bucket at destination; burn ~ city_stats.
+            try:
+                ch = int(action_ctx.pop("travel_ticket_charge", 0) or 0)
+                if ch > 0:
+                    econ = state.setdefault("economy", {})
+                    cash0 = int(econ.get("cash", 0) or 0)
+                    econ["cash"] = max(0, cash0 - ch)
+                    notes.append(f"[Travel] Tiket dibeli: -${ch} (sisa cash ${int(econ.get('cash', 0) or 0)}).")
+            except Exception:
+                pass
+            try:
+                rk = str(action_ctx.get("travel_route_kind", "") or "")
+                if rk in ("intercity", "international"):
+                    from engine.world.heat import clear_local_pressure_for_city
+
+                    clear_local_pressure_for_city(state, dest_key_norm)
+            except Exception:
+                pass
+            try:
+                from engine.world.atlas import sync_daily_burn_from_city_stats
+
+                sync_daily_burn_from_city_stats(state, dest_key_norm)
+            except Exception:
+                pass
+            action_ctx.pop("w2_travel_precalc", None)
 
             # After changing location, reseed faction baseline for that destination.
             try:

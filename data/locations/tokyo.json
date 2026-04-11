@@ -1,11 +1,39 @@
 {
-  "tags": ["surveillance_high", "corporate_dense", "etiquette_strict", "neon_rain"],
-  "notes": ["Neon rain, corporate density, high baseline surveillance; etiquette is a protocol."],
-  "nearby_items": ["burner_phone", "laptop_basic", "keys"],
+  "tags": [
+    "surveillance_high",
+    "corporate_dense",
+    "etiquette_strict",
+    "neon_rain"
+  ],
+  "notes": [
+    "Neon rain, corporate density, high baseline surveillance; etiquette is a protocol."
+  ],
+  "nearby_items": [
+    "burner_phone",
+    "laptop_basic",
+    "keys"
+  ],
   "npcs": {
-    "Fixer_Suzume": { "role": "fixer", "affiliation": "black_market", "disposition_score": 58, "disposition_label": "Neutral", "is_contact": true },
-    "Corp_Rep_Mizuno": { "role": "corporate_rep", "affiliation": "corporate", "disposition_score": 52, "disposition_label": "Neutral", "is_contact": true },
-    "Koban_Officer_Tanaka": { "role": "cop", "affiliation": "police", "disposition_score": 48, "disposition_label": "Cold" }
+    "Fixer_Suzume": {
+      "role": "fixer",
+      "affiliation": "black_market",
+      "disposition_score": 58,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    },
+    "Corp_Rep_Mizuno": {
+      "role": "corporate_rep",
+      "affiliation": "corporate",
+      "disposition_score": 52,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    },
+    "Koban_Officer_Tanaka": {
+      "role": "cop",
+      "affiliation": "police",
+      "disposition_score": 48,
+      "disposition_label": "Cold"
+    }
   },
   "city_stats": {
     "daily_food_cost_usd": 18.0,
@@ -17,7 +45,10 @@
     "avg_rent_monthly_usd": 800.0,
     "cost_of_living_index": 53.4,
     "unemployment_rate_pct": 2.6,
-    "crime_index": 24.0
+    "crime_index": 24.0,
+    "avg_apartment_price_usd": 62400.0,
+    "avg_house_price_usd": 158000.0,
+    "avg_car_price_usd": 8800.0,
+    "avg_small_business_revenue_monthly_usd": 9470.0
   }
 }
-

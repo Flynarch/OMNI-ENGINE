@@ -23,6 +23,13 @@ def update_economy(state: dict, action_ctx: dict) -> None:
             bank = 0
         econ["bank"] = bank
         econ["last_economic_cycle_day"] = day
+        # W2-9: career payroll + career-break rep decay (once per sim day).
+        try:
+            from engine.systems.occupation import accrue_career_salary_and_decay
+
+            accrue_career_salary_and_decay(state)
+        except Exception:
+            pass
         # Relationship passive: business partners can generate a small deterministic daily income.
         try:
             from engine.npc.relationship import get_top_relationships
@@ -36,6 +43,20 @@ def update_economy(state: dict, action_ctx: dict) -> None:
             if partner_income > 0:
                 econ["cash"] = int(int(econ.get("cash", 0) or 0) + int(partner_income))
                 state.setdefault("world_notes", []).append(f"[Economy] Business partner income +${int(partner_income)}.")
+        except Exception:
+            pass
+        # W2-10: property maintenance/rent + small-business passive income (Python-only; not action_ctx).
+        try:
+            from engine.systems.property import process_property_daily_economy
+
+            process_property_daily_economy(state)
+        except Exception:
+            pass
+        # W2-11: powered phone + high trace → small daily trace pressure.
+        try:
+            from engine.systems.smartphone import maybe_police_track_phone_daily
+
+            maybe_police_track_phone_daily(state)
         except Exception:
             pass
         # Market updates once per day (reactive economy layer).

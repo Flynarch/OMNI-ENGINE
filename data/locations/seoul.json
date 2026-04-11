@@ -2,10 +2,26 @@
   "notes": [
     "High bandwidth, dense transit, sharp social cues; mistakes propagate faster than you think."
   ],
-  "nearby_items": ["smartphone", "keys", "burner_phone"],
+  "nearby_items": [
+    "smartphone",
+    "keys",
+    "burner_phone"
+  ],
   "npcs": {
-    "Corp_Associate_Han": { "role": "corporate_rep", "affiliation": "corporate", "disposition_score": 53, "disposition_label": "Neutral", "is_contact": true },
-    "Doc_Yuna": { "role": "doc", "affiliation": "civilian", "disposition_score": 56, "disposition_label": "Neutral", "is_contact": true }
+    "Corp_Associate_Han": {
+      "role": "corporate_rep",
+      "affiliation": "corporate",
+      "disposition_score": 53,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    },
+    "Doc_Yuna": {
+      "role": "doc",
+      "affiliation": "civilian",
+      "disposition_score": 56,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    }
   },
   "city_stats": {
     "daily_food_cost_usd": 22.0,
@@ -17,7 +33,10 @@
     "avg_rent_monthly_usd": 800.0,
     "cost_of_living_index": 66.6,
     "unemployment_rate_pct": 2.9,
-    "crime_index": 25.0
+    "crime_index": 25.0,
+    "avg_apartment_price_usd": 62400.0,
+    "avg_house_price_usd": 163800.0,
+    "avg_car_price_usd": 11200.0,
+    "avg_small_business_revenue_monthly_usd": 10720.0
   }
 }
-

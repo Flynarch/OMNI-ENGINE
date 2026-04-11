@@ -1,11 +1,38 @@
 {
-  "tags": ["old_money", "quiet_networks", "reputation_doors"],
-  "notes": ["Old money, new tech, and quiet networks moving under the surface; reputation buys doors."],
-  "nearby_items": ["burner_phone", "keys"],
+  "tags": [
+    "old_money",
+    "quiet_networks",
+    "reputation_doors"
+  ],
+  "notes": [
+    "Old money, new tech, and quiet networks moving under the surface; reputation buys doors."
+  ],
+  "nearby_items": [
+    "burner_phone",
+    "keys"
+  ],
   "npcs": {
-    "Journalist_Claire": { "role": "journalist", "affiliation": "civilian", "disposition_score": 59, "disposition_label": "Neutral", "is_contact": true },
-    "Gendarme_Roux": { "role": "cop", "affiliation": "police", "disposition_score": 47, "disposition_label": "Cold", "is_contact": true },
-    "Corp_Procurement_Dupont": { "role": "corporate_rep", "affiliation": "corporate", "disposition_score": 51, "disposition_label": "Neutral", "is_contact": true }
+    "Journalist_Claire": {
+      "role": "journalist",
+      "affiliation": "civilian",
+      "disposition_score": 59,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    },
+    "Gendarme_Roux": {
+      "role": "cop",
+      "affiliation": "police",
+      "disposition_score": 47,
+      "disposition_label": "Cold",
+      "is_contact": true
+    },
+    "Corp_Procurement_Dupont": {
+      "role": "corporate_rep",
+      "affiliation": "corporate",
+      "disposition_score": 51,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    }
   },
   "city_stats": {
     "daily_food_cost_usd": 35.0,
@@ -17,7 +44,10 @@
     "avg_rent_monthly_usd": 1400.0,
     "cost_of_living_index": 80.0,
     "unemployment_rate_pct": 7.5,
-    "crime_index": 55.0
+    "crime_index": 55.0,
+    "avg_apartment_price_usd": 109200.0,
+    "avg_house_price_usd": 297200.0,
+    "avg_car_price_usd": 13600.0,
+    "avg_small_business_revenue_monthly_usd": 15000.0
   }
 }
-

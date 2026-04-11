@@ -916,26 +916,29 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
         try:
             from engine.core.trace import apply_trace_travel_friction, get_trace_tier
 
-            cur_tm = int(action_ctx.get("travel_minutes", 30) or 30)
-            new_tm, friction_applied = apply_trace_travel_friction(state, cur_tm)
-            if friction_applied:
-                action_ctx["travel_minutes"] = new_tm
-                action_ctx.setdefault("time_breakdown", []).append(
-                    {"label": "trace_friction", "minutes": int(new_tm - cur_tm)}
-                )
-                state.setdefault("world_notes", []).append(
-                    "[Security] Travel friction increased due to high Trace."
-                )
-            tier = get_trace_tier(state)
-            mult = float(tier.get("friction_multiplier", 1.0) or 1.0)
-            if mult > 1.0:
-                tcc = action_ctx.get("travel_cash_cost")
-                if isinstance(tcc, (int, float)):
-                    try:
-                        old_c = float(tcc)
-                        action_ctx["travel_cash_cost"] = max(0, int(round(old_c * mult)))
-                    except Exception:
-                        pass
+            if bool(action_ctx.get("w2_travel_precalc")):
+                pass
+            else:
+                cur_tm = int(action_ctx.get("travel_minutes", 30) or 30)
+                new_tm, friction_applied = apply_trace_travel_friction(state, cur_tm)
+                if friction_applied:
+                    action_ctx["travel_minutes"] = new_tm
+                    action_ctx.setdefault("time_breakdown", []).append(
+                        {"label": "trace_friction", "minutes": int(new_tm - cur_tm)}
+                    )
+                    state.setdefault("world_notes", []).append(
+                        "[Security] Travel friction increased due to high Trace."
+                    )
+                tier = get_trace_tier(state)
+                mult = float(tier.get("friction_multiplier", 1.0) or 1.0)
+                if mult > 1.0:
+                    tcc = action_ctx.get("travel_cash_cost")
+                    if isinstance(tcc, (int, float)):
+                        try:
+                            old_c = float(tcc)
+                            action_ctx["travel_cash_cost"] = max(0, int(round(old_c * mult)))
+                        except Exception:
+                            pass
         except Exception:
             pass
         # Location-specific movement friction (e.g., police sweep).
@@ -1067,6 +1070,14 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
         action_ctx.setdefault("time_breakdown", []).insert(0, {"label": "travel_base", "minutes": int(base)})
         _advance(meta, int(action_ctx.get("travel_minutes", 30)))
     elif kind in ("rest", "sleep"):
+        if str(kind).lower() == "sleep":
+            try:
+                rm = int(action_ctx.get("rested_minutes", 8 * 60) or 8 * 60)
+            except Exception:
+                rm = 8 * 60
+            rm = max(60, min(12 * 60, rm))
+            action_ctx["rested_minutes"] = rm
+            action_ctx["sleep_duration_h"] = round(rm / 60.0, 2)
         action_ctx.setdefault("time_breakdown", []).append({"label": str(kind), "minutes": int(action_ctx.get("rested_minutes", 60) or 60)})
         _advance(meta, int(action_ctx.get("rested_minutes", 60)))
     else:

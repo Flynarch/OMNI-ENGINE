@@ -37,6 +37,79 @@
       "skills": { "social": 3, "languages": 3, "streetwise": 1 },
       "languages": { "en": 80 }
     }
+  ],
+  "career_paths": [
+    {
+      "id": "normal",
+      "levels": [
+        {"title": "Pengangguran", "skill": "streetwise", "min_skill": 1, "min_rep": 0, "min_contacts": 0, "min_cash": 0, "required_event": "", "pay_mult": 0.0, "blocked_if_stain": false},
+        {"title": "Serabutan", "skill": "streetwise", "min_skill": 2, "min_rep": 6, "min_contacts": 0, "min_cash": 0, "required_event": "", "pay_mult": 0.2, "blocked_if_stain": false},
+        {"title": "Junior", "skill": "streetwise", "min_skill": 3, "min_rep": 16, "min_contacts": 1, "min_cash": 120, "required_event": "", "pay_mult": 0.38, "blocked_if_stain": false},
+        {"title": "Senior", "skill": "management", "min_skill": 4, "min_rep": 28, "min_contacts": 2, "min_cash": 600, "required_event": "", "pay_mult": 0.55, "blocked_if_stain": false},
+        {"title": "Manager", "skill": "management", "min_skill": 5, "min_rep": 40, "min_contacts": 3, "min_cash": 2500, "required_event": "normal_manager_review", "pay_mult": 0.72, "blocked_if_stain": true},
+        {"title": "Direktur", "skill": "social", "min_skill": 6, "min_rep": 52, "min_contacts": 4, "min_cash": 12000, "required_event": "normal_board_ok", "pay_mult": 0.9, "blocked_if_stain": true},
+        {"title": "CEO", "skill": "negotiation", "min_skill": 7, "min_rep": 68, "min_contacts": 5, "min_cash": 80000, "required_event": "normal_ceo_vote", "pay_mult": 1.12, "blocked_if_stain": true}
+      ]
+    },
+    {
+      "id": "kriminal",
+      "levels": [
+        {"title": "Copet", "skill": "streetwise", "min_skill": 1, "min_rep": 0, "min_contacts": 0, "min_cash": 0, "required_event": "", "pay_mult": 0.0, "blocked_if_stain": false},
+        {"title": "Gangster", "skill": "streetwise", "min_skill": 2, "min_rep": 10, "min_contacts": 1, "min_cash": 80, "required_event": "", "pay_mult": 0.18, "blocked_if_stain": false},
+        {"title": "Lieutenant", "skill": "intimidation", "min_skill": 3, "min_rep": 22, "min_contacts": 2, "min_cash": 400, "required_event": "", "pay_mult": 0.34, "blocked_if_stain": false},
+        {"title": "Underboss", "skill": "intimidation", "min_skill": 4, "min_rep": 34, "min_contacts": 3, "min_cash": 2000, "required_event": "kriminal_crew_loyalty", "pay_mult": 0.52, "blocked_if_stain": false},
+        {"title": "Bos Mafia", "skill": "stealth", "min_skill": 5, "min_rep": 46, "min_contacts": 4, "min_cash": 10000, "required_event": "kriminal_territory_deal", "pay_mult": 0.68, "blocked_if_stain": false},
+        {"title": "Kartel", "skill": "negotiation", "min_skill": 6, "min_rep": 58, "min_contacts": 5, "min_cash": 50000, "required_event": "kriminal_cartel_summit", "pay_mult": 0.88, "blocked_if_stain": false}
+      ]
+    },
+    {
+      "id": "politik",
+      "levels": [
+        {"title": "Aktivis", "skill": "social", "min_skill": 1, "min_rep": 0, "min_contacts": 0, "min_cash": 0, "required_event": "", "pay_mult": 0.0, "blocked_if_stain": false},
+        {"title": "Staf Partai", "skill": "social", "min_skill": 2, "min_rep": 8, "min_contacts": 1, "min_cash": 50, "required_event": "", "pay_mult": 0.22, "blocked_if_stain": false},
+        {"title": "Anggota Dewan", "skill": "legal", "min_skill": 3, "min_rep": 20, "min_contacts": 2, "min_cash": 800, "required_event": "", "pay_mult": 0.4, "blocked_if_stain": false},
+        {"title": "Walikota", "skill": "negotiation", "min_skill": 4, "min_rep": 32, "min_contacts": 3, "min_cash": 4000, "required_event": "politik_election_win_city", "pay_mult": 0.58, "blocked_if_stain": true},
+        {"title": "Gubernur", "skill": "negotiation", "min_skill": 5, "min_rep": 44, "min_contacts": 4, "min_cash": 15000, "required_event": "politik_election_win_state", "pay_mult": 0.76, "blocked_if_stain": true},
+        {"title": "Presiden", "skill": "negotiation", "min_skill": 6, "min_rep": 60, "min_contacts": 5, "min_cash": 100000, "required_event": "politik_national_mandate", "pay_mult": 0.95, "blocked_if_stain": true}
+      ]
+    },
+    {
+      "id": "bisnis",
+      "levels": [
+        {"title": "Pedagang", "skill": "streetwise", "min_skill": 1, "min_rep": 0, "min_contacts": 0, "min_cash": 0, "required_event": "", "pay_mult": 0.0, "blocked_if_stain": false},
+        {"title": "Pengusaha", "skill": "finance", "min_skill": 2, "min_rep": 10, "min_contacts": 1, "min_cash": 300, "required_event": "", "pay_mult": 0.24, "blocked_if_stain": false},
+        {"title": "Startup", "skill": "finance", "min_skill": 3, "min_rep": 22, "min_contacts": 2, "min_cash": 1500, "required_event": "bisnis_seed_round", "pay_mult": 0.42, "blocked_if_stain": false},
+        {"title": "Investor", "skill": "management", "min_skill": 4, "min_rep": 34, "min_contacts": 3, "min_cash": 8000, "required_event": "", "pay_mult": 0.6, "blocked_if_stain": true},
+        {"title": "Konglomerat", "skill": "management", "min_skill": 5, "min_rep": 46, "min_contacts": 4, "min_cash": 40000, "required_event": "bisnis_merger_ok", "pay_mult": 0.78, "blocked_if_stain": true},
+        {"title": "Billionaire", "skill": "negotiation", "min_skill": 6, "min_rep": 58, "min_contacts": 5, "min_cash": 200000, "required_event": "bisnis_global_deal", "pay_mult": 1.05, "blocked_if_stain": true}
+      ]
+    },
+    {
+      "id": "underground",
+      "levels": [
+        {"title": "Hacker Amatir", "skill": "hacking", "min_skill": 1, "min_rep": 0, "min_contacts": 0, "min_cash": 0, "required_event": "", "pay_mult": 0.0, "blocked_if_stain": false},
+        {"title": "Black Hat", "skill": "hacking", "min_skill": 3, "min_rep": 14, "min_contacts": 1, "min_cash": 200, "required_event": "", "pay_mult": 0.32, "blocked_if_stain": false},
+        {"title": "Cyber Spy", "skill": "hacking", "min_skill": 4, "min_rep": 28, "min_contacts": 2, "min_cash": 1200, "required_event": "underground_ops_clearance", "pay_mult": 0.52, "blocked_if_stain": false},
+        {"title": "Shadow Broker", "skill": "social_engineering", "min_skill": 5, "min_rep": 42, "min_contacts": 3, "min_cash": 8000, "required_event": "underground_broker_network", "pay_mult": 0.72, "blocked_if_stain": false}
+      ]
+    },
+    {
+      "id": "militer",
+      "levels": [
+        {"title": "Satpam", "skill": "combat", "min_skill": 1, "min_rep": 0, "min_contacts": 0, "min_cash": 0, "required_event": "", "pay_mult": 0.0, "blocked_if_stain": false},
+        {"title": "Polisi", "skill": "combat", "min_skill": 2, "min_rep": 12, "min_contacts": 1, "min_cash": 0, "required_event": "militer_academy_pass", "pay_mult": 0.28, "blocked_if_stain": false},
+        {"title": "Detektif", "skill": "investigation", "min_skill": 4, "min_rep": 26, "min_contacts": 2, "min_cash": 0, "required_event": "militer_detective_badge", "pay_mult": 0.48, "blocked_if_stain": true},
+        {"title": "Agen Rahasia", "skill": "stealth", "min_skill": 5, "min_rep": 40, "min_contacts": 3, "min_cash": 0, "required_event": "militer_covert_clearance", "pay_mult": 0.68, "blocked_if_stain": true}
+      ]
+    },
+    {
+      "id": "sosial",
+      "levels": [
+        {"title": "Influencer", "skill": "social", "min_skill": 1, "min_rep": 0, "min_contacts": 0, "min_cash": 0, "required_event": "", "pay_mult": 0.0, "blocked_if_stain": false},
+        {"title": "Selebriti", "skill": "social", "min_skill": 3, "min_rep": 18, "min_contacts": 2, "min_cash": 500, "required_event": "sosial_viral_breakout", "pay_mult": 0.45, "blocked_if_stain": false},
+        {"title": "Icon Budaya", "skill": "social", "min_skill": 5, "min_rep": 36, "min_contacts": 3, "min_cash": 5000, "required_event": "sosial_legacy_award", "pay_mult": 0.7, "blocked_if_stain": false}
+      ]
+    }
   ]
 }
 

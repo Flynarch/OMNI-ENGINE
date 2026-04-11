@@ -1,9 +1,26 @@
 {
-  "notes": ["Cold drizzle, cameras on corners, quiet money behind old walls."],
-  "nearby_items": ["burner_phone", "keys", "laptop_basic"],
+  "notes": [
+    "Cold drizzle, cameras on corners, quiet money behind old walls."
+  ],
+  "nearby_items": [
+    "burner_phone",
+    "keys",
+    "laptop_basic"
+  ],
   "npcs": {
-    "Fixer_Harper": { "role": "fixer", "affiliation": "black_market", "disposition_score": 58, "disposition_label": "Neutral", "is_contact": true },
-    "PCSO_Miller": { "role": "cop", "affiliation": "police", "disposition_score": 46, "disposition_label": "Cold" }
+    "Fixer_Harper": {
+      "role": "fixer",
+      "affiliation": "black_market",
+      "disposition_score": 58,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    },
+    "PCSO_Miller": {
+      "role": "cop",
+      "affiliation": "police",
+      "disposition_score": 46,
+      "disposition_label": "Cold"
+    }
   },
   "city_stats": {
     "daily_food_cost_usd": 38.0,
@@ -15,7 +32,10 @@
     "avg_rent_monthly_usd": 3000.0,
     "cost_of_living_index": 81.4,
     "unemployment_rate_pct": 5.2,
-    "crime_index": 54.0
+    "crime_index": 54.0,
+    "avg_apartment_price_usd": 234000.0,
+    "avg_house_price_usd": 639200.0,
+    "avg_car_price_usd": 13900.0,
+    "avg_small_business_revenue_monthly_usd": 22500.0
   }
 }
-

@@ -1,9 +1,17 @@
 {
-  "tags": ["nightlife_hot", "street_networks", "rumor_fast"],
+  "tags": [
+    "nightlife_hot",
+    "street_networks",
+    "rumor_fast"
+  ],
   "notes": [
     "Street-first vibe, loud signage, dense nightlife pockets; less corporate polish than Tokyo but faster rumor spread."
   ],
-  "nearby_items": ["burner_phone", "keys", "lockpick_set"],
+  "nearby_items": [
+    "burner_phone",
+    "keys",
+    "lockpick_set"
+  ],
   "npcs": {
     "Fixer_Kansai_Jun": {
       "role": "fixer",
@@ -29,7 +37,10 @@
     "avg_rent_monthly_usd": 600.0,
     "cost_of_living_index": 50.0,
     "unemployment_rate_pct": 2.6,
-    "crime_index": 20.0
+    "crime_index": 20.0,
+    "avg_apartment_price_usd": 46800.0,
+    "avg_house_price_usd": 117300.0,
+    "avg_car_price_usd": 8200.0,
+    "avg_small_business_revenue_monthly_usd": 8250.0
   }
 }
-

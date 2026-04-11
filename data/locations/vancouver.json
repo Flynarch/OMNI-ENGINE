@@ -1,9 +1,27 @@
 {
-  "notes": ["Port city calm with sharp smuggling edges; meetings happen in transit, not offices."],
-  "nearby_items": ["burner_phone", "keys", "lockpick_set"],
+  "notes": [
+    "Port city calm with sharp smuggling edges; meetings happen in transit, not offices."
+  ],
+  "nearby_items": [
+    "burner_phone",
+    "keys",
+    "lockpick_set"
+  ],
   "npcs": {
-    "Runner_Sable": { "role": "runner", "affiliation": "civilian", "disposition_score": 55, "disposition_label": "Neutral", "is_contact": true },
-    "Fixer_Harbor_Tess": { "role": "fixer", "affiliation": "black_market", "disposition_score": 57, "disposition_label": "Neutral", "is_contact": true }
+    "Runner_Sable": {
+      "role": "runner",
+      "affiliation": "civilian",
+      "disposition_score": 55,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    },
+    "Fixer_Harbor_Tess": {
+      "role": "fixer",
+      "affiliation": "black_market",
+      "disposition_score": 57,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    }
   },
   "city_stats": {
     "daily_food_cost_usd": 32.0,
@@ -15,7 +33,10 @@
     "avg_rent_monthly_usd": 1900.0,
     "cost_of_living_index": 73.0,
     "unemployment_rate_pct": 6.6,
-    "crime_index": 40.0
+    "crime_index": 40.0,
+    "avg_apartment_price_usd": 148200.0,
+    "avg_house_price_usd": 395900.0,
+    "avg_car_price_usd": 12300.0,
+    "avg_small_business_revenue_monthly_usd": 15750.0
   }
 }
-

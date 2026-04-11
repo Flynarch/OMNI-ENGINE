@@ -1,11 +1,38 @@
 {
-  "tags": ["hacker_scene", "privacy_culture", "industrial_backbone"],
-  "notes": ["Industrial backbone, privacy culture, and a hacker scene with long memory; favors are tracked, not forgotten."],
-  "nearby_items": ["laptop_basic", "lockpick_set", "keys"],
+  "tags": [
+    "hacker_scene",
+    "privacy_culture",
+    "industrial_backbone"
+  ],
+  "notes": [
+    "Industrial backbone, privacy culture, and a hacker scene with long memory; favors are tracked, not forgotten."
+  ],
+  "nearby_items": [
+    "laptop_basic",
+    "lockpick_set",
+    "keys"
+  ],
   "npcs": {
-    "Hacker_Anke": { "role": "hacker", "affiliation": "black_market", "disposition_score": 61, "disposition_label": "Neutral", "is_contact": true },
-    "Corp_Security_Krause": { "role": "security", "affiliation": "corporate", "disposition_score": 50, "disposition_label": "Neutral", "is_contact": true },
-    "Kripo_Officer_Schmidt": { "role": "cop", "affiliation": "police", "disposition_score": 47, "disposition_label": "Cold" }
+    "Hacker_Anke": {
+      "role": "hacker",
+      "affiliation": "black_market",
+      "disposition_score": 61,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    },
+    "Corp_Security_Krause": {
+      "role": "security",
+      "affiliation": "corporate",
+      "disposition_score": 50,
+      "disposition_label": "Neutral",
+      "is_contact": true
+    },
+    "Kripo_Officer_Schmidt": {
+      "role": "cop",
+      "affiliation": "police",
+      "disposition_score": 47,
+      "disposition_label": "Cold"
+    }
   },
   "city_stats": {
     "daily_food_cost_usd": 21.0,
@@ -17,7 +44,10 @@
     "avg_rent_monthly_usd": 1350.0,
     "cost_of_living_index": 65.8,
     "unemployment_rate_pct": 3.4,
-    "crime_index": 42.0
+    "crime_index": 42.0,
+    "avg_apartment_price_usd": 105300.0,
+    "avg_house_price_usd": 275900.0,
+    "avg_car_price_usd": 11000.0,
+    "avg_small_business_revenue_monthly_usd": 18750.0
   }
 }
-

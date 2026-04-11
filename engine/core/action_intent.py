@@ -230,18 +230,112 @@ def _parse_sleep_hours(t: str) -> int | None:
     txt = str(t or "").strip().lower()
     if not txt:
         return None
+    # Explicit duration first so "aku mau tidur 6 jam" is not treated as default 8h.
+    m = re.search(r"\b(?:aku|saya)\s+mau\s+tidur\s+(\d{1,2})(?:\s*(?:jam|hours?|h))?\b", txt)
+    if m:
+        try:
+            return max(1, min(12, int(m.group(1))))
+        except Exception:
+            return 8
+    m = re.search(r"\b(?:sleep|tidur)\s+(\d{1,2})(?:\s*(?:jam|hours?|h))?\b", txt)
+    if m:
+        try:
+            return max(1, min(12, int(m.group(1))))
+        except Exception:
+            return 8
+    m = re.search(r"\b(\d{1,2})\s*(?:jam|hours?|h)\b", txt)
+    if m and ("tidur" in txt or "sleep" in txt):
+        try:
+            return max(1, min(12, int(m.group(1))))
+        except Exception:
+            return 8
     if txt in ("sleep", "tidur", "aku mau tidur", "saya mau tidur"):
         return 8
-    m = re.search(r"\b(?:sleep|tidur)\s+(\d{1,2})(?:\s*(?:jam|hours?|h))?\b", txt)
-    if not m:
-        m = re.search(r"\b(\d{1,2})\s*(?:jam|hours?|h)\b", txt)
-        if not m or "tidur" not in txt and "sleep" not in txt:
-            return None
+    return None
+
+
+def _apply_smartphone_ctx_defaults(ctx: dict[str, Any]) -> None:
+    ctx["action_type"] = "instant"
+    ctx["domain"] = "other"
+    ctx["intent_note"] = "smartphone"
+    ctx["has_stakes"] = False
+    ctx["uncertain"] = False
+    ctx["trivial"] = True
+    ctx["risk_level"] = "low"
+    ctx["stakes"] = "none"
     try:
-        h = int(m.group(1))
+        im = int(ctx.get("instant_minutes", 0) or 0)
     except Exception:
-        return 8
-    return max(1, min(12, h))
+        im = 0
+    ctx["instant_minutes"] = max(im, 2)
+
+
+def _parse_smartphone_fills(ctx: dict[str, Any], raw_in: str, t: str) -> bool:
+    """NL + light English patterns for W2-11 smartphone ops."""
+    tnorm = str(t or "").strip().lower()
+    if not tnorm:
+        return False
+
+    m = re.match(r"^(phone|smartphone|hp)\s+(on|off|status)\s*$", tnorm)
+    if m:
+        ctx["smartphone_op"] = {"op": "power", "value": str(m.group(2) or "").strip().lower()}
+        _apply_smartphone_ctx_defaults(ctx)
+        return True
+
+    if re.search(r"\b(matikan|turn off|switch off)\s+(hp|ponsel|smartphone|phone)\b", tnorm):
+        ctx["smartphone_op"] = {"op": "power", "value": "off"}
+        _apply_smartphone_ctx_defaults(ctx)
+        return True
+    if re.search(r"\b(nyalakan|turn on|switch on|hidupkan)\s+(hp|ponsel|smartphone|phone)\b", tnorm):
+        ctx["smartphone_op"] = {"op": "power", "value": "on"}
+        _apply_smartphone_ctx_defaults(ctx)
+        return True
+
+    m2 = re.search(
+        r"\b(telepon|panggil|call)\s+([a-zA-Z][a-zA-Z0-9_'\-]{1,40})\b",
+        str(raw_in or "").strip(),
+        flags=re.I,
+    )
+    if m2:
+        ctx["smartphone_op"] = {"op": "call", "target": str(m2.group(2) or "").strip()}
+        _apply_smartphone_ctx_defaults(ctx)
+        ctx["instant_minutes"] = max(int(ctx.get("instant_minutes", 0) or 0), 4)
+        return True
+
+    m3 = re.search(
+        r"\b(sms|pesan ke|message to|wa ke|chat ke)\s+([a-zA-Z][a-zA-Z0-9_'\-]{1,40})\s+(.{1,220})$",
+        tnorm,
+    )
+    if m3:
+        ctx["smartphone_op"] = {
+            "op": "message",
+            "target": str(m3.group(2) or "").strip(),
+            "body": str(m3.group(3) or "").strip(),
+        }
+        _apply_smartphone_ctx_defaults(ctx)
+        ctx["instant_minutes"] = max(int(ctx.get("instant_minutes", 0) or 0), 3)
+        return True
+    m3b = re.search(
+        r"^(sms|pesan|message|wa|chat)\s+([a-zA-Z][a-zA-Z0-9_'\-]{1,40})\s+(.{1,220})$",
+        tnorm,
+    )
+    if m3b:
+        ctx["smartphone_op"] = {
+            "op": "message",
+            "target": str(m3b.group(2) or "").strip(),
+            "body": str(m3b.group(3) or "").strip(),
+        }
+        _apply_smartphone_ctx_defaults(ctx)
+        ctx["instant_minutes"] = max(int(ctx.get("instant_minutes", 0) or 0), 3)
+        return True
+
+    if re.search(r"\b(dark\s*web|darkweb|deep\s*web|darknet)\b", tnorm):
+        ctx["smartphone_op"] = {"op": "dark_web"}
+        _apply_smartphone_ctx_defaults(ctx)
+        ctx["instant_minutes"] = max(int(ctx.get("instant_minutes", 0) or 0), 12)
+        return True
+
+    return False
 
 
 def parse_action_intent(player_input: str) -> dict[str, Any]:
@@ -273,7 +367,9 @@ def parse_action_intent(player_input: str) -> dict[str, Any]:
         "tembakin",
         "shoot",
     )
-    if any(k in t for k in combat_terms):
+    if _parse_smartphone_fills(ctx, player_input, t):
+        pass
+    elif any(k in t for k in combat_terms):
         ctx["action_type"] = "combat"
         ctx["domain"] = "combat"
         # Ranged (peluru) vs melee — untuk aturan jam & amunisi
@@ -563,6 +659,7 @@ def flatten_intent_v2(intent: dict[str, Any]) -> dict[str, Any]:
         "travel_destination",
         "inventory_ops",
         "accommodation_intent",
+        "smartphone_op",
     ):
         if k in step0 and step0.get(k) is not None:
             out[k] = step0.get(k)
@@ -596,6 +693,7 @@ def merge_intent_into_action_ctx(action_ctx: dict[str, Any], intent: dict[str, A
         "travel_destination",
         "inventory_ops",
         "accommodation_intent",
+        "smartphone_op",
     ):
         if key in src and src[key] is not None:
             action_ctx[key] = src[key]
@@ -837,6 +935,7 @@ def apply_step_to_action_ctx(action_ctx: dict[str, Any], step: dict[str, Any]) -
         "travel_destination",
         "inventory_ops",
         "accommodation_intent",
+        "smartphone_op",
         "params",
     ):
         if k in step and step.get(k) is not None:
@@ -896,6 +995,10 @@ def normalize_action_ctx(action_ctx: dict[str, Any]) -> dict[str, Any]:
     if tcm > 0:
         if action_type == "travel":
             out["travel_minutes"] = max(5, min(240, tcm))
+        elif action_type == "sleep":
+            mins = max(60, min(12 * 60, tcm))
+            out["rested_minutes"] = mins
+            out["sleep_duration_h"] = round(mins / 60.0, 2)
         else:
             out["instant_minutes"] = max(1, min(60, tcm))
     return out

@@ -15,6 +15,16 @@ def update_inventory(state: dict, action_ctx: dict) -> None:
     inv.setdefault("item_sizes", {})
     inv.setdefault("weapons", {})
     inv.setdefault("active_weapon_id", "")
+    inv.setdefault("vehicles", {})
+    inv.setdefault("active_vehicle_id", "")
+    pl = state.setdefault("player", {})
+    if isinstance(pl, dict):
+        a = pl.get("assets")
+        if not isinstance(a, dict):
+            pl["assets"] = {"version": 1, "entries": []}
+        else:
+            a.setdefault("version", 1)
+            a.setdefault("entries", [])
     flags = state.setdefault("flags", {})
     flags["equip_cost_active"] = bool(action_ctx.get("needs_bag_equip", False))
 

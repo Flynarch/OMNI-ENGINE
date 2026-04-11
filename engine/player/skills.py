@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Any
 
@@ -42,7 +42,16 @@ def _ensure_skill(state: dict[str, Any], key: str) -> dict[str, Any]:
 
 
 def update_skills(state: dict, action_ctx: dict) -> None:
-    """Passive maintenance: decay + compute current (progression is applied after roll)."""
+    """Passive maintenance: decay + compute current (progression is applied after roll).
+
+    W2-9 career promotion gates read `skills[*].level` from this module (deterministic).
+    """
+    try:
+        from engine.core.character_stats import ensure_player_character_stats
+
+        ensure_player_character_stats(state)
+    except Exception:
+        pass
     day = int(state.get("meta", {}).get("day", 1))
     total_decay_penalty = 0
     any_mastery_active = False

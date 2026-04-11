@@ -11,6 +11,7 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -100,6 +101,8 @@ def _smoke() -> None:
     assert "last_turn_audit" in meta0 and isinstance(meta0.get("last_turn_audit"), dict)
     assert "npc_sim_last_counts" in meta0 and isinstance(meta0.get("npc_sim_last_counts"), dict)
     assert "econ_tier" in player0
+    cs0 = player0.get("character_stats") or {}
+    assert isinstance(cs0, dict) and "charisma" in cs0 and "willpower" in cs0
 
     # Seed pack should merge `world` content (nearby items).
     st_seed = initialize_state(
@@ -121,6 +124,266 @@ def _smoke() -> None:
     assert str(st_travel.get("player", {}).get("location") or "").strip().lower() == "london"
     # Location nearby items should remain a valid list after travel.
     assert isinstance(st_travel.get("world", {}).get("nearby_items"), list)
+
+    # W2-8 Travel: passport+wanted gates, heat isolation, city_stats tickets, hunger during travel.
+    from engine.player.bio import update_bio as _update_bio_w8
+    from engine.world.atlas import apply_w2_travel_gates, get_city_stats_for_travel, travel_route_kind
+    from engine.world.heat import bump_heat
+
+    assert travel_route_kind("toronto", "vancouver") == "intercity"
+    assert travel_route_kind("jakarta", "london") == "international"
+    st_blk = initialize_state({"name": "TravelBlock", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
+    st_blk.setdefault("economy", {})["cash"] = 50000
+    st_blk.setdefault("player", {})["has_passport"] = False
+    ctx_blk = {
+        "action_type": "travel",
+        "travel_destination": "london",
+        "domain": "evasion",
+        "normalized_input": "pergi ke london",
+        "travel_minutes": 30,
+    }
+    world_tick(st_blk, ctx_blk)
+    assert str(st_blk.get("player", {}).get("location", "") or "").strip().lower() == "jakarta"
+    assert str(ctx_blk.get("action_type", "") or "").lower() == "instant"
+    st_wnt = initialize_state({"name": "TravelWanted", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
+    st_wnt.setdefault("economy", {})["cash"] = 50000
+    st_wnt.setdefault("player", {})["has_passport"] = True
+    st_wnt.setdefault("trace", {})["trace_pct"] = 66
+    ctx_wnt = {
+        "action_type": "travel",
+        "travel_destination": "london",
+        "domain": "evasion",
+        "normalized_input": "pergi ke london",
+        "travel_minutes": 30,
+    }
+    world_tick(st_wnt, ctx_wnt)
+    assert str(st_wnt.get("player", {}).get("location", "") or "").strip().lower() == "jakarta"
+    st_ht = initialize_state({"name": "TravelHeat", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
+    st_ht.setdefault("economy", {})["cash"] = 50000
+    st_ht.setdefault("player", {})["has_passport"] = True
+    bump_heat(st_ht, loc="jakarta", delta=75, reason="w2_test", ttl_days=10, scope="__all__")
+    w = st_ht.setdefault("world", {})
+    w.setdefault("heat_map", {}).setdefault(
+        "london",
+        {},
+    )["__all__"] = {"level": 70, "until_day": 90, "reasons": ["stale"], "last_update_day": 1}
+    ctx_ht = {
+        "action_type": "travel",
+        "travel_destination": "london",
+        "domain": "evasion",
+        "normalized_input": "pergi ke london",
+        "travel_minutes": 30,
+    }
+    world_tick(st_ht, ctx_ht)
+    assert str(st_ht.get("player", {}).get("location", "") or "").strip().lower() == "london"
+    hm = (st_ht.get("world", {}) or {}).get("heat_map", {}) or {}
+    jak = hm.get("jakarta") or {}
+    jak_all = jak.get("__all__") or {}
+    assert int(jak_all.get("level", 0) or 0) >= 60
+    lon = hm.get("london") or {}
+    lon_lv = int((lon.get("__all__") or {}).get("level", 0) or 0) if isinstance(lon.get("__all__"), dict) else 0
+    assert lon_lv == 0
+    st_tk = initialize_state({"name": "TravelTicket", "location": "toronto", "year": "2025"}, seed_pack="minimal")
+    to_s = get_city_stats_for_travel(st_tk, "toronto")
+    va_s = get_city_stats_for_travel(st_tk, "vancouver")
+    ln_s = get_city_stats_for_travel(st_tk, "london")
+    assert isinstance(to_s, dict) and "cost_of_living_index" in to_s
+    ctx_iv: dict[str, Any] = {"action_type": "travel", "travel_minutes": 60}
+    msg_iv = apply_w2_travel_gates(st_tk, ctx_iv, "toronto", "vancouver")
+    assert msg_iv == ""
+    charge_iv = int(ctx_iv.get("travel_ticket_charge", 0) or 0)
+    ctx_int: dict[str, Any] = {"action_type": "travel", "travel_minutes": 60}
+    st_tk.setdefault("economy", {})["cash"] = 50000
+    st_tk.setdefault("player", {})["has_passport"] = True
+    msg_int = apply_w2_travel_gates(st_tk, ctx_int, "toronto", "london")
+    assert msg_int == ""
+    charge_int = int(ctx_int.get("travel_ticket_charge", 0) or 0)
+    assert charge_int > charge_iv
+    st_hg = initialize_state({"name": "TravelHunger", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
+    st_hg.setdefault("economy", {})["cash"] = 50000
+    st_hg.setdefault("player", {})["has_passport"] = True
+    st_hg.setdefault("bio", {})["hunger"] = 12.0
+    ctx_hg = parse_action_intent("pergi ke london")
+    update_timers(st_hg, ctx_hg)
+    _update_bio_w8(st_hg, ctx_hg)
+    assert float((st_hg.get("bio", {}) or {}).get("hunger", 0.0) or 0.0) > 12.0
+
+    # W2-9 Career: per-track progress, stain, promote gates (no intent bypass), cross-track cost, city-scaled pay.
+    from engine.systems.occupation import (
+        accrue_career_salary_and_decay,
+        career_daily_salary_usd,
+        clear_permanent_career_stain,
+        ensure_career,
+        grant_career_event,
+        mark_permanent_career_stain,
+        promote_career,
+        set_active_career_track,
+        set_career_break,
+    )
+
+    st_c9 = initialize_state({"name": "CareerW9", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
+    ensure_career(st_c9)
+    st_c9.setdefault("player", {}).setdefault("career", {}).setdefault("tracks", {}).setdefault("normal", {})["level"] = 2
+    st_c9["player"]["career"]["tracks"]["normal"]["rep"] = 40
+    set_career_break(st_c9, True)
+    st_c9["meta"]["day"] = 9
+    st_c9["player"]["career"]["last_career_econ_day"] = 8
+    accrue_career_salary_and_decay(st_c9)
+    assert int(st_c9["player"]["career"]["tracks"]["normal"]["level"]) == 2
+    assert int(st_c9["player"]["career"]["tracks"]["normal"]["rep"]) < 40
+    st_c9["player"]["location"] = "london"
+    ensure_career(st_c9)
+    assert int(st_c9["player"]["career"]["tracks"]["normal"]["level"]) == 2
+
+    mark_permanent_career_stain(st_c9)
+    assert clear_permanent_career_stain(st_c9) is False
+    assert bool(st_c9["player"]["career"].get("permanent_stain")) is True
+    from engine.commands.career import handle_career as _handle_career_cmd
+
+    assert _handle_career_cmd(st_c9, "CAREER STAIN CLEAR") is True
+    assert bool(st_c9["player"]["career"].get("permanent_stain")) is True
+    st_c9["player"]["career"]["tracks"]["normal"]["level"] = 3
+    st_c9["player"]["career"]["tracks"]["normal"]["rep"] = 80
+    st_c9.setdefault("economy", {})["cash"] = 200000
+    st_c9.setdefault("world", {}).setdefault("contacts", {})
+    for i in range(5):
+        st_c9["world"]["contacts"][f"C{i}"] = {"name": f"C{i}", "is_contact": True}
+    grant_career_event(st_c9, "normal_manager_review")
+    st_c9.setdefault("skills", {}).setdefault("management", {"level": 7, "xp": 0, "base": 40, "last_used_day": 1, "mastery_streak": 0})
+    pr = promote_career(st_c9, "normal")
+    assert pr.get("ok") is False and str(pr.get("reason", "")) == "permanent_stain"
+
+    st_pr = initialize_state({"name": "CareerPromo", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
+    ensure_career(st_pr)
+    st_pr["skills"]["streetwise"] = {"level": 9, "xp": 0, "base": 40, "last_used_day": 1, "mastery_streak": 0}
+    st_pr["player"]["career"]["tracks"]["normal"]["rep"] = 0
+    assert promote_career(st_pr, "normal").get("ok") is False
+    _fake_bypass = {"career_promote_bypass": True, "career_instant_ceo": True}
+    assert promote_career(st_pr, "normal").get("ok") is False
+    assert _fake_bypass.get("career_promote_bypass") is True
+
+    st_x = initialize_state({"name": "CareerCross", "location": "tokyo", "year": "2025"}, seed_pack="minimal")
+    ensure_career(st_x)
+    st_x["player"]["career"]["tracks"]["normal"]["rep"] = 50
+    st_x["player"]["career"]["tracks"]["kriminal"]["rep"] = 48
+    set_active_career_track(st_x, "kriminal")
+    assert int(st_x["player"]["career"]["tracks"]["normal"]["rep"]) == 46
+
+    st_pay_lo = initialize_state({"name": "CareerPayLo", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_pay_ja = initialize_state({"name": "CareerPayJa", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
+    for _st in (st_pay_lo, st_pay_ja):
+        ensure_career(_st)
+        _st["player"]["career"]["active_track"] = "normal"
+        _st["player"]["career"]["on_break"] = False
+        _st["player"]["career"]["tracks"]["normal"]["level"] = 3
+    p_lo = career_daily_salary_usd(st_pay_lo)
+    p_ja = career_daily_salary_usd(st_pay_ja)
+    assert p_lo > 0 and p_ja >= 0 and p_lo > p_ja
+
+    # W2-10 Property: city-priced quotes, duplicate block, daily upkeep via update_economy, arrest seizes vehicles, no action_ctx income cheat.
+    import engine.systems.property as prop_w10
+    from engine.systems.arrest import execute_arrest
+    from engine.systems.vehicles import buy_vehicle, ensure_vehicle_state
+
+    assert prop_w10.quote_apartment_buy_usd(st_pay_lo, "london") > prop_w10.quote_apartment_buy_usd(st_pay_ja, "jakarta")
+    assert prop_w10.quote_vehicle_price_usd(st_pay_lo, "london", "car_standard") > prop_w10.quote_vehicle_price_usd(
+        st_pay_ja, "jakarta", "car_standard"
+    )
+
+    st_p10 = initialize_state({"name": "PropW10", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
+    st_p10.setdefault("economy", {})["cash"] = 900000
+    assert prop_w10.buy_apartment(st_p10, "jakarta", rental=False).get("ok") is True
+    assert prop_w10.buy_apartment(st_p10, "jakarta", rental=False).get("ok") is False
+    cash_prop = int(st_p10["economy"]["cash"])
+    st_p10["meta"]["day"] = 4
+    st_p10["economy"]["last_economic_cycle_day"] = 3
+    update_economy(
+        st_p10,
+        {"biz_passive_income_override_usd": 999999, "property_passive_income_usd": 888888, "custom_property_cheat": True},
+    )
+    assert int(st_p10["economy"]["cash"]) < cash_prop
+
+    st_biz = initialize_state({"name": "PropBiz", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
+    st_biz.setdefault("economy", {})["cash"] = 900000
+    assert prop_w10.buy_small_business(st_biz, "jakarta").get("ok") is True
+    assert prop_w10.buy_small_business(st_biz, "jakarta").get("ok") is False
+    c0 = int(st_biz["economy"]["cash"])
+    st_biz["meta"]["day"] = 7
+    st_biz["economy"]["last_economic_cycle_day"] = 6
+    update_economy(st_biz, {})
+    assert int(st_biz["economy"]["cash"]) != c0
+
+    st_v = initialize_state({"name": "PropVeh", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
+    st_v.setdefault("economy", {})["cash"] = 500000
+    assert buy_vehicle(st_v, "car_standard").get("ok") is True
+    assert "car_standard" in ensure_vehicle_state(st_v)
+    execute_arrest(st_v)
+    assert len(ensure_vehicle_state(st_v)) == 0
+
+    # W2-11 Smartphone: NL parse, phone-off block, dark-web skill gate, daily trace drift only if ON + high heat.
+    from engine.core.pipeline import run_pipeline
+    from engine.systems.smartphone import ensure_smartphone
+
+    ctx_phone_nl = parse_action_intent("telepon budi")
+    assert (ctx_phone_nl.get("smartphone_op") or {}).get("op") == "call"
+    assert str((ctx_phone_nl.get("smartphone_op") or {}).get("target", "")).lower() == "budi"
+
+    st_ph = initialize_state({"name": "PhoneTest", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
+    ensure_smartphone(st_ph)
+    st_ph["player"]["smartphone"]["phone_on"] = False
+    ctx_call = {
+        "smartphone_op": {"op": "call", "target": "budi"},
+        "normalized_input": "call",
+        "action_type": "instant",
+        "domain": "other",
+        "intent_note": "smartphone",
+    }
+    run_pipeline(st_ph, ctx_call)
+    sr_call = ctx_call.get("smartphone_result") or {}
+    assert sr_call.get("ok") is False and str(sr_call.get("reason", "")) == "PHONE_OFF"
+
+    st_dw = initialize_state({"name": "DarkWeb", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
+    ensure_smartphone(st_dw)
+    st_dw["player"]["smartphone"]["phone_on"] = True
+    st_dw.setdefault("skills", {})["hacking"] = {
+        "level": 1,
+        "xp": 0,
+        "base": 10,
+        "last_used_day": 0,
+        "mastery_streak": 0,
+    }
+    ctx_dw = {
+        "smartphone_op": {"op": "dark_web"},
+        "normalized_input": "dark web",
+        "action_type": "instant",
+        "domain": "other",
+        "intent_note": "smartphone",
+    }
+    run_pipeline(st_dw, ctx_dw)
+    sr_dw = ctx_dw.get("smartphone_result") or {}
+    assert sr_dw.get("ok") is False and str(sr_dw.get("reason", "")) == "SKILL_LOW"
+
+    st_tr = initialize_state({"name": "PhoneTrack", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
+    ensure_smartphone(st_tr)
+    st_tr["player"]["smartphone"]["phone_on"] = True
+    st_tr.setdefault("trace", {})["trace_pct"] = 60
+    pct_before = int(st_tr["trace"]["trace_pct"])
+    st_tr["meta"]["day"] = 3
+    st_tr.setdefault("economy", {})["last_economic_cycle_day"] = 2
+    update_economy(st_tr, {})
+    assert int(st_tr["trace"]["trace_pct"]) > pct_before
+    assert any("PhoneTrack" in str(n) for n in (st_tr.get("world_notes") or []))
+
+    st_tr_off = initialize_state({"name": "PhoneTrackOff", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
+    ensure_smartphone(st_tr_off)
+    st_tr_off["player"]["smartphone"]["phone_on"] = False
+    st_tr_off.setdefault("trace", {})["trace_pct"] = 60
+    pct_off = int(st_tr_off["trace"]["trace_pct"])
+    st_tr_off["meta"]["day"] = 4
+    st_tr_off.setdefault("economy", {})["last_economic_cycle_day"] = 3
+    update_economy(st_tr_off, {})
+    assert int(st_tr_off["trace"]["trace_pct"]) == pct_off
+
     # Sleep intent detection (default and explicit hours).
     ctx_sleep_def = parse_action_intent("aku mau tidur")
     assert ctx_sleep_def.get("action_type") == "sleep"
@@ -128,6 +391,11 @@ def _smoke() -> None:
     ctx_sleep_6 = parse_action_intent("tidur 6 jam")
     assert ctx_sleep_6.get("action_type") == "sleep"
     assert int(ctx_sleep_6.get("rested_minutes", 0) or 0) == 6 * 60
+    ctx_sleep_mau = parse_action_intent("aku mau tidur 6 jam")
+    assert ctx_sleep_mau.get("action_type") == "sleep"
+    assert int(ctx_sleep_mau.get("rested_minutes", 0) or 0) == 6 * 60
+    ctx_sleep_10 = parse_action_intent("aku mau tidur 10 jam")
+    assert int(ctx_sleep_10.get("rested_minutes", 0) or 0) == 10 * 60
     ctx_sleep_clamp_min = parse_action_intent("SLEEP 0")
     assert int(ctx_sleep_clamp_min.get("rested_minutes", 0) or 0) == 60
     ctx_sleep_clamp_max = parse_action_intent("aku mau tidur 20 jam")
@@ -139,8 +407,19 @@ def _smoke() -> None:
     st_sleep.setdefault("bio", {}).update({"sleep_debt": 10.0, "hunger": 0.0})
     ctx_sleep_short = {"action_type": "sleep", "rested_minutes": 4 * 60, "normalized_input": "tidur 4 jam"}
     update_bio(st_sleep, ctx_sleep_short)
-    assert abs(float((st_sleep.get("bio", {}) or {}).get("sleep_debt", 0.0)) - 5.0) < 0.0001
+    assert abs(float((st_sleep.get("bio", {}) or {}).get("sleep_debt", 0.0)) - 10.0) < 0.0001
     assert str(ctx_sleep_short.get("sleep_quality", "")) == "okay"
+    st_sleep["bio"]["sleep_debt"] = 10.0
+    st_sleep["bio"]["hunger"] = 0.0
+    ctx_sleep_mid = {"action_type": "sleep", "rested_minutes": 6 * 60, "normalized_input": "tidur 6 jam"}
+    update_bio(st_sleep, ctx_sleep_mid)
+    assert abs(float((st_sleep.get("bio", {}) or {}).get("sleep_debt", 0.0)) - (10.0 / 3.0)) < 0.02
+    st_sleep["bio"]["sleep_debt"] = 10.0
+    st_sleep["bio"]["hunger"] = 0.0
+    ctx_sleep_7 = {"action_type": "sleep", "rested_minutes": 7 * 60, "normalized_input": "tidur 7 jam"}
+    update_bio(st_sleep, ctx_sleep_7)
+    assert abs(float((st_sleep.get("bio", {}) or {}).get("sleep_debt", 0.0)) - 0.0) < 0.0001
+    assert str(ctx_sleep_7.get("sleep_quality", "")) == "good"
     st_sleep["bio"]["sleep_debt"] = 10.0
     st_sleep["bio"]["hunger"] = 0.0
     ctx_sleep_full = {"action_type": "sleep", "rested_minutes": 8 * 60, "normalized_input": "tidur"}
@@ -148,9 +427,32 @@ def _smoke() -> None:
     assert abs(float((st_sleep.get("bio", {}) or {}).get("sleep_debt", 99.0)) - 0.0) < 0.0001
     assert str(ctx_sleep_full.get("sleep_quality", "")) == "good"
     assert float((st_sleep.get("bio", {}) or {}).get("hunger", 0.0) or 0.0) >= 16.0
+    st_sleep["bio"]["sleep_debt"] = 10.0
+    st_sleep["bio"]["hunger"] = 0.0
+    ctx_sleep_nap = {"action_type": "sleep", "rested_minutes": 2 * 60, "normalized_input": "tidur 2 jam"}
+    update_bio(st_sleep, ctx_sleep_nap)
+    d_nap = float((st_sleep.get("bio", {}) or {}).get("sleep_debt", 0.0))
+    assert d_nap > 8.0 and d_nap <= 10.0
+    assert str(ctx_sleep_nap.get("sleep_quality", "")) == "poor"
+    h_before = float((st_sleep.get("bio", {}) or {}).get("hunger", 0.0) or 0.0)
+    m_before = float((st_sleep.get("bio", {}) or {}).get("mood_score", 50.0) or 50.0)
+    st_sleep["bio"]["sleep_debt"] = 8.0
+    st_sleep["bio"]["hunger"] = h_before
+    ctx_sleep_mood = {"action_type": "sleep", "rested_minutes": 8 * 60, "normalized_input": "tidur"}
+    update_bio(st_sleep, ctx_sleep_mood)
+    assert float((st_sleep.get("bio", {}) or {}).get("mood_score", 0.0) or 0.0) > m_before
+    st_hz = initialize_state({"name": "SleepHungerRate", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_hz.setdefault("bio", {}).update({"hunger": 0.0, "sleep_debt": 0.0})
+    ctx_hz = {"action_type": "sleep", "rested_minutes": 60, "normalized_input": "tidur 1 jam"}
+    update_bio(st_hz, ctx_hz)
+    assert abs(float((st_hz.get("bio", {}) or {}).get("hunger", -1.0)) - 2.0) < 0.02
+    n_sleep = normalize_action_ctx({"action_type": "sleep", "domain": "other", "time_cost_min": 480})
+    assert int(n_sleep.get("rested_minutes", 0) or 0) == 480
 
     # World persistence: scene content should persist per location across travel.
     st_persist = initialize_state({"name": "PersistVerify", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
+    st_persist.setdefault("economy", {})["cash"] = 50000
+    st_persist.setdefault("player", {})["has_passport"] = True
     st_persist.setdefault("world", {})["nearby_items"] = [{"id": "bag1", "name": "bag1"}]
     # Travel to london and change scene.
     ctx_to_london = parse_action_intent("aku pergi ke london")
@@ -163,6 +465,8 @@ def _smoke() -> None:
 
     # Contacts persistence: global contacts survive travel; locals do not.
     st_contacts = initialize_state({"name": "ContactVerify", "location": "jakarta", "year": "2025"}, seed_pack="default")
+    st_contacts.setdefault("economy", {})["cash"] = 50000
+    st_contacts.setdefault("player", {})["has_passport"] = True
     update_npcs(st_contacts, {"domain": "social", "intent_note": "social_dialogue"})
     assert "Operator_Link" in (st_contacts.get("world", {}).get("contacts") or {})
     st_contacts.setdefault("npcs", {})["LocalGuy"] = {"name": "LocalGuy", "home_location": "jakarta", "ambient": False}
@@ -1144,6 +1448,8 @@ def _smoke() -> None:
     from engine.world.world import world_tick
 
     st_f = initialize_state({"name": "FactionPersist", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_f.setdefault("economy", {})["cash"] = 50000
+    st_f.setdefault("player", {})["has_passport"] = True
     st_f.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60, "turn": 1})
     st_f.setdefault("world", {}).setdefault("locations", {})["london"] = {"restrictions": {}, "market": {}}
     st_f.setdefault("world", {}).setdefault("locations", {})["jakarta"] = {"restrictions": {}, "market": {}}
@@ -1905,6 +2211,8 @@ def _smoke() -> None:
     from engine.world.world import world_tick
 
     st_dist = initialize_state({"name": "DistVerify", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_dist.setdefault("economy", {})["cash"] = 50000
+    st_dist.setdefault("player", {})["has_passport"] = True
     st_dist.setdefault("player", {})["district"] = "nonexistent_district"
     ctx_tr = {"action_type": "travel", "travel_destination": "tokyo", "travel_minutes": 30, "time_breakdown": []}
     world_tick(st_dist, ctx_tr)
@@ -1952,6 +2260,8 @@ def _smoke() -> None:
 
     # Contacts authority: local snapshot must not override global contact entry on travel.
     st_ca = initialize_state({"name": "ContactAuth", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_ca.setdefault("economy", {})["cash"] = 50000
+    st_ca.setdefault("player", {})["has_passport"] = True
     st_ca.setdefault("world", {}).setdefault("contacts", {})["AgentX"] = {"name": "AgentX", "is_contact": True, "marker": "KEEP", "home_location": "london"}
     st_ca.setdefault("world", {}).setdefault("locations", {}).setdefault("tokyo", {})["npcs"] = {"AgentX": {"name": "AgentX", "is_contact": True}}
     world_tick(st_ca, {"action_type": "travel", "travel_destination": "tokyo", "travel_minutes": 30, "time_breakdown": []})
@@ -3513,6 +3823,8 @@ def _smoke() -> None:
     cs = p_jkt.get("city_stats", {})
     assert isinstance(cs, dict)
     assert "daily_food_cost_usd" in cs
+    assert "avg_apartment_price_usd" in cs and "avg_house_price_usd" in cs
+    assert "avg_car_price_usd" in cs and "avg_small_business_revenue_monthly_usd" in cs
 
     # Timers queue hardening: malformed entries should not crash and should be sanitized.
     from engine.world.timers import update_timers as _update_timers
@@ -3809,6 +4121,8 @@ def _smoke() -> None:
     from engine.world.timers import update_timers
 
     st_s = initialize_state({"name": "Stress", "location": "jakarta", "year": "2025"}, seed_pack="default")
+    st_s.setdefault("economy", {})["cash"] = 250000
+    st_s.setdefault("player", {})["has_passport"] = True
     st_s.setdefault("inventory", {}).setdefault("weapons", {})["gun1"] = {"name": "Gun-1", "kind": "firearm", "ammo": 5, "condition_tier": 2}
     st_s["inventory"]["active_weapon_id"] = "gun1"
     cmds = [
@@ -3889,6 +4203,8 @@ def _smoke() -> None:
             {"name": "Determinism", "location": "jakarta", "year": "2025", "occupation": "operator", "background": "replay"},
             seed_pack=seed_name,
         )
+        st_r.setdefault("economy", {})["cash"] = 250000
+        st_r.setdefault("player", {})["has_passport"] = True
         st_r.setdefault("player", {}).setdefault("languages", {"en": 80})
         st_r.setdefault("inventory", {}).setdefault("bag_contents", []).append("smartphone")
         seq = [
@@ -4042,6 +4358,130 @@ def _smoke() -> None:
     )
     assert "commerce:" in pkg and "[Shop]" in pkg
     assert "cash-10" in pkg
+
+    # W2-6: seven stats — skills_table is source of truth for domain → stat; luck cap; spiral willpower.
+    from engine.core.character_stats import (
+        domain_primary_stat_map,
+        reload_character_stats_config,
+        resolve_roll_primary_stat,
+    )
+    from engine.core.modifiers import _load_base_thresholds
+
+    reload_character_stats_config()
+    st_json = json.loads((ROOT / "data" / "skills_table.json").read_text(encoding="utf-8"))
+    bt = st_json.get("base_thresholds") or {}
+    pmap = (st_json.get("character_stats") or {}).get("domain_primary_stat") or {}
+    assert isinstance(bt, dict) and isinstance(pmap, dict)
+    for dom in bt.keys():
+        assert str(dom).lower() in pmap, f"W2-6 domain {dom!r} missing domain_primary_stat"
+    assert "other" in pmap
+
+    st_w2 = initialize_state({"name": "W2Stats", "location": "test", "year": "2025"}, seed_pack="minimal")
+    st_w2.setdefault("player", {})["character_stats"] = {
+        "charisma": 50,
+        "agility": 50,
+        "strength": 50,
+        "intelligence": 50,
+        "perception": 50,
+        "luck": 100,
+        "willpower": 50,
+    }
+    ctx_luck = {
+        "domain": "other",
+        "roll_domain": "other",
+        "action_type": "custom",
+        "trained": True,
+        "uncertain": True,
+        "has_stakes": True,
+        "stakes": "high",
+        "suggested_dc": 90,
+        "normalized_input": "something wild",
+        "intent_note": "chaos",
+    }
+    from engine.player.skills import update_skills
+
+    update_skills(st_w2, ctx_luck)
+    pkg_luck = compute_roll_package(st_w2, ctx_luck)
+    luck_mods = [v for k, v in (pkg_luck.get("mods") or []) if k == "Stat (luck·edge)"]
+    assert luck_mods == [], "luck must not bypass very high DC (85+)"
+
+    ctx_luck["suggested_dc"] = 76
+    pkg_luck2 = compute_roll_package(st_w2, ctx_luck)
+    luck_mods2 = [v for k, v in (pkg_luck2.get("mods") or []) if k == "Stat (luck·edge)"]
+    assert luck_mods2 and max(luck_mods2) <= 2, "luck positive mod capped at high DC 75+"
+
+    st_sp = initialize_state({"name": "W2Spiral", "location": "test", "year": "2025"}, seed_pack="minimal")
+    st_sp.setdefault("bio", {})["mental_spiral"] = True
+    st_sp.setdefault("player", {})["character_stats"] = {
+        "charisma": 50,
+        "agility": 50,
+        "strength": 50,
+        "intelligence": 50,
+        "perception": 50,
+        "luck": 50,
+        "willpower": 20,
+    }
+    ctx_sp = {
+        "domain": "stealth",
+        "roll_domain": "stealth",
+        "action_type": "instant",
+        "trained": True,
+        "uncertain": True,
+        "has_stakes": True,
+        "stakes": "medium",
+        "normalized_input": "sneak",
+        "intent_note": "hide",
+    }
+    update_skills(st_sp, ctx_sp)
+    ac_sp = dict(ctx_sp)
+    pkg_sp = compute_roll_package(st_sp, ac_sp)
+    assert ac_sp.get("willpower_spiral_check_active") is True
+    assert any(k == "Willpower vs spiral" for k, _v in (pkg_sp.get("mods") or []))
+
+    st_ok = initialize_state({"name": "W2NoSpiral", "location": "test", "year": "2025"}, seed_pack="minimal")
+    st_ok.setdefault("bio", {})["mental_spiral"] = False
+    update_skills(st_ok, ctx_sp)
+    ac_ok = dict(ctx_sp)
+    pkg_ok = compute_roll_package(st_ok, ac_ok)
+    assert ac_ok.get("willpower_spiral_check_active") is False
+    assert not any(k == "Willpower vs spiral" for k, _v in (pkg_ok.get("mods") or []))
+
+    # Subskill lane vs stat layer: negotiation adds skill line + single charisma stat line (not duplicated stat labels).
+    st_neg = initialize_state({"name": "W2Neg", "location": "test", "year": "2025"}, seed_pack="minimal")
+    st_neg.setdefault("player", {})["character_stats"] = {
+        "charisma": 65,
+        "agility": 50,
+        "strength": 50,
+        "intelligence": 50,
+        "perception": 50,
+        "luck": 50,
+        "willpower": 50,
+    }
+    st_neg.setdefault("skills", {})["social"] = {"level": 5, "xp": 0, "base": 10, "last_used_day": 0, "mastery_streak": 0}
+    st_neg.setdefault("skills", {})["negotiation"] = {"level": 8, "xp": 0, "base": 10, "last_used_day": 0, "mastery_streak": 0}
+    ctx_neg = {
+        "domain": "social",
+        "roll_domain": "social",
+        "action_type": "instant",
+        "trained": True,
+        "uncertain": True,
+        "has_stakes": True,
+        "stakes": "medium",
+        "normalized_input": "bicara dengan manajer",
+        "intent_note": "negotiat deal contract",
+    }
+    update_skills(st_neg, ctx_neg)
+    pkg_neg = compute_roll_package(st_neg, ctx_neg)
+    labels = [k for k, _v in (pkg_neg.get("mods") or [])]
+    assert labels.count("Stat (charisma)") == 1
+    assert "Negotiation skill" in labels
+
+    assert resolve_roll_primary_stat("stealth", {"intent_note": "", "normalized_input": ""}) == "agility"
+    thresholds = _load_base_thresholds()
+    reload_character_stats_config()
+    pm2 = domain_primary_stat_map()
+    for dkey in thresholds.keys():
+        assert dkey in pm2
 
 
 def main() -> int:

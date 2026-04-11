@@ -38,12 +38,22 @@ def _defaults() -> dict[str, Any]:
         },
         "player": {
             "econ_tier": "-",
+            "has_passport": False,
             "social_stats": {
                 "looks": 0,
                 "outfit": 0,
                 "hygiene": 0,
                 "speaking": 0,
-            }
+            },
+            "character_stats": {
+                "charisma": 50,
+                "agility": 50,
+                "strength": 50,
+                "intelligence": 50,
+                "perception": 50,
+                "luck": 50,
+                "willpower": 50,
+            },
         },
         "bio": {
             "blood_volume": 5.0,
@@ -282,6 +292,28 @@ def _migrate_state(state: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         pass
     try:
+        state.setdefault("player", {}).setdefault("has_passport", False)
+    except Exception:
+        pass
+    try:
+        from engine.systems.occupation import ensure_career
+
+        ensure_career(state)
+    except Exception:
+        pass
+    try:
+        from engine.systems.property import ensure_player_assets
+
+        ensure_player_assets(state)
+    except Exception:
+        pass
+    try:
+        from engine.systems.smartphone import ensure_smartphone
+
+        ensure_smartphone(state)
+    except Exception:
+        pass
+    try:
         state.setdefault("world", {}).setdefault("accommodation", {})
     except Exception:
         pass
@@ -295,6 +327,12 @@ def _migrate_state(state: dict[str, Any]) -> dict[str, Any]:
         pass
     try:
         state.setdefault("meta", {}).setdefault("balance", {})
+    except Exception:
+        pass
+    try:
+        from engine.core.character_stats import ensure_player_character_stats
+
+        ensure_player_character_stats(state)
     except Exception:
         pass
     return state
@@ -329,6 +367,24 @@ def load_state(path: Path = CURRENT) -> dict[str, Any]:
                 apply_pack_effects(st)
             except Exception:
                 pass
+            try:
+                from engine.systems.occupation import ensure_career
+
+                ensure_career(st)
+            except Exception:
+                pass
+            try:
+                from engine.systems.property import ensure_player_assets
+
+                ensure_player_assets(st)
+            except Exception:
+                pass
+            try:
+                from engine.systems.smartphone import ensure_smartphone
+
+                ensure_smartphone(st)
+            except Exception:
+                pass
             return st
     except Exception:
         if PREVIOUS.exists():
@@ -344,6 +400,24 @@ def load_state(path: Path = CURRENT) -> dict[str, Any]:
 
                 freeze_packs_into_state(st)
                 apply_pack_effects(st)
+            except Exception:
+                pass
+            try:
+                from engine.systems.occupation import ensure_career
+
+                ensure_career(st)
+            except Exception:
+                pass
+            try:
+                from engine.systems.property import ensure_player_assets
+
+                ensure_player_assets(st)
+            except Exception:
+                pass
+            try:
+                from engine.systems.smartphone import ensure_smartphone
+
+                ensure_smartphone(st)
             except Exception:
                 pass
             return st
@@ -411,6 +485,24 @@ def initialize_state(character_data: dict[str, Any], seed_pack: str | None = Non
                 tid = pick_occupation_template_id(state, str(p.get("occupation", "") or ""), str(p.get("background", "") or "")) or ""
             if tid:
                 apply_occupation_template(state, tid)
+    except Exception:
+        pass
+    try:
+        from engine.systems.occupation import ensure_career
+
+        ensure_career(state)
+    except Exception:
+        pass
+    try:
+        from engine.systems.property import ensure_player_assets
+
+        ensure_player_assets(state)
+    except Exception:
+        pass
+    try:
+        from engine.systems.smartphone import ensure_smartphone
+
+        ensure_smartphone(state)
     except Exception:
         pass
     return state
