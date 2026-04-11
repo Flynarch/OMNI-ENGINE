@@ -9,12 +9,31 @@ import os
 from typing import Any, Dict, Optional, Tuple
 
 
+def _env_off(name: str, default: str = "1") -> bool:
+    return os.getenv(name, default).strip().lower() in ("0", "false", "no", "off")
+
+
 def ffci_enabled() -> bool:
-    return os.getenv("OMNI_FFCI_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
+    """Master switch for LLM-first intent + custom path (roadmap: FF_CUSTOM_INTENT_ENABLED).
+
+    Aliases: OMNI_FFCI_ENABLED (primary), OMNI_FF_CUSTOM_INTENT_ENABLED (plan naming).
+    """
+    if _env_off("OMNI_FFCI_ENABLED", "1"):
+        return False
+    if _env_off("OMNI_FF_CUSTOM_INTENT_ENABLED", "1"):
+        return False
+    return True
 
 
 def ffci_shadow_only() -> bool:
-    return os.getenv("OMNI_FFCI_SHADOW_ONLY", "0").strip().lower() in ("1", "true", "yes", "on")
+    """Shadow-only: resolver runs but mechanics stay parser path in main (OMNI_FFCI_SHADOW_ONLY).
+
+    Alias: OMNI_FF_CUSTOM_INTENT_SHADOW_ONLY.
+    """
+    s = os.getenv("OMNI_FFCI_SHADOW_ONLY", "0").strip().lower()
+    if s in ("1", "true", "yes", "on"):
+        return True
+    return os.getenv("OMNI_FF_CUSTOM_INTENT_SHADOW_ONLY", "0").strip().lower() in ("1", "true", "yes", "on")
 
 
 def clamp_suggested_dc_ctx(action_ctx: dict[str, Any]) -> int:
@@ -125,6 +144,40 @@ def feasibility_custom_intent(state: dict[str, Any], action_ctx: dict[str, Any])
             "net_threshold_locked": True,
             "ffci_feasibility_block": True,
         }
+    # Severe sleep debt: block high-exertion custom intents.
+    try:
+        sd = float(bio.get("sleep_debt", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        sd = 0.0
+    try:
+        sd_gate = float(os.getenv("OMNI_FFCI_SLEEP_DEBT_GATE", "12") or 12)
+    except ValueError:
+        sd_gate = 12.0
+    if sd >= sd_gate and domain in ("combat", "hacking", "stealth"):
+        action_ctx["ffci_gate_reason"] = "severe_exhaustion"
+        return {
+            "base": 0,
+            "mods": [("FFCI feasibility (exhaustion)", -100)],
+            "net_threshold": 0,
+            "roll": None,
+            "outcome": "No Roll (Too exhausted)",
+            "net_threshold_locked": True,
+            "ffci_feasibility_block": True,
+        }
+    # Mental spiral + high-stakes social custom: infeasible until stabilized.
+    if bool(bio.get("mental_spiral", False)) and domain == "social":
+        st = str(action_ctx.get("stakes", "") or "").lower()
+        if st in ("high", "medium"):
+            action_ctx["ffci_gate_reason"] = "mental_spiral_social"
+            return {
+                "base": 0,
+                "mods": [("FFCI feasibility (mental spiral)", -100)],
+                "net_threshold": 0,
+                "roll": None,
+                "outcome": "No Roll (Head not in the game)",
+                "net_threshold_locked": True,
+                "ffci_feasibility_block": True,
+            }
     return None
 
 
@@ -151,6 +204,12 @@ def apply_custom_intent_consequences(state: dict[str, Any], action_ctx: dict[str
         notes.append("[FFCI] Custom hack attempt increased digital footprint.")
     elif domain == "social" and not failed:
         notes.append("[FFCI] Custom social play shifted local attention slightly.")
+    elif domain == "social" and failed:
+        tr["trace_pct"] = min(100, cur + 1)
+        notes.append("[FFCI] Custom social misfire drew a little scrutiny.")
+    elif domain == "hacking" and not failed:
+        tr["trace_pct"] = min(100, cur + 1)
+        notes.append("[FFCI] Custom hack left a faint trail even on success.")
     elif domain == "other":
         meta = state.setdefault("meta", {})
         try:

@@ -2387,6 +2387,101 @@ def _smoke() -> None:
     sid2 = select_best_step(action_ctx_skill, st_skill)
     assert sid2 == "s1"
 
+    # Intent v2: every step fails preconditions -> hard-fail + no-roll package.
+    from engine.core.action_intent import apply_intent_plan_precondition_failure, merge_intent_into_action_ctx, select_best_step
+    from engine.core.modifiers import compute_roll_package
+
+    st_allfail = initialize_state({"name": "IntentAllFail", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_allfail.setdefault("economy", {})["cash"] = 50
+    ac_af = parse_action_intent("x")
+    intent_af = {
+        "version": 2,
+        "intent_schema_version": 2,
+        "confidence": 0.9,
+        "player_goal": "x",
+        "context_assumptions": [],
+        "plan": {
+            "plan_id": "p_af",
+            "steps": [
+                {
+                    "step_id": "need1m",
+                    "label": "r",
+                    "action_type": "instant",
+                    "domain": "other",
+                    "intent_note": "a",
+                    "suggested_dc": 50,
+                    "preconditions": [{"kind": "has_cash", "op": "gte", "value": 1_000_000}],
+                },
+                {
+                    "step_id": "need2m",
+                    "label": "r2",
+                    "action_type": "instant",
+                    "domain": "other",
+                    "intent_note": "b",
+                    "suggested_dc": 50,
+                    "preconditions": [{"kind": "has_cash", "op": "gte", "value": 2_000_000}],
+                },
+            ],
+        },
+        "safety": {"refuse": False, "refuse_reason": ""},
+    }
+    merge_intent_into_action_ctx(ac_af, intent_af)
+    assert select_best_step(ac_af, st_allfail) is None
+    t0 = int(st_allfail["meta"]["time_min"])
+    apply_intent_plan_precondition_failure(st_allfail, ac_af, reason="NO_VALID_STEP")
+    assert ac_af.get("intent_plan_blocked") is True
+    assert int(st_allfail["meta"]["time_min"]) == min(1439, t0 + 1)
+    pkg_af = compute_roll_package(st_allfail, ac_af)
+    assert "No Roll" in str(pkg_af.get("outcome", ""))
+
+    # Precondition pack v1 (engine evaluators; no LLM).
+    from engine.core.action_intent import evaluate_precondition
+
+    st_pv = initialize_state({"name": "PreV1", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_pv.setdefault("economy", {})["cash"] = 100
+    st_pv.setdefault("economy", {})["bank"] = 50
+    assert evaluate_precondition(st_pv, {}, {"kind": "has_cash", "op": "gte", "value": 99}) is True
+    assert evaluate_precondition(st_pv, {}, {"kind": "has_funds", "op": "gte", "value": 200}) is False
+    assert evaluate_precondition(st_pv, {}, {"kind": "has_funds", "op": "gte", "value": 149}) is True
+    st_pv["meta"]["time_min"] = 10 * 60
+    assert evaluate_precondition(st_pv, {}, {"kind": "day_phase", "op": "eq", "value": "morning"}) is True
+    assert evaluate_precondition(st_pv, {}, {"kind": "time_is", "op": "eq", "value": "night"}) is False
+    st_pv.setdefault("inventory", {})["active_weapon_id"] = "w1"
+    st_pv["inventory"]["weapons"] = {"w1": {"kind": "firearm", "ammo": 4, "condition_tier": 2}}
+    assert evaluate_precondition(st_pv, {}, {"kind": "has_ammo", "op": "gte", "value": 1}) is True
+    assert evaluate_precondition(st_pv, {}, {"kind": "weapon_drawn", "op": "eq", "value": True}) is True
+
+    # Golden corpus (parser): stable mechanical mapping for slang / short NL.
+    assert parse_action_intent("telepon budi").get("smartphone_op", {}).get("op") == "call"
+    assert parse_action_intent("dark web").get("smartphone_op", {}).get("op") == "dark_web"
+    assert parse_action_intent("aku mau tidur").get("action_type") == "sleep"
+
+    # Deterministic replay: identical state + ctx -> same day/time/cash/trace fingerprint.
+    import copy
+
+    from engine.core.pipeline import run_pipeline
+
+    def _fp_rep(s):
+        return (
+            int(s["meta"]["day"]),
+            int(s["meta"]["time_min"]),
+            int(s["economy"]["cash"]),
+            int(s["trace"]["trace_pct"]),
+        )
+
+    st_rp1 = initialize_state({"name": "ReplayA", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
+    st_rp2 = copy.deepcopy(st_rp1)
+    ctx_rp = {
+        "action_type": "instant",
+        "domain": "other",
+        "normalized_input": "wait quietly",
+        "instant_minutes": 3,
+        "stakes": "none",
+    }
+    run_pipeline(st_rp1, dict(ctx_rp))
+    run_pipeline(st_rp2, dict(ctx_rp))
+    assert _fp_rep(st_rp1) == _fp_rep(st_rp2)
+
     # FFCI Fase 1: intent_resolver schema whitelist + suggested_dc clamp (no LLM).
     from ai.intent_resolver import INTENT_SCHEMA_VERSION, clamp_suggested_dc, normalize_resolved_intent
 

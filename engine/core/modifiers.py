@@ -207,6 +207,17 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
             "net_threshold_locked": True,
         }
 
+    if bool(action_ctx.get("intent_plan_blocked")):
+        rsn = str(action_ctx.get("intent_plan_block_reason", "") or "BLOCK").strip()
+        return {
+            "base": 50,
+            "mods": [("Intent plan blocked", 0)],
+            "net_threshold": 50,
+            "roll": None,
+            "outcome": f"No Roll (Plan: {rsn})",
+            "net_threshold_locked": True,
+        }
+
     feas = feasibility_custom_intent(state, action_ctx)
     if feas is not None:
         return feas

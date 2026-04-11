@@ -2545,6 +2545,9 @@ def main() -> None:
                 meta["last_intent_raw"] = None
                 meta["fallback_reason"] = ab_reason or "ffci_abuse_guard"
                 meta["ffci_abuse_blocked"] = True
+                meta["normalized_domain"] = str(action_ctx.get("domain", "") or "").lower()
+                meta["custom_path_used"] = str(action_ctx.get("action_type", "") or "").lower() == "custom"
+                meta["llm_domain_raw"] = ""
                 state.setdefault("world_notes", []).append("[FFCI] High-risk custom intent rate-limited for today; using parser path.")
             else:
                 meta["last_intent_source"] = "llm"
@@ -2560,6 +2563,13 @@ def main() -> None:
                 # Intent v2 plan execution: pick the first valid step by preconditions and overlay it.
                 if int(action_ctx.get("intent_version", 1) or 1) == 2 and isinstance(action_ctx.get("intent_plan"), dict):
                     sid = select_best_step(action_ctx, state)
+                    plan_obj = action_ctx.get("intent_plan") if isinstance(action_ctx.get("intent_plan"), dict) else {}
+                    steps_list = plan_obj.get("steps") if isinstance(plan_obj.get("steps"), list) else []
+                    n_plan = sum(1 for s in steps_list if isinstance(s, dict) and str(s.get("step_id", "") or "").strip())
+                    if sid is None and n_plan > 0:
+                        from engine.core.action_intent import apply_intent_plan_precondition_failure
+
+                        apply_intent_plan_precondition_failure(state, action_ctx, reason="NO_VALID_STEP")
                     if isinstance(sid, str) and sid.strip():
                         action_ctx["step_now_id"] = sid.strip()
                         steps = (action_ctx.get("intent_plan") or {}).get("steps")
@@ -2588,6 +2598,9 @@ def main() -> None:
             meta["last_intent_source"] = "parser_fallback" if ffci_enabled() else "ffci_disabled"
             meta["last_intent_raw"] = None
             meta["fallback_reason"] = "resolver_none" if ffci_enabled() else "ffci_disabled"
+            meta["normalized_domain"] = str(action_ctx.get("domain", "") or "").lower()
+            meta["custom_path_used"] = str(action_ctx.get("action_type", "") or "").lower() == "custom"
+            meta["llm_domain_raw"] = ""
             if not ffci_enabled():
                 meta["ffci_disabled"] = True
 
@@ -2698,6 +2711,12 @@ def main() -> None:
         apply_active_scene_intent_lock(state, action_ctx, cmd)
 
         roll_pkg = run_pipeline(state, action_ctx)
+        try:
+            from engine.core.telemetry_contract import merge_telemetry_turn_last, snapshot_turn_telemetry
+
+            merge_telemetry_turn_last(state, snapshot_turn_telemetry(state, action_ctx, roll_pkg))
+        except Exception:
+            pass
 
         metrics_after = _snapshot_metrics(state)
         diff = _compute_diff(metrics_before, metrics_after)

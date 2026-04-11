@@ -30,6 +30,12 @@ ALLOWED_PRECONDITION_KINDS: Set[str] = frozenset(
         "location_is",
         "district_is",
         "money_gte",
+        "has_cash",
+        "has_funds",
+        "time_is",
+        "day_phase",
+        "has_ammo",
+        "weapon_drawn",
         "skill_gte",
     }
 )
@@ -152,8 +158,12 @@ Optional step keys:
 - smartphone_op: optional object for phone UI (action_type usually "instant", domain "other", intent_note "smartphone"):
   {"op":"power","value":"on|off|status"} OR {"op":"call","target":"<name>"} OR {"op":"message","target":"<name>","body":"<text>"} OR {"op":"dark_web"}
 - preconditions: array (may be empty). Each item is ONLY {"kind","op","value"} with kind one of:
-  ["hands_free","has_item","scene_phase","target_visible","npc_alive","location_is","district_is","money_gte","skill_gte"]
+  ["hands_free","has_item","scene_phase","target_visible","npc_alive","location_is","district_is","money_gte","has_cash","has_funds","time_is","day_phase","has_ammo","weapon_drawn","skill_gte"]
   and op one of ["eq","neq","in","gte"] (use gte for money_gte/skill_gte).
+  - has_cash / has_funds: value is integer threshold (cash only vs cash+bank).
+  - time_is / day_phase: value is one of night|day|morning|evening (or Indonesian aliases malam|siang|pagi|sore).
+  - has_ammo: value is minimum rounds (default 1).
+  - weapon_drawn: value boolean or true/false string.
 - on_success: array of {"next":"<step_id>","when":"always|if_possible"} (may be empty)
 - on_failure: array of {"next":"<step_id>","when":"always|if_blocked|if_failed_roll"} (may be empty)
 

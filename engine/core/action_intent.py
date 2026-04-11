@@ -292,7 +292,7 @@ def _parse_smartphone_fills(ctx: dict[str, Any], raw_in: str, t: str) -> bool:
         return True
 
     m2 = re.search(
-        r"\b(telepon|panggil|call)\s+([a-zA-Z][a-zA-Z0-9_'\-]{1,40})\b",
+        r"\b(telepon|panggil|call)\s+([a-zA-Z][a-zA-Z0-9_'\-]{0,40})\b",
         str(raw_in or "").strip(),
         flags=re.I,
     )
@@ -859,6 +859,85 @@ def evaluate_precondition(state: dict[str, Any], action_ctx: dict[str, Any], con
                 need = 0
             return cash >= need
 
+        if kind == "has_cash":
+            eco = state.get("economy", {}) or {}
+            cash = int(eco.get("cash", 0) or 0) if isinstance(eco, dict) else 0
+            try:
+                need = int(value or 0)
+            except Exception:
+                need = 0
+            return cash >= need
+
+        if kind == "has_funds":
+            eco = state.get("economy", {}) or {}
+            if not isinstance(eco, dict):
+                return False
+            try:
+                cash = int(eco.get("cash", 0) or 0)
+                bank = int(eco.get("bank", 0) or 0)
+            except Exception:
+                cash, bank = 0, 0
+            total = cash + bank
+            try:
+                need = int(value or 0)
+            except Exception:
+                need = 0
+            return total >= need
+
+        if kind in ("time_is", "day_phase"):
+            meta = state.get("meta", {}) or {}
+            try:
+                tm = int(meta.get("time_min", 0) or 0) % (24 * 60)
+            except Exception:
+                tm = 0
+            h = tm // 60
+            want = _norm_s(value)
+            if want in ("night", "malam"):
+                cur_ok = h >= 22 or h < 6
+            elif want in ("day", "siang", "daytime"):
+                cur_ok = 6 <= h < 18
+            elif want in ("morning", "pagi"):
+                cur_ok = 6 <= h < 12
+            elif want in ("evening", "sore"):
+                cur_ok = 17 <= h < 22
+            else:
+                return False
+            return _cmp(op, cur_ok, True)
+
+        if kind == "has_ammo":
+            try:
+                from engine.systems.combat import get_active_weapon
+            except Exception:
+                return False
+            inv = state.get("inventory", {}) or {}
+            if not isinstance(inv, dict):
+                return False
+            w = get_active_weapon(inv)
+            if not isinstance(w, dict):
+                return False
+            try:
+                n = int(w.get("ammo", 0) or 0)
+            except Exception:
+                n = 0
+            try:
+                need = max(1, int(value or 1))
+            except Exception:
+                need = 1
+            return n >= need
+
+        if kind == "weapon_drawn":
+            inv = state.get("inventory", {}) or {}
+            if not isinstance(inv, dict):
+                return False
+            aid = str(inv.get("active_weapon_id", "") or "").strip()
+            rh = str(inv.get("r_hand", "-") or "-").strip()
+            drawn = bool(aid) or (rh not in ("-", "", None) and rh.lower() not in ("unarmed", "none", "-"))
+            if isinstance(value, bool):
+                want = value
+            else:
+                want = str(value).strip().lower() in ("1", "true", "yes", "on")
+            return drawn == want
+
         if kind == "skill_gte":
             skills = state.get("skills", {}) or {}
             if not isinstance(skills, dict):
@@ -908,6 +987,34 @@ def evaluate_precondition(state: dict[str, Any], action_ctx: dict[str, Any], con
         except Exception:
             pass
         return False
+
+
+def apply_intent_plan_precondition_failure(
+    state: dict[str, Any], action_ctx: dict[str, Any], *, reason: str = "NO_VALID_STEP"
+) -> None:
+    """When intent v2 has steps but none satisfy preconditions: hard-fail with small time cost."""
+    steps = _get_plan_steps(action_ctx)
+    if not steps:
+        return
+    action_ctx["intent_plan_blocked"] = True
+    action_ctx["intent_plan_block_reason"] = str(reason or "NO_VALID_STEP")[:80]
+    action_ctx["action_type"] = "instant"
+    action_ctx["domain"] = "other"
+    action_ctx["roll_domain"] = "evasion"
+    action_ctx["stakes"] = "none"
+    action_ctx["risk_level"] = "low"
+    action_ctx["has_stakes"] = False
+    action_ctx["intent_note"] = "intent_plan_precondition_fail"
+    action_ctx.pop("smartphone_op", None)
+    meta = state.setdefault("meta", {})
+    try:
+        tm = int(meta.get("time_min", 0) or 0)
+    except (TypeError, ValueError):
+        tm = 0
+    meta["time_min"] = min(24 * 60 - 1, tm + 1)
+    state.setdefault("world_notes", []).append(
+        f"[IntentPlan] Preconditions not met ({action_ctx['intent_plan_block_reason']}); you lose a minute re-planning."
+    )
 
 
 def _get_plan_steps(action_ctx: dict[str, Any]) -> list[dict[str, Any]]:
