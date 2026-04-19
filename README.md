@@ -11,12 +11,12 @@
 
 OMNI-ENGINE is a **rules-first** game core: **time, economy, combat, hacking, factions, NPCs, quests, and trace** are resolved in Python with reproducible outcomes. An LLM **narrates** and **maps free-form intent** to structured actions—but it does **not** override mechanics.
 
-| Principle | What it means |
-|-----------|----------------|
-| **Determinism** | Same save state + same player input ⇒ same simulation path (testable, replay-friendly). |
-| **State authority** | `save/current.json` is the source of truth; narration and UI read it, they do not invent stats. |
-| **Hybrid intent** | LLM JSON intent + regex/heuristic parser; engine picks a valid execution path with gates and fallbacks. |
-| **Bounded intel** | News and ripples are structured, deduped, and pruned so saves stay maintainable. |
+| Principle           | What it means                                                                                           |
+| ------------------- | ------------------------------------------------------------------------------------------------------- |
+| **Determinism**     | Same save state + same player input ⇒ same simulation path (testable, replay-friendly).                 |
+| **State authority** | `save/current.json` is the source of truth; narration and UI read it, they do not invent stats.         |
+| **Hybrid intent**   | LLM JSON intent + regex/heuristic parser; engine picks a valid execution path with gates and fallbacks. |
+| **Bounded intel**   | News and ripples are structured, deduped, and pruned so saves stay maintainable.                        |
 
 ---
 
@@ -121,30 +121,30 @@ Optional tuning (see `.env.example`): `LLM_MAX_TOKENS`, `LLM_INTENT_MAX_TOKENS`,
 
 ### FFCI (free-form custom intent)
 
-| Variable | Default | Meaning |
-|----------|---------|---------|
-| `OMNI_FFCI_ENABLED` | `1` | `0` = skip LLM intent resolver; parser-only mechanics. |
-| `OMNI_FFCI_SHADOW_ONLY` | `0` | `1` = still call resolver for logging, but mechanics use parser path only. |
-| `OMNI_FFCI_CUSTOM_HIGH_RISK_CAP_PER_DAY` | `4` | Caps high/medium-stakes **custom** LLM intents merged per in-game day. |
+| Variable                                 | Default | Meaning                                                                    |
+| ---------------------------------------- | ------- | -------------------------------------------------------------------------- |
+| `OMNI_FFCI_ENABLED`                      | `1`     | `0` = skip LLM intent resolver; parser-only mechanics.                     |
+| `OMNI_FFCI_SHADOW_ONLY`                  | `0`     | `1` = still call resolver for logging, but mechanics use parser path only. |
+| `OMNI_FFCI_CUSTOM_HIGH_RISK_CAP_PER_DAY` | `4`     | Caps high/medium-stakes **custom** LLM intents merged per in-game day.     |
 
 ### Feed archive limits (in-game prune)
 
 Applied during **`world_tick`**, **`load_state`**, and **`save_state`**: old `world_notes` / `world.news_feed` entries move to **`save/archive.json`**, active lists stay bounded.
 
-| Variable | Default | Range (clamped) | Meaning |
-|----------|---------|-----------------|--------|
-| `OMNI_FEED_MAX_AGE_DAYS` | `7` | 1–365 | Drop from active state when `meta.day - entry.day` exceeds this. |
-| `OMNI_FEED_MAX_ENTRIES` | `100` | 10–500 | Max active entries per list (newest tail kept). |
-| `OMNI_FEED_ARCHIVE_LIST_CAP` | `5000` | 100–50000 | Max rows per list **inside** `archive.json` (oldest dropped from archive file). |
+| Variable                     | Default | Range (clamped) | Meaning                                                                         |
+| ---------------------------- | ------- | --------------- | ------------------------------------------------------------------------------- |
+| `OMNI_FEED_MAX_AGE_DAYS`     | `7`     | 1–365           | Drop from active state when `meta.day - entry.day` exceeds this.                |
+| `OMNI_FEED_MAX_ENTRIES`      | `100`   | 10–500          | Max active entries per list (newest tail kept).                                 |
+| `OMNI_FEED_ARCHIVE_LIST_CAP` | `5000`  | 100–50000       | Max rows per list **inside** `archive.json` (oldest dropped from archive file). |
 
 ### Engine error log (non-fatal)
 
 Swallowed exceptions in the engine can append tracebacks to a file log (never blocks gameplay).
 
-| Variable | Meaning |
-|----------|---------|
+| Variable                        | Meaning                                            |
+| ------------------------------- | -------------------------------------------------- |
 | `OMNI_ENGINE_ERROR_LOG_DISABLE` | `1` / `true` / `yes` / `on` disables file logging. |
-| `OMNI_ENGINE_ERROR_LOG_PATH` | Override path (default: `logs/engine_errors.log`). |
+| `OMNI_ENGINE_ERROR_LOG_PATH`    | Override path (default: `logs/engine_errors.log`). |
 
 ---
 
@@ -152,11 +152,11 @@ Swallowed exceptions in the engine can append tracebacks to a file log (never bl
 
 ### Files
 
-| Path | Role |
-|------|------|
-| `save/current.json` | Active session (autosave). |
-| `save/previous.json` | Backup used for `UNDO` in Normal mode. |
-| `save/archive.json` | Long-tail **world_notes** and **news_feed** evicted from active state (append + tail cap). |
+| Path                 | Role                                                                                       |
+| -------------------- | ------------------------------------------------------------------------------------------ |
+| `save/current.json`  | Active session (autosave).                                                                 |
+| `save/previous.json` | Backup used for `UNDO` in Normal mode.                                                     |
+| `save/archive.json`  | Long-tail **world_notes** and **news_feed** evicted from active state (append + tail cap). |
 
 All under `save/` are **gitignored**—do not commit personal saves or archives.
 
@@ -182,58 +182,58 @@ See `python scripts/trim_feed_archive.py --help` for `--notes-keep`, `--news-kee
 
 ## In-game commands (sample)
 
-| Command | Purpose |
-|---------|---------|
-| `HELP` | Full command list |
-| `SHOWER` / `HYGIENE` / `MANDI` | Hygiene reset (engine time) |
-| `STATUS` / `INFO` | Condition: daily gigs cap, hack fatigue, etc. |
-| `WHEREAMI` | Location + short profile |
-| `BANK …` / `STAY …` | Banking and prepaid lodging |
-| `MARKET` / `BLACKMARKET` / `BUY_DARK …` / `QUEST` | Legal and underworld economy |
-| `ATLAS` / `COUNTRIES` / `CITIES` | Atlas and cities |
-| `WHO` / `NPC <name>` | NPC roster and detail |
-| `HEAT` / `OFFERS` | Hacking heat and NPC offers |
-| `GIGS` / `WORK` / `HACK <target>` | Gigs and targeted hacking |
-| `DISGUISE` / `SAFEHOUSE` / `WEATHER` / `SKILLS` | Disguise, safehouse, weather, skills |
-| `MODE NORMAL` / `IRONMAN` · `UNDO` | Mode and undo |
+| Command                                           | Purpose                                       |
+| ------------------------------------------------- | --------------------------------------------- |
+| `HELP`                                            | Full command list                             |
+| `SHOWER` / `HYGIENE` / `MANDI`                    | Hygiene reset (engine time)                   |
+| `STATUS` / `INFO`                                 | Condition: daily gigs cap, hack fatigue, etc. |
+| `WHEREAMI`                                        | Location + short profile                      |
+| `BANK …` / `STAY …`                               | Banking and prepaid lodging                   |
+| `MARKET` / `BLACKMARKET` / `BUY_DARK …` / `QUEST` | Legal and underworld economy                  |
+| `ATLAS` / `COUNTRIES` / `CITIES`                  | Atlas and cities                              |
+| `WHO` / `NPC <name>`                              | NPC roster and detail                         |
+| `HEAT` / `OFFERS`                                 | Hacking heat and NPC offers                   |
+| `GIGS` / `WORK` / `HACK <target>`                 | Gigs and targeted hacking                     |
+| `DISGUISE` / `SAFEHOUSE` / `WEATHER` / `SKILLS`   | Disguise, safehouse, weather, skills          |
+| `MODE NORMAL` / `IRONMAN` · `UNDO`                | Mode and undo                                 |
 
 ---
 
 ## Seed packs & data
 
-| Path | Role |
-|------|------|
-| `data/seeds/<name>.json` | Safe merge into state at boot. |
-| `data/locations/<city>.json` | City presets: NPCs, items, tags. |
-| `data/packs/<id>/` | Extensible content; validate before large changes. |
-| `data/state_template.json` | Default shape merged with boot profile. |
+| Path                         | Role                                               |
+| ---------------------------- | -------------------------------------------------- |
+| `data/seeds/<name>.json`     | Safe merge into state at boot.                     |
+| `data/locations/<city>.json` | City presets: NPCs, items, tags.                   |
+| `data/packs/<id>/`           | Extensible content; validate before large changes. |
+| `data/state_template.json`   | Default shape merged with boot profile.            |
 
 ---
 
 ## Scripts & tooling
 
-| Command | Purpose |
-|---------|---------|
-| `python scripts/verify.py` | `compileall` + smoke + regression scenarios (markets, quests, feed prune, trim CLI, …). |
-| `python scripts/validate_all.py` | Packs + every location preset. |
-| `python scripts/migrate_save.py` | Migrate older saves in-place (writes `.bak`). |
-| `python scripts/migrate_save.py path/to/save.json` | Same, explicit file. |
-| `python scripts/trim_feed_archive.py` | Trim `save/archive.json` for smaller publish artifacts. |
-| `python scripts/feature_gap_export.py` | Lightweight hints from telemetry + recent notes (no network). |
+| Command                                            | Purpose                                                                                 |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `python scripts/verify.py`                         | `compileall` + smoke + regression scenarios (markets, quests, feed prune, trim CLI, …). |
+| `python scripts/validate_all.py`                   | Packs + every location preset.                                                          |
+| `python scripts/migrate_save.py`                   | Migrate older saves in-place (writes `.bak`).                                           |
+| `python scripts/migrate_save.py path/to/save.json` | Same, explicit file.                                                                    |
+| `python scripts/trim_feed_archive.py`              | Trim `save/archive.json` for smaller publish artifacts.                                 |
+| `python scripts/feature_gap_export.py`             | Lightweight hints from telemetry + recent notes (no network).                           |
 
 ---
 
 ## Repository layout
 
-| Path | Role |
-|------|------|
-| `main.py` | REPL: intent, pipeline, autosave, AI streaming. |
-| `engine/` | Simulation: time, world, economy, quests, trace, NPCs, bio, balance, feed prune, … |
-| `ai/` | LLM client, intent resolver, turn package, system prompts. |
-| `display/` | Terminal UI (**Rich**). |
-| `data/` | Template, seeds, locations, packs. |
-| `scripts/` | Verify, validate, migrate, trim archive, utilities. |
-| `logs/` | Optional `engine_errors.log` (gitignored; see env vars). |
+| Path       | Role                                                                               |
+| ---------- | ---------------------------------------------------------------------------------- |
+| `main.py`  | REPL: intent, pipeline, autosave, AI streaming.                                    |
+| `engine/`  | Simulation: time, world, economy, quests, trace, NPCs, bio, balance, feed prune, … |
+| `ai/`      | LLM client, intent resolver, turn package, system prompts.                         |
+| `display/` | Terminal UI (**Rich**).                                                            |
+| `data/`    | Template, seeds, locations, packs.                                                 |
+| `scripts/` | Verify, validate, migrate, trim archive, utilities.                                |
+| `logs/`    | Optional `engine_errors.log` (gitignored; see env vars).                           |
 
 ---
 
@@ -264,4 +264,4 @@ See `python scripts/trim_feed_archive.py --help` for `--notes-keep`, `--news-kee
 
 ---
 
-*Systems first; the story follows the state.*
+_Systems first; the story follows the state._

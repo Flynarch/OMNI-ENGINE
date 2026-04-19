@@ -160,13 +160,7 @@
       "id": "hacking.nl_keywords",
       "priority": 42,
       "match": {
-        "keywords_any": [
-          "hack",
-          "retas",
-          "bypass",
-          "terminal",
-          "piratear"
-        ]
+        "keywords_any": ["hack", "retas", "bypass", "terminal", "piratear"]
       },
       "ctx_patch": {
         "domain": "hacking"
@@ -176,12 +170,7 @@
       "id": "medical.nl_keywords",
       "priority": 43,
       "match": {
-        "keywords_any": [
-          "rawat",
-          "obati",
-          "jahit luka",
-          "first aid"
-        ]
+        "keywords_any": ["rawat", "obati", "jahit luka", "first aid"]
       },
       "ctx_patch": {
         "domain": "medical"
@@ -191,12 +180,7 @@
       "id": "driving.nl_keywords",
       "priority": 44,
       "match": {
-        "keywords_any": [
-          "nyetir",
-          "driving",
-          "mengemudi",
-          "take the wheel"
-        ]
+        "keywords_any": ["nyetir", "driving", "mengemudi", "take the wheel"]
       },
       "ctx_patch": {
         "domain": "driving"
@@ -206,12 +190,7 @@
       "id": "stealth.nl_keywords",
       "priority": 45,
       "match": {
-        "keywords_any": [
-          "mengendap",
-          "stealth",
-          "diam-diam",
-          "stay hidden"
-        ]
+        "keywords_any": ["mengendap", "stealth", "diam-diam", "stay hidden"]
       },
       "ctx_patch": {
         "domain": "stealth"
@@ -301,11 +280,7 @@
       "priority": 48,
       "handler": "ensure_social_negotiation_shape",
       "match": {
-        "keywords_any": [
-          "negosiasi",
-          "bohong",
-          "yakinkan"
-        ]
+        "keywords_any": ["negosiasi", "bohong", "yakinkan"]
       },
       "ctx_patch": {
         "domain": "social",
@@ -366,10 +341,7 @@
       "id": "instant.nl_clear_jam",
       "priority": 49,
       "match": {
-        "keywords_any": [
-          "clear jam",
-          "bersihin macet"
-        ]
+        "keywords_any": ["clear jam", "bersihin macet"]
       },
       "ctx_patch": {
         "action_type": "instant",
@@ -420,13 +392,7 @@
       "id": "instant.nl_hedge_uncertainty",
       "priority": 55,
       "match": {
-        "keywords_any": [
-          "mungkin",
-          "coba",
-          "nekat",
-          "risiko",
-          "diam-diam"
-        ]
+        "keywords_any": ["mungkin", "coba", "nekat", "risiko", "diam-diam"]
       },
       "ctx_patch": {
         "uncertain": true,
@@ -439,12 +405,7 @@
       "priority": 52,
       "handler": "ensure_stop_irreversible",
       "match": {
-        "keywords_any": [
-          "eksekusi",
-          "bunuh",
-          "korbankan",
-          "putusan final"
-        ]
+        "keywords_any": ["eksekusi", "bunuh", "korbankan", "putusan final"]
       },
       "ctx_patch": {}
     },
@@ -467,10 +428,7 @@
       "priority": 54,
       "handler": "ensure_stop_critical_blood",
       "match": {
-        "keywords_any": [
-          "darah deras",
-          "kehilangan darah parah"
-        ]
+        "keywords_any": ["darah deras", "kehilangan darah parah"]
       },
       "ctx_patch": {}
     }
