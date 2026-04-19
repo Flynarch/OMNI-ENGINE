@@ -48,31 +48,16 @@ _SOCIAL_CONFLICT_WORDS = (
 
 
 def _is_social_inquiry(t: str) -> bool:
-    """Tanya info (bukan evasion)."""
-    if "?" in t:
-        return True
-    return any(
-        p in t
-        for p in (
-            "berapa ",
-            "berapa ini",
-            "tahun ",
-            "jam berapa",
-            "apa itu",
-            "apa arti",
-            "dimana ",
-            "di mana",
-            "kemana ",
-            "kemana",
-            "siapa ",
-            "kenapa ",
-            "mengapa ",
-            "bagaimana ",
-            "gimana ",
-            "what year",
-            "what time",
-        )
-    )
+    """Tanya info (bukan evasion). Frasa substring diselaraskan dengan ``social.inquiry.*`` di registry."""
+    tnorm = (t or "").strip().lower()
+    if not tnorm:
+        return False
+    try:
+        from engine.core.action_registry import inquiry_phrases_match
+
+        return inquiry_phrases_match(tnorm)
+    except Exception:
+        return "?" in tnorm
 
 
 def _is_social_dialogue(t: str) -> bool:
@@ -215,6 +200,25 @@ def _is_intimacy_private(t: str) -> bool:
     )
 
 
+def _registry_try_intimacy_private_nl(ctx: dict[str, Any], t: str, player_input: str) -> bool:
+    """Consensual private intimacy; guard ``_is_intimacy_private``; ``ctx_patch`` + handler di registry."""
+    if not _is_intimacy_private(t):
+        return False
+    try:
+        from engine.core.action_registry import get_registry_action_by_id
+    except Exception:
+        return False
+    m = get_registry_action_by_id("social.nl_intimacy_private")
+    if not m:
+        return False
+    patch = m.get("ctx_patch") if isinstance(m.get("ctx_patch"), dict) else {}
+    for k, v in patch.items():
+        ctx[k] = v
+    ctx["registry_action_id"] = str(m.get("id", "") or "").strip()
+    _invoke_registry_handler_from_match(m, ctx, t, player_input)
+    return True
+
+
 def _is_social_scan(t: str) -> bool:
     if any(p in t for p in _SOCIAL_SCAN_PHRASES):
         return True
@@ -267,6 +271,18 @@ def _parse_sleep_hours(t: str) -> int | None:
     return None
 
 
+def _invoke_registry_handler_from_match(m: dict[str, Any], ctx: dict[str, Any], t: str, raw: str) -> None:
+    hn = str((m or {}).get("handler") or "").strip()
+    if not hn:
+        return
+    try:
+        from engine.core.action_registry_handlers import apply_registry_handler
+
+        apply_registry_handler(hn, ctx, t, raw)
+    except Exception:
+        pass
+
+
 def _registry_try_sleep(ctx: dict[str, Any], t: str, player_input: str) -> bool:
     """Apply sleep intent from action registry when it is not a prepaid-stay booking."""
     if _parse_accommodation_intent(t) is not None:
@@ -282,6 +298,7 @@ def _registry_try_sleep(ctx: dict[str, Any], t: str, player_input: str) -> bool:
     for k, v in patch.items():
         ctx[k] = v
     ctx["registry_action_id"] = str(m.get("id", "") or "").strip()
+    _invoke_registry_handler_from_match(m, ctx, t, player_input)
     return True
 
 
@@ -313,6 +330,7 @@ def _registry_try_combat(ctx: dict[str, Any], t: str, player_input: str) -> bool
     ctx["registry_action_id"] = str(m.get("id", "") or "").strip()
     if any(x in t for x in _NL_ATTEMPT_MARKERS):
         ctx["intent_note"] = "nl_attempt"
+    _invoke_registry_handler_from_match(m, ctx, t, player_input)
     return True
 
 
@@ -416,6 +434,7 @@ def _registry_try_travel(ctx: dict[str, Any], t: str, player_input: str) -> bool
         ctx[k] = v
     ctx["registry_action_id"] = str(m.get("id", "") or "").strip()
     _apply_travel_heuristics(ctx, t, player_input)
+    _invoke_registry_handler_from_match(m, ctx, t, player_input)
     return True
 
 
@@ -443,6 +462,7 @@ def _registry_try_skill_domain(ctx: dict[str, Any], t: str, player_input: str) -
     for k, v in patch.items():
         ctx[k] = v
     ctx["registry_action_id"] = aid
+    _invoke_registry_handler_from_match(m, ctx, t, player_input)
     return True
 
 
@@ -465,10 +485,88 @@ def _registry_try_social_nl(ctx: dict[str, Any], t: str, player_input: str) -> b
     for k, v in patch.items():
         ctx[k] = v
     ctx["registry_action_id"] = aid
+    _invoke_registry_handler_from_match(m, ctx, t, player_input)
+    return True
+
+
+_NEGOTIATION_NL_KEYWORDS = ("negosiasi", "bohong", "yakinkan")
+
+
+def _registry_try_social_negotiation_nl(ctx: dict[str, Any], t: str, player_input: str) -> bool:
+    """Deception / negotiation phrasing; ``ctx_patch`` + handler live in ``social.nl_negotiation`` (code-resolved id)."""
+    if not any(k in t for k in _NEGOTIATION_NL_KEYWORDS):
+        return False
+    try:
+        from engine.core.action_registry import get_registry_action_by_id
+    except Exception:
+        return False
+    m = get_registry_action_by_id("social.nl_negotiation")
+    if not m:
+        return False
+    patch = m.get("ctx_patch") if isinstance(m.get("ctx_patch"), dict) else {}
+    for k, v in patch.items():
+        ctx[k] = v
+    ctx["registry_action_id"] = str(m.get("id", "") or "").strip()
+    _invoke_registry_handler_from_match(m, ctx, t, player_input)
+    return True
+
+
+def _registry_try_social_conflict_nl(ctx: dict[str, Any], t: str, player_input: str) -> bool:
+    """Conflict toward people (AND of cues); ``ctx_patch`` is ``social.nl_conflict`` in registry (code-resolved id)."""
+    if not (any(k in t for k in _SOCIAL_CONFLICT_WORDS) and any(w in t for w in _PEOPLE_WORDS)):
+        return False
+    try:
+        from engine.core.action_registry import get_registry_action_by_id
+    except Exception:
+        return False
+    m = get_registry_action_by_id("social.nl_conflict")
+    if not m:
+        return False
+    patch = m.get("ctx_patch") if isinstance(m.get("ctx_patch"), dict) else {}
+    for k, v in patch.items():
+        ctx[k] = v
+    ctx["registry_action_id"] = str(m.get("id", "") or "").strip()
+    _invoke_registry_handler_from_match(m, ctx, t, player_input)
     return True
 
 
 _SOCIAL_INQUIRY_PREFIX = "social.inquiry."
+
+# Satu kata / slang: istirahat singkat (60m), tanpa substring "istirahat tidur" (itu tidur).
+_REST_ISTIRAHAT_EXACT: frozenset[str] = frozenset(
+    {
+        "istirahat",
+        "istirahat.",
+        "gw istirahat",
+        "gua istirahat",
+        "gue istirahat",
+    }
+)
+
+
+def _registry_try_rest_short_nl(ctx: dict[str, Any], t: str, player_input: str) -> bool:
+    """Istirahat singkat 60m: frasa ID di registry ``rest.nl_*``, plus ``rest …`` (inggris)."""
+    t2 = str(t or "").strip().lower()
+    m: dict[str, Any] | None = None
+    try:
+        from engine.core.action_registry import get_registry_action_by_id, match_registry_action_prefixed
+    except Exception:
+        return False
+    m = match_registry_action_prefixed(str(player_input or ""), "rest.")
+    if not m or not str(m.get("id", "") or "").strip().startswith("rest."):
+        m = None
+    if m is None and t2.startswith("rest "):
+        m = get_registry_action_by_id("rest.nl_prefix_60m")
+    if m is None and t2 in _REST_ISTIRAHAT_EXACT:
+        m = get_registry_action_by_id("rest.nl_prefix_60m")
+    if not m:
+        return False
+    patch = m.get("ctx_patch") if isinstance(m.get("ctx_patch"), dict) else {}
+    for k, v in patch.items():
+        ctx[k] = v
+    ctx["registry_action_id"] = str(m.get("id", "") or "").strip()
+    _invoke_registry_handler_from_match(m, ctx, t, player_input)
+    return True
 
 
 def _registry_try_social_inquiry_nl(ctx: dict[str, Any], t: str, player_input: str) -> bool:
@@ -487,6 +585,7 @@ def _registry_try_social_inquiry_nl(ctx: dict[str, Any], t: str, player_input: s
     for k, v in patch.items():
         ctx[k] = v
     ctx["registry_action_id"] = aid
+    _invoke_registry_handler_from_match(m, ctx, t, player_input)
     return True
 
 
@@ -501,6 +600,56 @@ def _apply_trivial_realism_flags(ctx: dict[str, Any]) -> None:
     ctx["uncertain"] = False
     ctx["has_stakes"] = False
     ctx["risk_level"] = "low"
+
+
+def _registry_try_instant_physically_impossible(ctx: dict[str, Any], t: str, player_input: str) -> bool:
+    """Realism gate — mustahil fisik; ``instant.nl_physically_impossible``."""
+    try:
+        from engine.core.action_registry import match_registry_action_prefixed
+    except Exception:
+        return False
+    m = match_registry_action_prefixed(str(player_input or ""), _INSTANT_NL_PREFIX)
+    if not m or str(m.get("id", "") or "").strip() != "instant.nl_physically_impossible":
+        return False
+    patch = m.get("ctx_patch") if isinstance(m.get("ctx_patch"), dict) else {}
+    for k, v in patch.items():
+        ctx[k] = v
+    ctx["registry_action_id"] = str(m.get("id", "") or "").strip()
+    _invoke_registry_handler_from_match(m, ctx, t, player_input)
+    return True
+
+
+def _registry_try_instant_clear_jam(ctx: dict[str, Any], t: str, player_input: str) -> bool:
+    """Weapon jam clear (W2-ish); ``instant.nl_clear_jam`` in registry."""
+    try:
+        from engine.core.action_registry import match_registry_action_prefixed
+    except Exception:
+        return False
+    m = match_registry_action_prefixed(str(player_input or ""), _INSTANT_NL_PREFIX)
+    if not m or str(m.get("id", "") or "").strip() != "instant.nl_clear_jam":
+        return False
+    patch = m.get("ctx_patch") if isinstance(m.get("ctx_patch"), dict) else {}
+    for k, v in patch.items():
+        ctx[k] = v
+    ctx["registry_action_id"] = str(m.get("id", "") or "").strip()
+    _invoke_registry_handler_from_match(m, ctx, t, player_input)
+    return True
+
+
+def _registry_apply_all_instant_stop_nl(ctx: dict[str, Any], t: str, player_input: str) -> None:
+    """Terapkan semua entri ``instant.nl_stop_*`` yang cocok (bukan hanya yang pertama)."""
+    try:
+        from engine.core.action_registry import iter_registry_matches_by_prefix
+        from engine.core.action_registry_handlers import apply_registry_handler
+    except Exception:
+        return
+    for m in iter_registry_matches_by_prefix(str(player_input or ""), "instant.nl_stop_"):
+        patch = m.get("ctx_patch") if isinstance(m.get("ctx_patch"), dict) else {}
+        for k, v in patch.items():
+            ctx[k] = v
+        hn = str((m or {}).get("handler") or "").strip()
+        if hn:
+            apply_registry_handler(hn, ctx, t, player_input)
 
 
 def _registry_try_instant_trivial(ctx: dict[str, Any], t: str, player_input: str) -> bool:
@@ -518,6 +667,7 @@ def _registry_try_instant_trivial(ctx: dict[str, Any], t: str, player_input: str
     for k, v in patch.items():
         ctx[k] = v
     ctx["registry_action_id"] = str(m.get("id", "") or "").strip()
+    _invoke_registry_handler_from_match(m, ctx, t, player_input)
     return True
 
 
@@ -687,9 +837,8 @@ def parse_action_intent(player_input: str) -> dict[str, Any]:
         ctx["risk_level"] = "low"
         ctx["has_stakes"] = False
         ctx["uncertain"] = False
-    elif t.startswith("rest "):
-        ctx["action_type"] = "rest"
-        ctx["rested_minutes"] = 60
+    elif _registry_try_rest_short_nl(ctx, t, player_input):
+        pass
     elif _registry_try_social_inquiry_nl(ctx, t, player_input):
         pass
     elif _is_social_inquiry(t):
@@ -697,33 +846,8 @@ def parse_action_intent(player_input: str) -> dict[str, Any]:
         ctx["social_context"] = "standard"
         ctx["intent_note"] = "social_inquiry"
         ctx["social_mode"] = "non_conflict"
-    elif _is_intimacy_private(t):
-        ctx["domain"] = "social"
-        ctx["social_context"] = "standard"
-        ctx["intent_note"] = "intimacy_private"
-        ctx["social_mode"] = "non_conflict"
-        ctx["visibility"] = "private"
-        ctx["stakes"] = "medium"
-        ctx["has_stakes"] = True
-        ctx["uncertain"] = True
-        im = int(ctx.get("instant_minutes", 0) or 0)
-        ctx["instant_minutes"] = max(im, 75)
-        raw_in = (player_input or "").strip()
-        for pat in (
-            r"\bwith\s+([A-Za-z][A-Za-z0-9_'\-]{1,32})\b",
-            r"\bdengan\s+([A-Za-z][A-Za-z0-9_'\-]{1,32})\b",
-            r"\bbersama\s+([A-Za-z][A-Za-z0-9_'\-]{1,32})\b",
-        ):
-            m = re.search(pat, raw_in, flags=re.I)
-            if not m:
-                continue
-            name = m.group(1).strip()
-            if name.lower() in ("the", "a", "an", "itu", "dia", "mereka"):
-                continue
-            tl = ctx.setdefault("targets", [])
-            if isinstance(tl, list) and name not in tl:
-                tl.insert(0, name)
-            break
+    elif _registry_try_intimacy_private_nl(ctx, t, player_input):
+        pass
     elif _registry_try_social_nl(ctx, t, player_input):
         pass
     elif _is_social_dialogue(t):
@@ -736,10 +860,8 @@ def parse_action_intent(player_input: str) -> dict[str, Any]:
         ctx["social_context"] = "standard"
         ctx["intent_note"] = "social_scan_crowd"
         ctx["social_mode"] = "non_conflict"
-    elif any(k in t for k in ["negosiasi", "bohong", "yakinkan"]):
-        ctx["domain"] = "social"
-        ctx["social_context"] = "formal" if any(k in t for k in ["formal", "kantor", "instansi", "gala", "hotel"]) else "standard"
-        ctx["social_mode"] = "conflict"
+    elif _registry_try_social_negotiation_nl(ctx, t, player_input):
+        pass
     elif _registry_try_skill_domain(ctx, t, player_input):
         pass
     elif any(k in t for k in _HACKING_LEGACY_KEYWORDS):
@@ -750,38 +872,21 @@ def parse_action_intent(player_input: str) -> dict[str, Any]:
         ctx["domain"] = "driving"
     elif any(k in t for k in _STEALTH_LEGACY_KEYWORDS):
         ctx["domain"] = "stealth"
-    elif any(k in t for k in _SOCIAL_CONFLICT_WORDS) and any(w in t for w in _PEOPLE_WORDS):
-        # Konflik sosial eksplisit (ancam/paksa/tipu) ke orang: ini tetap domain social.
-        ctx["domain"] = "social"
-        ctx["social_context"] = "standard"
-        ctx["intent_note"] = "social_conflict"
-        ctx["social_mode"] = "conflict"
+    elif _registry_try_social_conflict_nl(ctx, t, player_input):
+        pass
 
-    # STOP sequence heuristics
-    if any(k in t for k in ["eksekusi", "bunuh", "korbankan", "putusan final"]):
-        ctx["irreversible_decision"] = True
-        ctx["stop_triggers"].append("irreversible_decision")
-    if any(k in t for k in ["masuk ruangan", "buka pintu", "masuk area baru", "new zone"]):
-        ctx["new_zone"] = True
-        ctx["stop_triggers"].append("new_zone")
-    if "darah deras" in t or "kehilangan darah parah" in t:
-        ctx["blood_loss_single_event_over_30"] = True
-        ctx["stop_triggers"].append("critical_blood_loss")
-    if "clear jam" in t or "bersihin macet" in t:
-        ctx["attempt_clear_jam"] = True
-        ctx["instant_minutes"] = 1
+    # STOP sequence heuristics (multi-hit: beberapa ``instant.nl_stop_*`` boleh sekaligus)
+    _registry_apply_all_instant_stop_nl(ctx, t, player_input)
+    if _registry_try_instant_clear_jam(ctx, t, player_input):
+        pass
 
     # Realism gate
     if _registry_try_instant_trivial(ctx, t, player_input):
         pass
     elif any(k in t for k in _TRIVIAL_LEGACY_KEYWORDS):
         _apply_trivial_realism_flags(ctx)
-    if any(k in t for k in ["terbang tanpa alat", "menembus dinding", "berenang di udara"]):
-        ctx["physically_impossible"] = True
-        ctx["impossible"] = True
-        ctx["uncertain"] = False
-        ctx["has_stakes"] = True
-        ctx["risk_level"] = "high"
+    if _registry_try_instant_physically_impossible(ctx, t, player_input):
+        pass
 
     if any(k in t for k in ["mungkin", "coba", "nekat", "risiko", "diam-diam"]):
         ctx["uncertain"] = True
@@ -913,6 +1018,38 @@ def apply_parser_registry_anchor_after_llm(
     meta["intent_resolution"] = "registry+llm"
 
 
+# Fields merged from FFCI intent into action_ctx (also used to snapshot parser state before merge).
+INTENT_MERGE_FIELD_KEYS: tuple[str, ...] = (
+    "action_type",
+    "domain",
+    "combat_style",
+    "social_mode",
+    "social_context",
+    "intent_note",
+    "suggested_dc",
+    "targets",
+    "stakes",
+    "risk_level",
+    "time_cost_min",
+    "travel_destination",
+    "inventory_ops",
+    "accommodation_intent",
+    "smartphone_op",
+)
+
+
+def strip_llm_intent_overlay_on_registry_hint_mismatch(action_ctx: dict[str, Any]) -> None:
+    """Drop FFCI v2 plan / goal overlay so execution matches parser-restored mechanical fields."""
+    if not isinstance(action_ctx, dict):
+        return
+    action_ctx.pop("intent_plan", None)
+    action_ctx.pop("step_now_id", None)
+    action_ctx.pop("intent_plan_blocked", None)
+    action_ctx.pop("player_goal", None)
+    action_ctx.pop("intent_schema_version", None)
+    action_ctx["intent_version"] = 1
+
+
 def merge_intent_into_action_ctx(action_ctx: dict[str, Any], intent: dict[str, Any]) -> dict[str, Any]:
     """Merge either v1 or v2 intent output into an action_ctx (in-place).
 
@@ -923,25 +1060,19 @@ def merge_intent_into_action_ctx(action_ctx: dict[str, Any], intent: dict[str, A
     if not isinstance(intent, dict):
         return action_ctx
     src = flatten_intent_v2(intent) if is_intent_v2(intent) else intent
-    for key in (
-        "action_type",
-        "domain",
-        "combat_style",
-        "social_mode",
-        "social_context",
-        "intent_note",
-        "suggested_dc",
-        "targets",
-        "stakes",
-        "risk_level",
-        "time_cost_min",
-        "travel_destination",
-        "inventory_ops",
-        "accommodation_intent",
-        "smartphone_op",
-    ):
+    for key in INTENT_MERGE_FIELD_KEYS:
         if key in src and src[key] is not None:
             action_ctx[key] = src[key]
+    try:
+        from engine.core.action_registry import sanitize_registry_action_id_hint
+
+        rh = sanitize_registry_action_id_hint(src.get("registry_action_id_hint"))
+        if rh:
+            action_ctx["llm_registry_action_id_hint"] = rh
+        else:
+            action_ctx.pop("llm_registry_action_id_hint", None)
+    except Exception:
+        action_ctx.pop("llm_registry_action_id_hint", None)
     try:
         action_ctx["intent_confidence"] = float(src.get("confidence", 0.0))
     except Exception:

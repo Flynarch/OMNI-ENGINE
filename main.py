@@ -2540,10 +2540,12 @@ def main() -> None:
 
         # 1) Intent resolution: LLM-first when FFCI enabled; meta/special stay fast-path above.
         from engine.core.action_intent import (
+            INTENT_MERGE_FIELD_KEYS,
             apply_parser_registry_anchor_after_llm,
             apply_step_to_action_ctx,
             merge_intent_into_action_ctx,
             select_best_step,
+            strip_llm_intent_overlay_on_registry_hint_mismatch,
         )
         from engine.core.intent_plan_runtime import apply_pending_runtime_step, sync_plan_runtime_start
         from engine.core.security_intent import security_flags_for_intent_input
@@ -2568,9 +2570,36 @@ def main() -> None:
             meta["ffci_shadow_llm_intent"] = dict(intent) if isinstance(intent, dict) else intent
             meta["llm_domain_raw"] = str((intent or {}).get("domain", "") or "").lower()
         elif intent:
+            meta.pop("_parser_intent_snapshot_before_llm_merge", None)
+            if parser_registry_id:
+                meta["_parser_intent_snapshot_before_llm_merge"] = {
+                    k: action_ctx[k] for k in INTENT_MERGE_FIELD_KEYS if k in action_ctx
+                }
             merge_intent_into_action_ctx(action_ctx, intent)
             if parser_registry_id:
                 apply_parser_registry_anchor_after_llm(action_ctx, meta, parser_registry_id)
+            try:
+                from engine.core.action_registry import registry_hint_alignment
+
+                lh0 = str(action_ctx.get("llm_registry_action_id_hint") or "").strip()
+                pr0 = str(action_ctx.get("registry_action_id") or "").strip()
+                snap0 = meta.get("_parser_intent_snapshot_before_llm_merge")
+                if (
+                    pr0
+                    and lh0
+                    and registry_hint_alignment(pr0, lh0) == "mismatch"
+                    and isinstance(snap0, dict)
+                ):
+                    for _k in INTENT_MERGE_FIELD_KEYS:
+                        if _k in snap0:
+                            action_ctx[_k] = snap0[_k]
+                        else:
+                            action_ctx.pop(_k, None)
+                    strip_llm_intent_overlay_on_registry_hint_mismatch(action_ctx)
+                    apply_parser_registry_anchor_after_llm(action_ctx, meta, parser_registry_id)
+            except Exception:
+                pass
+            meta.pop("_parser_intent_snapshot_before_llm_merge", None)
             clamp_suggested_dc_ctx(action_ctx)
             if not ffci_shadow_only():
                 update_ffci_custom_streak(meta, action_ctx)
@@ -2673,6 +2702,36 @@ def main() -> None:
                 )
         except Exception as e:
             _record_soft_error(state, "main.action_ctx_shadow", e)
+
+        # Registry hint telemetry (parser id vs optional LLM hint after merge).
+        try:
+            from engine.core.action_registry import registry_hint_alignment
+
+            lh = str(action_ctx.get("llm_registry_action_id_hint") or "").strip()
+            pr_final = str(action_ctx.get("registry_action_id") or "").strip()
+            if lh:
+                meta["llm_registry_action_id_hint"] = lh
+            else:
+                meta.pop("llm_registry_action_id_hint", None)
+            meta["registry_hint_alignment"] = registry_hint_alignment(pr_final, lh or None)
+            if meta.get("registry_hint_alignment") == "mismatch":
+                meta["registry_hint_mismatch"] = True
+            else:
+                meta.pop("registry_hint_mismatch", None)
+        except Exception:
+            meta.pop("llm_registry_action_id_hint", None)
+            meta.pop("registry_hint_alignment", None)
+            meta.pop("registry_hint_mismatch", None)
+
+        ra_sync = str(meta.get("registry_hint_alignment", "") or "").strip()
+        if ra_sync:
+            action_ctx["registry_hint_alignment"] = ra_sync
+        else:
+            action_ctx.pop("registry_hint_alignment", None)
+        if meta.get("registry_hint_mismatch"):
+            action_ctx["registry_hint_mismatch"] = True
+        else:
+            action_ctx.pop("registry_hint_mismatch", None)
 
         # Visibility hint (for attention/trace scaling on combat/hacking).
         cmd_norm = str(action_ctx.get("normalized_input", cmd) or cmd).lower()

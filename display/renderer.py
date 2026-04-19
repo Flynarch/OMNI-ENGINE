@@ -620,6 +620,10 @@ def _render_monitor_compact(state: dict[str, Any]) -> None:
     t.append("[HOOK] ", style="bold red")
     t.append(f"{hook_line}\n", style="red")
 
+    if meta.get("registry_hint_mismatch"):
+        t.append("[INTENT] ", style="bold yellow")
+        t.append("⚠ Parser/registry resolution — LLM registry id hint mismatch\n", style="yellow")
+
     sc = state.get("active_scene")
     if isinstance(sc, dict) and sc:
         opts = sc.get("next_options") or []
@@ -1345,6 +1349,7 @@ def _render_monitor_full(state: dict[str, Any]) -> None:
     # Last intent audit line (helps align AI behavior with engine intent)
     last_source = meta.get("last_intent_source") or "-"
     raw = meta.get("last_intent_raw")
+    reg_mis = " hint_mismatch=yes" if meta.get("registry_hint_mismatch") else ""
     if isinstance(raw, dict):
         dom = raw.get("domain", "-")
         note = raw.get("intent_note", "-")
@@ -1353,9 +1358,12 @@ def _render_monitor_full(state: dict[str, Any]) -> None:
             conf_s = f"{conf:.2f}"
         else:
             conf_s = str(conf) if conf is not None else "-"
-        right_suffix.append(f"LastIntent: source={last_source} domain={dom} note={note} conf={conf_s}\n", style="magenta")
+        right_suffix.append(
+            f"LastIntent: source={last_source} domain={dom} note={note} conf={conf_s}{reg_mis}\n",
+            style="magenta",
+        )
     else:
-        right_suffix.append(f"LastIntent: source={last_source}\n", style="magenta")
+        right_suffix.append(f"LastIntent: source={last_source}{reg_mis}\n", style="magenta")
 
     right_group = Group(right_prefix, npc_table, right_suffix)
     console.print(

@@ -461,6 +461,14 @@ def _fmt_action_ctx(action_ctx: dict[str, Any]) -> str:
             lines.append(f"intent_confidence={float(action_ctx.get('intent_confidence', 0.0) or 0.0):.2f}")
         except (TypeError, ValueError):
             pass
+    rh_al = str(action_ctx.get("registry_hint_alignment", "") or "").strip()
+    if rh_al and rh_al != "none":
+        lines.append(f"registry_hint_alignment={rh_al}")
+    if action_ctx.get("registry_hint_mismatch"):
+        lines.append(
+            "registry_hint_mismatch=True — narrator: follow deterministic ENGINE/registry outcome; "
+            "parser and LLM registry-id hint disagreed."
+        )
     if action_ctx.get("step_now_id"):
         lines.append(f"step_now_id={action_ctx.get('step_now_id')}")
     sr = action_ctx.get("smartphone_result")

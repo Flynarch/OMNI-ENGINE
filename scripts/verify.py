@@ -553,12 +553,138 @@ def _smoke() -> None:
     assert str(ctx_melee_nl.get("registry_action_id", "") or "") == "combat.nl_melee"
     # Action registry (data-driven intent catalog — Phase 0: load + match only).
     from engine.core.action_registry import (
+        allowed_registry_action_ids,
+        get_registry_action_by_id,
+        inquiry_phrases_match,
+        is_known_registry_action_id,
+        iter_registry_matches_by_prefix,
         list_action_ids,
         load_registry,
         match_registry_action,
         match_registry_action_prefixed,
+        registry_hint_alignment,
+        sanitize_registry_action_id_hint,
     )
 
+    assert allowed_registry_action_ids() == list_action_ids()
+    m_soc_conflict = get_registry_action_by_id("social.nl_conflict")
+    assert isinstance(m_soc_conflict, dict) and m_soc_conflict.get("id") == "social.nl_conflict"
+    assert (m_soc_conflict.get("ctx_patch") or {}).get("intent_note") == "social_conflict"
+    assert match_registry_action("ancam orang sekarang") is None
+    ctx_soc_cf = parse_action_intent("mengancam warga di jalan")
+    assert str(ctx_soc_cf.get("registry_action_id", "") or "") == "social.nl_conflict"
+    assert ctx_soc_cf.get("intent_note") == "social_conflict"
+    ctx_no_people = parse_action_intent("memeras uang saja")
+    assert str(ctx_no_people.get("registry_action_id", "") or "") != "social.nl_conflict"
+    m_neg = get_registry_action_by_id("social.nl_negotiation")
+    assert isinstance(m_neg, dict) and m_neg.get("handler") == "ensure_social_negotiation_shape"
+    ctx_neg = parse_action_intent("negosiasi harga dengan supplier")
+    assert str(ctx_neg.get("registry_action_id", "") or "") == "social.nl_negotiation"
+    assert ctx_neg.get("intent_note") == "social_negotiation"
+    assert ctx_neg.get("social_context") == "standard"
+    ctx_neg_f = parse_action_intent("negosiasi di kantor dengan klien")
+    assert ctx_neg_f.get("social_context") == "formal"
+    m_rest = get_registry_action_by_id("rest.nl_prefix_60m")
+    assert isinstance(m_rest, dict) and (m_rest.get("ctx_patch") or {}).get("action_type") == "rest"
+    ctx_rest = parse_action_intent("REST sebentar")
+    assert ctx_rest.get("action_type") == "rest" and int(ctx_rest.get("rested_minutes", 0) or 0) == 60
+    assert str(ctx_rest.get("registry_action_id", "") or "") == "rest.nl_prefix_60m"
+    ctx_id_rest = parse_action_intent("istirahat sebentar ya")
+    assert ctx_id_rest.get("action_type") == "rest" and str(ctx_id_rest.get("registry_action_id", "") or "") == "rest.nl_istirahat_short"
+    ctx_id_word = parse_action_intent("istirahat")
+    assert ctx_id_word.get("action_type") == "rest" and str(ctx_id_word.get("registry_action_id", "") or "") == "rest.nl_prefix_60m"
+    ctx_tidur = parse_action_intent("istirahat tidur")
+    assert ctx_tidur.get("action_type") == "sleep"
+    m_int = get_registry_action_by_id("social.nl_intimacy_private")
+    assert isinstance(m_int, dict) and m_int.get("handler") == "ensure_intimacy_private_registry_shape"
+    ctx_int = parse_action_intent("bercinta dengan Rico")
+    assert ctx_int.get("intent_note") == "intimacy_private" and str(ctx_int.get("registry_action_id", "") or "") == "social.nl_intimacy_private"
+    assert ctx_int.get("targets") == ["Rico"]
+    ctx_int_block = parse_action_intent("paksa bercinta")
+    assert str(ctx_int_block.get("registry_action_id", "") or "") != "social.nl_intimacy_private"
+    assert "sleep.nl_default_8h" in allowed_registry_action_ids()
+    assert is_known_registry_action_id("travel.nl_generic") is True
+    assert is_known_registry_action_id("totally.fake.id") is False
+    assert sanitize_registry_action_id_hint("combat.nl_melee") == "combat.nl_melee"
+    assert sanitize_registry_action_id_hint("not_in_registry") is None
+    assert registry_hint_alignment("", None) == "none"
+    assert registry_hint_alignment("sleep.nl_default_8h", None) == "parser_only"
+    assert registry_hint_alignment("", "travel.nl_generic") == "llm_only"
+    assert registry_hint_alignment("combat.nl_melee", "combat.nl_melee") == "match"
+    assert registry_hint_alignment("combat.nl_melee", "travel.nl_generic") == "mismatch"
+    from ai.intent_resolver import normalize_resolved_intent
+    from engine.core.action_intent import (
+        INTENT_MERGE_FIELD_KEYS,
+        apply_parser_registry_anchor_after_llm,
+        merge_intent_into_action_ctx,
+        strip_llm_intent_overlay_on_registry_hint_mismatch,
+    )
+
+    assert isinstance(INTENT_MERGE_FIELD_KEYS, tuple) and len(INTENT_MERGE_FIELD_KEYS) >= 10
+    assert "domain" in INTENT_MERGE_FIELD_KEYS and "action_type" in INTENT_MERGE_FIELD_KEYS
+
+    snap_mis = {"domain": "combat", "action_type": "combat", "combat_style": "melee"}
+    ctx_gate = dict(snap_mis)
+    merge_intent_into_action_ctx(
+        ctx_gate,
+        {"version": 1, "domain": "travel", "action_type": "instant", "confidence": 0.9},
+    )
+    ctx_gate["registry_action_id"] = "combat.nl_melee"
+    ctx_gate["llm_registry_action_id_hint"] = "travel.nl_generic"
+    assert registry_hint_alignment(ctx_gate.get("registry_action_id"), ctx_gate.get("llm_registry_action_id_hint")) == "mismatch"
+    for _gk in INTENT_MERGE_FIELD_KEYS:
+        if _gk in snap_mis:
+            ctx_gate[_gk] = snap_mis[_gk]
+        else:
+            ctx_gate.pop(_gk, None)
+    assert ctx_gate.get("domain") == "combat" and ctx_gate.get("combat_style") == "melee"
+
+    ctx_strip = {
+        "intent_version": 2,
+        "intent_plan": {"steps": [{"step_id": "s1"}]},
+        "step_now_id": "s1",
+        "intent_plan_blocked": False,
+        "player_goal": "cross the city",
+        "intent_schema_version": 2,
+    }
+    strip_llm_intent_overlay_on_registry_hint_mismatch(ctx_strip)
+    assert ctx_strip.get("intent_version") == 1
+    assert "intent_plan" not in ctx_strip and "step_now_id" not in ctx_strip and "player_goal" not in ctx_strip
+
+    v1_hint_bad = normalize_resolved_intent(
+        {
+            "version": 1,
+            "intent_schema_version": 2,
+            "confidence": 0.8,
+            "action_type": "instant",
+            "domain": "evasion",
+            "intent_note": "walk",
+            "registry_action_id_hint": "not_in_registry",
+        }
+    )
+    assert isinstance(v1_hint_bad, dict) and "registry_action_id_hint" not in v1_hint_bad
+    v1_hint_ok = normalize_resolved_intent(
+        {
+            "version": 1,
+            "intent_schema_version": 2,
+            "confidence": 0.8,
+            "action_type": "instant",
+            "domain": "evasion",
+            "intent_note": "walk",
+            "registry_action_id_hint": "sleep.nl_default_8h",
+        }
+    )
+    assert isinstance(v1_hint_ok, dict) and v1_hint_ok.get("registry_action_id_hint") == "sleep.nl_default_8h"
+    ctx_merge: dict = {"action_type": "instant", "domain": "evasion"}
+    merge_intent_into_action_ctx(ctx_merge, v1_hint_ok)
+    assert ctx_merge.get("llm_registry_action_id_hint") == "sleep.nl_default_8h"
+    assert inquiry_phrases_match("gimana kabarnya") is True
+    assert inquiry_phrases_match("pure narrative no cue") is False
+    from engine.core.action_intent import _is_social_inquiry
+
+    assert _is_social_inquiry("what time is it") is True
+    assert _is_social_inquiry("no question words here") is False
+    assert _is_social_inquiry("status?") is True
     reg = load_registry()
     assert int(reg.get("registry_version", 0) or 0) >= 1
     assert "sleep.nl_default_8h" in list_action_ids()
@@ -574,6 +700,7 @@ def _smoke() -> None:
     assert "travel.nl_generic" in list_action_ids()
     m_trv = match_registry_action("aku pergi ke bandung")
     assert isinstance(m_trv, dict) and m_trv.get("id") == "travel.nl_generic"
+    assert m_trv.get("handler") == "ensure_travel_registry_shape"
     ctx_trv_reg = parse_action_intent("aku pergi ke london")
     assert ctx_trv_reg.get("action_type") == "travel" and str(ctx_trv_reg.get("registry_action_id", "") or "") == "travel.nl_generic"
     ctx_trv_head = parse_action_intent("i head to london")
@@ -596,6 +723,19 @@ def _smoke() -> None:
     assert isinstance(m_scan_pre, dict) and m_scan_pre.get("id") == "social.nl_scan_crowd"
     ctx_soc_reg = parse_action_intent("say hello to rico")
     assert ctx_soc_reg.get("domain") == "social" and str(ctx_soc_reg.get("registry_action_id", "") or "") == "social.nl_dialogue"
+    ctx_dlg_orang = parse_action_intent("mau bicara dengan orang di depan")
+    assert str(ctx_dlg_orang.get("registry_action_id", "") or "") == "social.nl_dialogue"
+    ctx_scan_watch = parse_action_intent("people watching di teras")
+    assert str(ctx_scan_watch.get("registry_action_id", "") or "") == "social.nl_scan_crowd"
+    ctx_jam = parse_action_intent("clear jam pada pistol")
+    assert ctx_jam.get("attempt_clear_jam") is True and int(ctx_jam.get("instant_minutes", 0) or 0) == 1
+    assert str(ctx_jam.get("registry_action_id", "") or "") == "instant.nl_clear_jam"
+    ctx_pi = parse_action_intent("coba terbang tanpa alat")
+    assert ctx_pi.get("physically_impossible") is True and str(ctx_pi.get("registry_action_id", "") or "") == "instant.nl_physically_impossible"
+    stop_ids = [x.get("id") for x in iter_registry_matches_by_prefix("eksekusi putusan final lalu darah deras", "instant.nl_stop_")]
+    assert "instant.nl_stop_irreversible" in stop_ids and "instant.nl_stop_critical_blood" in stop_ids
+    ctx_stop = parse_action_intent("buka pintu ke lorong gelap")
+    assert ctx_stop.get("new_zone") is True and "new_zone" in (ctx_stop.get("stop_triggers") or [])
     ctx_scan_reg = parse_action_intent("scan the crowd for cops")
     assert ctx_scan_reg.get("intent_note") == "social_scan_crowd"
     assert str(ctx_scan_reg.get("registry_action_id", "") or "") == "social.nl_scan_crowd"
@@ -604,11 +744,10 @@ def _smoke() -> None:
     assert "social.inquiry.nl_keywords" in list_action_ids()
     m_inq = match_registry_action_prefixed("what time is it now", "social.inquiry.")
     assert isinstance(m_inq, dict) and m_inq.get("id") == "social.inquiry.nl_keywords"
+    assert m_inq.get("handler") == "ensure_social_inquiry_shape"
     ctx_inq = parse_action_intent("jam berapa sekarang")
     assert ctx_inq.get("intent_note") == "social_inquiry"
     assert str(ctx_inq.get("registry_action_id", "") or "") == "social.inquiry.nl_keywords"
-    from engine.core.action_intent import apply_parser_registry_anchor_after_llm, merge_intent_into_action_ctx
-
     ctx_anchor = parse_action_intent("berapa harga ini")
     rid0 = str(ctx_anchor.get("registry_action_id", "") or "")
     assert rid0 == "social.inquiry.nl_keywords"
@@ -4021,7 +4160,17 @@ def _smoke() -> None:
     assert (st_nc2.get("npcs", {}).get("Thug_B") or {}).get("combat_posture") == "surrender"
 
     # turn_prompt: package builds with extended ENGINE lines (import smoke).
-    from ai.turn_prompt import build_turn_package
+    from ai.turn_prompt import _fmt_action_ctx, build_turn_package
+
+    _acx_mis = _fmt_action_ctx(
+        {
+            "action_type": "combat",
+            "domain": "combat",
+            "registry_hint_alignment": "mismatch",
+            "registry_hint_mismatch": True,
+        }
+    )
+    assert "registry_hint_alignment=mismatch" in _acx_mis and "registry_hint_mismatch=True" in _acx_mis
 
     _tp = build_turn_package(st_nc2, "test", {"outcome": "Success", "roll": 10, "mods": [], "net_threshold": 50}, {})
     assert "Skills (engine):" in _tp or "Skill (engine):" in _tp

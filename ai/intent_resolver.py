@@ -50,6 +50,7 @@ TOP_LEVEL_V2_KEYS: Set[str] = frozenset(
         "context_assumptions",
         "plan",
         "safety",
+        "registry_action_id_hint",
     }
 )
 PLAN_KEYS: Set[str] = frozenset({"plan_id", "steps"})
@@ -100,6 +101,7 @@ TOP_LEVEL_V1_KEYS: Set[str] = frozenset(
         "smartphone_op",
         "player_goal",
         "context_assumptions",
+        "registry_action_id_hint",
     }
 )
 ON_LINK_KEYS: Set[str] = frozenset({"next", "when"})
@@ -114,6 +116,9 @@ You do NOT narrate. You do NOT describe feelings. You ONLY return a single JSON 
 The human types a natural language command as PLAYER_INPUT plus a short ENGINE_SNAPSHOT.
 Your job is to infer what the player character is TRYING TO DO in this world.
 Support slang, abbreviations, mixed languages, and abstract phrasing; map them to structured fields.
+
+The snapshot may include a block [REGISTRY_ACTION_IDS] with comma-separated stable parser ids from the game's data-driven action registry.
+Use it only as a cross-check for which engine paths already exist; still map PLAYER_INPUT to the JSON schema fields as usual. Do not invent ids that are not listed there.
 
 Return ONE JSON object:
 
@@ -146,6 +151,8 @@ for that path instead of defaulting to custom. Examples:
 - sleep / tidur -> action_type "sleep", domain "other"
 - hack / breach -> action_type "investigate" or "instant" with domain "hacking" if recon; use "custom" only if nothing fits
 Use action_type "custom" ONLY when the action does not fit the standard set above.
+
+Optional top-level (v1 and v2): registry_action_id_hint: string — if present, MUST exactly equal one id from the REGISTRY_ACTION_IDS line in the snapshot; omit when unsure. Invalid or unknown ids are dropped by the engine.
 
 Optional step keys:
 - combat_style: one of ["melee","ranged","none"] (only meaningful when domain="combat"; otherwise "none")
@@ -351,6 +358,20 @@ def _sanitize_step(step: Any) -> Optional[Dict[str, Any]]:
     return out
 
 
+def _sanitize_registry_action_id_hint_field(blob: Dict[str, Any]) -> None:
+    """Drop or clamp ``registry_action_id_hint`` to known registry ids (in-place)."""
+    try:
+        from engine.core.action_registry import sanitize_registry_action_id_hint
+
+        h = sanitize_registry_action_id_hint(blob.get("registry_action_id_hint"))
+        if h:
+            blob["registry_action_id_hint"] = h
+        else:
+            blob.pop("registry_action_id_hint", None)
+    except Exception:
+        blob.pop("registry_action_id_hint", None)
+
+
 def normalize_resolved_intent(obj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Validate + whitelist a parsed LLM intent dict. Returns None if unusable."""
     if not isinstance(obj, dict):
@@ -403,6 +424,7 @@ def normalize_resolved_intent(obj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             conf = 0.0
         conf = max(0.0, min(1.0, conf))
         base["confidence"] = conf
+        _sanitize_registry_action_id_hint_field(base)
         return base
 
     # v1 flat (legacy LLM or sleep fastpath)
@@ -457,6 +479,7 @@ def normalize_resolved_intent(obj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     except (TypeError, ValueError):
         conf = 0.0
     flat["confidence"] = max(0.0, min(1.0, conf))
+    _sanitize_registry_action_id_hint_field(flat)
     return flat
 
 
@@ -632,7 +655,16 @@ def resolve_intent(state: Dict[str, Any], player_input: str) -> Optional[Dict[st
     ok_budget, _br = check_llm_intent_budget(state)
     if not ok_budget:
         return None
-    user = f"[ENGINE_SNAPSHOT]\n{summary}\n[PLAYER_INPUT]\n{player_input}\n"
+    reg_block = ""
+    try:
+        from engine.core.action_registry import allowed_registry_action_ids
+
+        rids = allowed_registry_action_ids()
+        if rids:
+            reg_block = "\n[REGISTRY_ACTION_IDS]\n" + ",".join(rids) + "\n"
+    except Exception:
+        reg_block = ""
+    user = f"[ENGINE_SNAPSHOT]\n{summary}{reg_block}\n[PLAYER_INPUT]\n{player_input}\n"
     try:
         raw = _invoke_llm_for_intent({"user": user})
     except Exception:

@@ -31,6 +31,40 @@
       }
     },
     {
+      "id": "rest.nl_istirahat_short",
+      "priority": 24,
+      "match": {
+        "keywords_any": [
+          "istirahat sebentar",
+          "istirahat bentar",
+          "istirahat dulu",
+          "mau istirahat sebentar",
+          "mau istirahat dulu",
+          "cuma istirahat",
+          "istirahat aja",
+          "istirahat saja",
+          "sebentar istirahat",
+          "bentar istirahat",
+          "duduk istirahat"
+        ]
+      },
+      "ctx_patch": {
+        "action_type": "rest",
+        "rested_minutes": 60
+      }
+    },
+    {
+      "id": "rest.nl_prefix_60m",
+      "priority": 25,
+      "match": {
+        "keywords_any": []
+      },
+      "ctx_patch": {
+        "action_type": "rest",
+        "rested_minutes": 60
+      }
+    },
+    {
       "id": "combat.nl_ranged_attempt",
       "priority": 30,
       "match": {
@@ -76,6 +110,7 @@
     {
       "id": "travel.nl_generic",
       "priority": 40,
+      "handler": "ensure_travel_registry_shape",
       "match": {
         "keywords_any": [
           "travel",
@@ -93,9 +128,7 @@
           "commute to"
         ]
       },
-      "ctx_patch": {
-        "action_type": "travel"
-      }
+      "ctx_patch": {}
     },
     {
       "id": "hacking.nl_keywords",
@@ -161,6 +194,7 @@
     {
       "id": "social.inquiry.nl_keywords",
       "priority": 43,
+      "handler": "ensure_social_inquiry_shape",
       "match": {
         "keywords_any": [
           "?",
@@ -184,11 +218,24 @@
           "what time is it"
         ]
       },
+      "ctx_patch": {}
+    },
+    {
+      "id": "social.nl_intimacy_private",
+      "priority": 39,
+      "handler": "ensure_intimacy_private_registry_shape",
+      "match": {
+        "keywords_any": []
+      },
       "ctx_patch": {
         "domain": "social",
         "social_context": "standard",
-        "intent_note": "social_inquiry",
-        "social_mode": "non_conflict"
+        "intent_note": "intimacy_private",
+        "social_mode": "non_conflict",
+        "visibility": "private",
+        "stakes": "medium",
+        "has_stakes": true,
+        "uncertain": true
       }
     },
     {
@@ -209,7 +256,11 @@
           "talk to",
           "speak to",
           "chat ",
-          "say hello"
+          "say hello",
+          "dengan orang",
+          "ke orang",
+          "sama orang",
+          "orang di sekitar"
         ]
       },
       "ctx_patch": {
@@ -217,6 +268,31 @@
         "social_context": "standard",
         "intent_note": "social_dialogue",
         "social_mode": "non_conflict"
+      }
+    },
+    {
+      "id": "social.nl_negotiation",
+      "priority": 48,
+      "handler": "ensure_social_negotiation_shape",
+      "match": {
+        "keywords_any": []
+      },
+      "ctx_patch": {
+        "domain": "social",
+        "social_mode": "conflict"
+      }
+    },
+    {
+      "id": "social.nl_conflict",
+      "priority": 48,
+      "match": {
+        "keywords_any": []
+      },
+      "ctx_patch": {
+        "domain": "social",
+        "social_context": "standard",
+        "intent_note": "social_conflict",
+        "social_mode": "conflict"
       }
     },
     {
@@ -241,7 +317,11 @@
           "look around for",
           "who's around",
           "siapa saja di",
-          "scan the crowd"
+          "scan the crowd",
+          "mengintai",
+          "mengamati",
+          "mata-matai",
+          "people watching"
         ]
       },
       "ctx_patch": {
@@ -249,6 +329,21 @@
         "social_context": "standard",
         "intent_note": "social_scan_crowd",
         "social_mode": "non_conflict"
+      }
+    },
+    {
+      "id": "instant.nl_clear_jam",
+      "priority": 49,
+      "match": {
+        "keywords_any": [
+          "clear jam",
+          "bersihin macet"
+        ]
+      },
+      "ctx_patch": {
+        "action_type": "instant",
+        "instant_minutes": 1,
+        "attempt_clear_jam": true
       }
     },
     {
@@ -270,6 +365,65 @@
         "has_stakes": false,
         "risk_level": "low"
       }
+    },
+    {
+      "id": "instant.nl_physically_impossible",
+      "priority": 51,
+      "match": {
+        "keywords_any": [
+          "terbang tanpa alat",
+          "menembus dinding",
+          "berenang di udara"
+        ]
+      },
+      "ctx_patch": {
+        "action_type": "instant",
+        "physically_impossible": true,
+        "impossible": true,
+        "uncertain": false,
+        "has_stakes": true,
+        "risk_level": "high"
+      }
+    },
+    {
+      "id": "instant.nl_stop_irreversible",
+      "priority": 52,
+      "handler": "ensure_stop_irreversible",
+      "match": {
+        "keywords_any": [
+          "eksekusi",
+          "bunuh",
+          "korbankan",
+          "putusan final"
+        ]
+      },
+      "ctx_patch": {}
+    },
+    {
+      "id": "instant.nl_stop_new_zone",
+      "priority": 53,
+      "handler": "ensure_stop_new_zone",
+      "match": {
+        "keywords_any": [
+          "masuk ruangan",
+          "buka pintu",
+          "masuk area baru",
+          "new zone"
+        ]
+      },
+      "ctx_patch": {}
+    },
+    {
+      "id": "instant.nl_stop_critical_blood",
+      "priority": 54,
+      "handler": "ensure_stop_critical_blood",
+      "match": {
+        "keywords_any": [
+          "darah deras",
+          "kehilangan darah parah"
+        ]
+      },
+      "ctx_patch": {}
     }
   ]
 }
