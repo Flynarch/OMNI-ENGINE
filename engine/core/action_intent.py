@@ -419,6 +419,108 @@ def _registry_try_travel(ctx: dict[str, Any], t: str, player_input: str) -> bool
     return True
 
 
+_SKILL_DOMAIN_PREFIXES = ("hacking.", "medical.", "driving.", "stealth.")
+
+_HACKING_LEGACY_KEYWORDS = ("hack", "retas", "bypass", "terminal")
+_MEDICAL_LEGACY_KEYWORDS = ("rawat", "obati", "jahit luka")
+_DRIVING_LEGACY_KEYWORDS = ("nyetir", "driving", "mengemudi")
+_STEALTH_LEGACY_KEYWORDS = ("mengendap", "stealth", "diam-diam")
+
+
+def _registry_try_skill_domain(ctx: dict[str, Any], t: str, player_input: str) -> bool:
+    """Registry-first domain hints (hacking / medical / driving / stealth); legacy elif remains."""
+    try:
+        from engine.core.action_registry import match_registry_action
+    except Exception:
+        return False
+    m = match_registry_action(player_input)
+    if not m:
+        return False
+    aid = str(m.get("id", "") or "").strip()
+    if not any(aid.startswith(p) for p in _SKILL_DOMAIN_PREFIXES):
+        return False
+    patch = m.get("ctx_patch") if isinstance(m.get("ctx_patch"), dict) else {}
+    for k, v in patch.items():
+        ctx[k] = v
+    ctx["registry_action_id"] = aid
+    return True
+
+
+_SOCIAL_NL_PREFIX = "social."
+
+
+def _registry_try_social_nl(ctx: dict[str, Any], t: str, player_input: str) -> bool:
+    """Registry-first social dialogue / crowd scan (subset of legacy `_is_*` heuristics)."""
+    try:
+        from engine.core.action_registry import match_registry_action_prefixed
+    except Exception:
+        return False
+    m = match_registry_action_prefixed(player_input, _SOCIAL_NL_PREFIX)
+    if not m:
+        return False
+    aid = str(m.get("id", "") or "").strip()
+    if not aid.startswith(_SOCIAL_NL_PREFIX):
+        return False
+    patch = m.get("ctx_patch") if isinstance(m.get("ctx_patch"), dict) else {}
+    for k, v in patch.items():
+        ctx[k] = v
+    ctx["registry_action_id"] = aid
+    return True
+
+
+_SOCIAL_INQUIRY_PREFIX = "social.inquiry."
+
+
+def _registry_try_social_inquiry_nl(ctx: dict[str, Any], t: str, player_input: str) -> bool:
+    """Subset of `_is_social_inquiry` phrases via registry (`?` + question cues in JSON)."""
+    try:
+        from engine.core.action_registry import match_registry_action_prefixed
+    except Exception:
+        return False
+    m = match_registry_action_prefixed(player_input, _SOCIAL_INQUIRY_PREFIX)
+    if not m:
+        return False
+    aid = str(m.get("id", "") or "").strip()
+    if not aid.startswith(_SOCIAL_INQUIRY_PREFIX):
+        return False
+    patch = m.get("ctx_patch") if isinstance(m.get("ctx_patch"), dict) else {}
+    for k, v in patch.items():
+        ctx[k] = v
+    ctx["registry_action_id"] = aid
+    return True
+
+
+_INSTANT_NL_PREFIX = "instant."
+
+_TRIVIAL_LEGACY_KEYWORDS = ("lihat status", "cek tas", "jalan santai", "minum air")
+
+
+def _apply_trivial_realism_flags(ctx: dict[str, Any]) -> None:
+    ctx["trivial_action"] = True
+    ctx["trivial"] = True
+    ctx["uncertain"] = False
+    ctx["has_stakes"] = False
+    ctx["risk_level"] = "low"
+
+
+def _registry_try_instant_trivial(ctx: dict[str, Any], t: str, player_input: str) -> bool:
+    """Trivial realism via `instant.*` registry (add-only synonyms in JSON)."""
+    if ctx.get("registry_action_id"):
+        return False
+    try:
+        from engine.core.action_registry import match_registry_action_prefixed
+    except Exception:
+        return False
+    m = match_registry_action_prefixed(player_input, _INSTANT_NL_PREFIX)
+    if not m or not str(m.get("id", "") or "").strip().startswith(_INSTANT_NL_PREFIX):
+        return False
+    patch = m.get("ctx_patch") if isinstance(m.get("ctx_patch"), dict) else {}
+    for k, v in patch.items():
+        ctx[k] = v
+    ctx["registry_action_id"] = str(m.get("id", "") or "").strip()
+    return True
+
+
 def _apply_smartphone_ctx_defaults(ctx: dict[str, Any]) -> None:
     ctx["action_type"] = "instant"
     ctx["domain"] = "other"
@@ -588,6 +690,8 @@ def parse_action_intent(player_input: str) -> dict[str, Any]:
     elif t.startswith("rest "):
         ctx["action_type"] = "rest"
         ctx["rested_minutes"] = 60
+    elif _registry_try_social_inquiry_nl(ctx, t, player_input):
+        pass
     elif _is_social_inquiry(t):
         ctx["domain"] = "social"
         ctx["social_context"] = "standard"
@@ -620,6 +724,8 @@ def parse_action_intent(player_input: str) -> dict[str, Any]:
             if isinstance(tl, list) and name not in tl:
                 tl.insert(0, name)
             break
+    elif _registry_try_social_nl(ctx, t, player_input):
+        pass
     elif _is_social_dialogue(t):
         ctx["domain"] = "social"
         ctx["social_context"] = "standard"
@@ -634,13 +740,15 @@ def parse_action_intent(player_input: str) -> dict[str, Any]:
         ctx["domain"] = "social"
         ctx["social_context"] = "formal" if any(k in t for k in ["formal", "kantor", "instansi", "gala", "hotel"]) else "standard"
         ctx["social_mode"] = "conflict"
-    elif any(k in t for k in ["hack", "retas", "bypass", "terminal"]):
+    elif _registry_try_skill_domain(ctx, t, player_input):
+        pass
+    elif any(k in t for k in _HACKING_LEGACY_KEYWORDS):
         ctx["domain"] = "hacking"
-    elif any(k in t for k in ["rawat", "obati", "jahit luka"]):
+    elif any(k in t for k in _MEDICAL_LEGACY_KEYWORDS):
         ctx["domain"] = "medical"
-    elif any(k in t for k in ["nyetir", "driving", "mengemudi"]):
+    elif any(k in t for k in _DRIVING_LEGACY_KEYWORDS):
         ctx["domain"] = "driving"
-    elif any(k in t for k in ["mengendap", "stealth", "diam-diam"]):
+    elif any(k in t for k in _STEALTH_LEGACY_KEYWORDS):
         ctx["domain"] = "stealth"
     elif any(k in t for k in _SOCIAL_CONFLICT_WORDS) and any(w in t for w in _PEOPLE_WORDS):
         # Konflik sosial eksplisit (ancam/paksa/tipu) ke orang: ini tetap domain social.
@@ -664,12 +772,10 @@ def parse_action_intent(player_input: str) -> dict[str, Any]:
         ctx["instant_minutes"] = 1
 
     # Realism gate
-    if any(k in t for k in ["lihat status", "cek tas", "jalan santai", "minum air"]):
-        ctx["trivial_action"] = True
-        ctx["trivial"] = True
-        ctx["uncertain"] = False
-        ctx["has_stakes"] = False
-        ctx["risk_level"] = "low"
+    if _registry_try_instant_trivial(ctx, t, player_input):
+        pass
+    elif any(k in t for k in _TRIVIAL_LEGACY_KEYWORDS):
+        _apply_trivial_realism_flags(ctx)
     if any(k in t for k in ["terbang tanpa alat", "menembus dinding", "berenang di udara"]):
         ctx["physically_impossible"] = True
         ctx["impossible"] = True
@@ -793,6 +899,18 @@ def flatten_intent_v2(intent: dict[str, Any]) -> dict[str, Any]:
     if "step_now_id" not in out and isinstance(step0.get("step_id"), str):
         out["step_now_id"] = step0.get("step_id")
     return out
+
+
+def apply_parser_registry_anchor_after_llm(
+    action_ctx: dict[str, Any], meta: dict[str, Any], parser_registry_id: str
+) -> None:
+    """Keep audit trail: parser registry id wins in meta after FFCI merge; restore ctx field."""
+    rid = str(parser_registry_id or "").strip()
+    if not rid:
+        return
+    action_ctx["registry_action_id"] = rid
+    meta["resolved_action_id"] = rid
+    meta["intent_resolution"] = "registry+llm"
 
 
 def merge_intent_into_action_ctx(action_ctx: dict[str, Any], intent: dict[str, Any]) -> dict[str, Any]:

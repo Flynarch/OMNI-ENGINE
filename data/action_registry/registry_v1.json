@@ -96,6 +96,180 @@
       "ctx_patch": {
         "action_type": "travel"
       }
+    },
+    {
+      "id": "hacking.nl_keywords",
+      "priority": 42,
+      "match": {
+        "keywords_any": [
+          "hack",
+          "retas",
+          "bypass",
+          "terminal",
+          "piratear"
+        ]
+      },
+      "ctx_patch": {
+        "domain": "hacking"
+      }
+    },
+    {
+      "id": "medical.nl_keywords",
+      "priority": 43,
+      "match": {
+        "keywords_any": [
+          "rawat",
+          "obati",
+          "jahit luka",
+          "first aid"
+        ]
+      },
+      "ctx_patch": {
+        "domain": "medical"
+      }
+    },
+    {
+      "id": "driving.nl_keywords",
+      "priority": 44,
+      "match": {
+        "keywords_any": [
+          "nyetir",
+          "driving",
+          "mengemudi",
+          "take the wheel"
+        ]
+      },
+      "ctx_patch": {
+        "domain": "driving"
+      }
+    },
+    {
+      "id": "stealth.nl_keywords",
+      "priority": 45,
+      "match": {
+        "keywords_any": [
+          "mengendap",
+          "stealth",
+          "diam-diam",
+          "stay hidden"
+        ]
+      },
+      "ctx_patch": {
+        "domain": "stealth"
+      }
+    },
+    {
+      "id": "social.inquiry.nl_keywords",
+      "priority": 43,
+      "match": {
+        "keywords_any": [
+          "?",
+          "berapa ",
+          "berapa ini",
+          "tahun ",
+          "jam berapa",
+          "apa itu",
+          "apa arti",
+          "dimana ",
+          "di mana",
+          "kemana ",
+          "kemana",
+          "siapa ",
+          "kenapa ",
+          "mengapa ",
+          "bagaimana ",
+          "gimana ",
+          "what year",
+          "what time",
+          "what time is it"
+        ]
+      },
+      "ctx_patch": {
+        "domain": "social",
+        "social_context": "standard",
+        "intent_note": "social_inquiry",
+        "social_mode": "non_conflict"
+      }
+    },
+    {
+      "id": "social.nl_dialogue",
+      "priority": 46,
+      "match": {
+        "keywords_any": [
+          "bicara",
+          "berbicara",
+          "ngobrol",
+          "obrol",
+          "sapa",
+          "salam",
+          "halo",
+          "hai ",
+          "hey ",
+          "greet",
+          "talk to",
+          "speak to",
+          "chat ",
+          "say hello"
+        ]
+      },
+      "ctx_patch": {
+        "domain": "social",
+        "social_context": "standard",
+        "intent_note": "social_dialogue",
+        "social_mode": "non_conflict"
+      }
+    },
+    {
+      "id": "social.nl_scan_crowd",
+      "priority": 47,
+      "match": {
+        "keywords_any": [
+          "mencari orang",
+          "cari orang",
+          "orang sekitar",
+          "lihat sekitar",
+          "lihat orang",
+          "perhatikan sekitar",
+          "perhatiin sekitar",
+          "siapa di sekitar",
+          "ada siapa",
+          "cek sekitar",
+          "intip sekitar",
+          "pantau sekitar",
+          "keliling cari",
+          "scope crowd",
+          "look around for",
+          "who's around",
+          "siapa saja di",
+          "scan the crowd"
+        ]
+      },
+      "ctx_patch": {
+        "domain": "social",
+        "social_context": "standard",
+        "intent_note": "social_scan_crowd",
+        "social_mode": "non_conflict"
+      }
+    },
+    {
+      "id": "instant.nl_trivial",
+      "priority": 50,
+      "match": {
+        "keywords_any": [
+          "lihat status",
+          "cek tas",
+          "jalan santai",
+          "minum air",
+          "check inventory"
+        ]
+      },
+      "ctx_patch": {
+        "trivial_action": true,
+        "trivial": true,
+        "uncertain": false,
+        "has_stakes": false,
+        "risk_level": "low"
+      }
     }
   ]
 }

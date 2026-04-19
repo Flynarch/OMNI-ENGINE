@@ -53,10 +53,26 @@ Versi berikutnya bisa menambah: `preconditions`, `requires_scene`, `mutually_exc
 - `_registry_try_travel` sebelum cabang `_TRAVEL_LEGACY_KEYWORDS`; heuristik menit / destinasi / kendaraan dipusatkan di `_apply_travel_heuristics` (dipakai registry + legacy).
 - Entri `travel.nl_generic` (prioritas 40): kata kunci perjalanan yang sudah ada + sinonim aman (`head to`, `heading to`, `commute to`); ekstraksi destinasi Inggris ditambah di Python untuk frasa tersebut.
 
-### Fase 1d — Lanjutan
+### Fase 1d — Domain skill (registry-first) ✅ (parsial)
 
-- Domain sosial / instant lain ke registry-first atau `handler` bernama bila cocok.
-- Setelah merge intent LLM, policy apakah `resolved_action_id` ditimpa atau dipertahankan.
+- `_registry_try_skill_domain` sebelum cabang legacy `hacking` / `medical` / `driving` / `stealth` (hanya set `domain` seperti sebelumnya).
+- Entri: `hacking.nl_keywords`, `medical.nl_keywords`, `driving.nl_keywords`, `stealth.nl_keywords` (prioritas 42–45, setelah travel). Sinonim tambahan hanya di JSON (mis. `piratear`, `first aid`, `take the wheel`, `stay hidden`) tetap memakai jalur registry; kata kunci lama tetap lewat legacy jika tidak ada di data.
+
+### Fase 1e — Sosial & trivial (registry-first, parsial) ✅
+
+- `match_registry_action_prefixed(text, id_prefix)` memilih aksi hanya dalam prefiks (`social.*`, `instant.*`) agar tidak berebut prioritas global dengan tidur/combat/travel.
+- `_registry_try_social_nl` sebelum `_is_social_dialogue` / `_is_social_scan`: entri `social.nl_dialogue`, `social.nl_scan_crowd` (prioritas 46–47).
+- `_registry_try_instant_trivial` di gate realism: `instant.nl_trivial` (50); tidak menimpa `registry_action_id` yang sudah diisi cabang `elif` lebih kuat; sinonim baru contoh `check inventory`.
+
+### Fase 1f — Inquiry sosial + anchor LLM ✅ (parsial)
+
+- `_registry_try_social_inquiry_nl` memakai `match_registry_action_prefixed(..., "social.inquiry.")` **sebelum** `_is_social_inquiry` (subset frasa + `?` + sinonim data-only seperti `what time is it`).
+- **Policy merge FFCI**: setelah `merge_intent_into_action_ctx`, `apply_parser_registry_anchor_after_llm` mengembalikan `action_ctx["registry_action_id"]` dan men-set `meta["intent_resolution"] = "registry+llm"` sambil mempertahankan `meta["resolved_action_id"]` ke id parser (jejak audit; field mekanik lain tetap boleh di-overlay LLM).
+- Jalur abuse re-parse: `resolved_action_id` / `intent_resolution` diselaraskan ulang dari hasil parse kedua (atau dihapus jika tidak ada registry).
+
+### Fase 1g — Lanjutan
+
+- Handler bernama di registry untuk cabang kompleks; penyatuan sumber keyword inquiry vs `_is_social_inquiry`.
 
 ### Fase 2 — Pindahkan cabang demi cabang
 

@@ -2539,14 +2539,20 @@ def main() -> None:
             continue
 
         # 1) Intent resolution: LLM-first when FFCI enabled; meta/special stay fast-path above.
-        from engine.core.action_intent import apply_step_to_action_ctx, merge_intent_into_action_ctx, select_best_step
+        from engine.core.action_intent import (
+            apply_parser_registry_anchor_after_llm,
+            apply_step_to_action_ctx,
+            merge_intent_into_action_ctx,
+            select_best_step,
+        )
         from engine.core.intent_plan_runtime import apply_pending_runtime_step, sync_plan_runtime_start
         from engine.core.security_intent import security_flags_for_intent_input
 
         meta = state.setdefault("meta", {})
         action_ctx = parse_action_intent(cmd)
-        if action_ctx.get("registry_action_id"):
-            meta["resolved_action_id"] = str(action_ctx["registry_action_id"])
+        parser_registry_id = str(action_ctx.get("registry_action_id") or "").strip()
+        if parser_registry_id:
+            meta["resolved_action_id"] = parser_registry_id
             meta["intent_resolution"] = "registry"
         apply_pending_runtime_step(state, action_ctx)
         intent = None
@@ -2563,6 +2569,8 @@ def main() -> None:
             meta["llm_domain_raw"] = str((intent or {}).get("domain", "") or "").lower()
         elif intent:
             merge_intent_into_action_ctx(action_ctx, intent)
+            if parser_registry_id:
+                apply_parser_registry_anchor_after_llm(action_ctx, meta, parser_registry_id)
             clamp_suggested_dc_ctx(action_ctx)
             if not ffci_shadow_only():
                 update_ffci_custom_streak(meta, action_ctx)
@@ -2571,6 +2579,13 @@ def main() -> None:
                 meta["ffci_custom_streak"] = 0
                 action_ctx = parse_action_intent(cmd)
                 apply_pending_runtime_step(state, action_ctx)
+                pr2 = str(action_ctx.get("registry_action_id") or "").strip()
+                if pr2:
+                    meta["resolved_action_id"] = pr2
+                    meta["intent_resolution"] = "registry"
+                else:
+                    meta.pop("resolved_action_id", None)
+                    meta.pop("intent_resolution", None)
                 meta["last_intent_source"] = "parser_fallback"
                 meta["last_intent_raw"] = None
                 meta["fallback_reason"] = ab_reason or "ffci_abuse_guard"

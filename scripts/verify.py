@@ -552,7 +552,12 @@ def _smoke() -> None:
     assert ctx_melee_nl.get("domain") == "combat" and ctx_melee_nl.get("combat_style") == "melee"
     assert str(ctx_melee_nl.get("registry_action_id", "") or "") == "combat.nl_melee"
     # Action registry (data-driven intent catalog — Phase 0: load + match only).
-    from engine.core.action_registry import list_action_ids, load_registry, match_registry_action
+    from engine.core.action_registry import (
+        list_action_ids,
+        load_registry,
+        match_registry_action,
+        match_registry_action_prefixed,
+    )
 
     reg = load_registry()
     assert int(reg.get("registry_version", 0) or 0) >= 1
@@ -574,6 +579,46 @@ def _smoke() -> None:
     ctx_trv_head = parse_action_intent("i head to london")
     assert ctx_trv_head.get("action_type") == "travel" and str(ctx_trv_head.get("travel_destination", "") or "").lower() == "london"
     assert str(ctx_trv_head.get("registry_action_id", "") or "") == "travel.nl_generic"
+    assert "hacking.nl_keywords" in list_action_ids()
+    ctx_hack_reg = parse_action_intent("piratear el servidor")
+    assert ctx_hack_reg.get("domain") == "hacking" and str(ctx_hack_reg.get("registry_action_id", "") or "") == "hacking.nl_keywords"
+    ctx_med_reg = parse_action_intent("need first aid now")
+    assert ctx_med_reg.get("domain") == "medical" and str(ctx_med_reg.get("registry_action_id", "") or "") == "medical.nl_keywords"
+    ctx_drv_reg = parse_action_intent("i take the wheel")
+    assert ctx_drv_reg.get("domain") == "driving" and str(ctx_drv_reg.get("registry_action_id", "") or "") == "driving.nl_keywords"
+    ctx_stl_reg = parse_action_intent("stay hidden from patrol")
+    assert ctx_stl_reg.get("domain") == "stealth" and str(ctx_stl_reg.get("registry_action_id", "") or "") == "stealth.nl_keywords"
+    m_hack_kw = match_registry_action("retas firewall")
+    assert isinstance(m_hack_kw, dict) and m_hack_kw.get("id") == "hacking.nl_keywords"
+    m_soc_pre = match_registry_action_prefixed("say hello to the crew", "social.")
+    assert isinstance(m_soc_pre, dict) and m_soc_pre.get("id") == "social.nl_dialogue"
+    m_scan_pre = match_registry_action_prefixed("scan the crowd here", "social.")
+    assert isinstance(m_scan_pre, dict) and m_scan_pre.get("id") == "social.nl_scan_crowd"
+    ctx_soc_reg = parse_action_intent("say hello to rico")
+    assert ctx_soc_reg.get("domain") == "social" and str(ctx_soc_reg.get("registry_action_id", "") or "") == "social.nl_dialogue"
+    ctx_scan_reg = parse_action_intent("scan the crowd for cops")
+    assert ctx_scan_reg.get("intent_note") == "social_scan_crowd"
+    assert str(ctx_scan_reg.get("registry_action_id", "") or "") == "social.nl_scan_crowd"
+    ctx_triv_reg = parse_action_intent("check inventory quickly")
+    assert ctx_triv_reg.get("trivial") is True and str(ctx_triv_reg.get("registry_action_id", "") or "") == "instant.nl_trivial"
+    assert "social.inquiry.nl_keywords" in list_action_ids()
+    m_inq = match_registry_action_prefixed("what time is it now", "social.inquiry.")
+    assert isinstance(m_inq, dict) and m_inq.get("id") == "social.inquiry.nl_keywords"
+    ctx_inq = parse_action_intent("jam berapa sekarang")
+    assert ctx_inq.get("intent_note") == "social_inquiry"
+    assert str(ctx_inq.get("registry_action_id", "") or "") == "social.inquiry.nl_keywords"
+    from engine.core.action_intent import apply_parser_registry_anchor_after_llm, merge_intent_into_action_ctx
+
+    ctx_anchor = parse_action_intent("berapa harga ini")
+    rid0 = str(ctx_anchor.get("registry_action_id", "") or "")
+    assert rid0 == "social.inquiry.nl_keywords"
+    merge_intent_into_action_ctx(ctx_anchor, {"domain": "combat", "action_type": "combat"})
+    assert str(ctx_anchor.get("domain", "") or "").lower() == "combat"
+    meta_anchor: dict = {}
+    apply_parser_registry_anchor_after_llm(ctx_anchor, meta_anchor, rid0)
+    assert str(ctx_anchor.get("registry_action_id", "") or "") == rid0
+    assert meta_anchor.get("intent_resolution") == "registry+llm"
+    assert meta_anchor.get("resolved_action_id") == rid0
     ctx_sleep_clamp_min = parse_action_intent("SLEEP 0")
     assert int(ctx_sleep_clamp_min.get("rested_minutes", 0) or 0) == 60
     ctx_sleep_clamp_max = parse_action_intent("aku mau tidur 20 jam")
