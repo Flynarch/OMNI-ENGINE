@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 import hashlib
 from typing import Any
 
 from engine.core.factions import sync_faction_statuses_from_trace
-from engine.npc.npcs import ensure_ambient_npcs
 
 
 def _clamp_int(v: int, lo: int, hi: int) -> int:
@@ -132,10 +132,8 @@ def decay_npc_emotions(state: dict[str, Any]) -> None:
             if int(npc.get("fear", 10) or 0) <= 18 and int(npc.get("anger", 0) or 0) <= 10:
                 if str(npc.get("mood", "")) in ("betrayed", "scared", "angry"):
                     npc["mood"] = "calm"
-        except Exception:
-            pass
-
-
+        except Exception as _omni_sw_135:
+            log_swallowed_exception('engine/npc/npc_emotions.py:135', _omni_sw_135)
 def _secondary_emotions(npc: dict[str, Any]) -> dict[str, int]:
     """Derived labels from Plutchik primaries for UI/narration (not stored/decayed separately)."""
     _ensure_primary_fields(npc)
@@ -198,6 +196,8 @@ def apply_npc_emotion_after_roll(state: dict[str, Any], action_ctx: dict[str, An
 
     v1: model "informant/betrayal" via police attention tier + NPC psych stats.
     """
+    from engine.npc.npcs import add_belief_snippet, ensure_ambient_npcs
+
     domain = str(action_ctx.get("domain", "") or "").lower()
     if domain not in ("social", "combat", "hacking"):
         return
@@ -418,8 +418,6 @@ def apply_npc_emotion_after_roll(state: dict[str, Any], action_ctx: dict[str, An
 
         # Belief update from direct interaction (witness-level confidence).
         try:
-            from engine.npc.npcs import add_belief_snippet
-
             topic = "world_rumor"
             if domain == "social":
                 topic = "player_help" if (not conflict and success) else "player_lie" if conflict and not success else "player_social"
@@ -432,7 +430,8 @@ def apply_npc_emotion_after_roll(state: dict[str, Any], action_ctx: dict[str, An
             bias = 0.0
             try:
                 bias = -0.2 if int(npc.get("trust", 50) or 0) <= 30 else 0.1 if int(npc.get("trust", 50) or 0) >= 80 else 0.0
-            except Exception:
+            except Exception as _omni_sw_435:
+                log_swallowed_exception('engine/npc/npc_emotions.py:435', _omni_sw_435)
                 bias = 0.0
 
             claim = f"Interaksi langsung: {domain} outcome={outcome}"
@@ -446,6 +445,5 @@ def apply_npc_emotion_after_roll(state: dict[str, Any], action_ctx: dict[str, An
                 confidence=0.9 if domain in ("social", "combat") else 0.85,
                 bias=bias,
             )
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_449:
+            log_swallowed_exception('engine/npc/npc_emotions.py:449', _omni_sw_449)

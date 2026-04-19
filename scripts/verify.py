@@ -8,6 +8,7 @@ import compileall
 import copy
 import hashlib
 import json
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -18,6 +19,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
+def _world_note_plain(n: Any) -> str:
+    from engine.core.feed_prune import world_note_plain
+
+    return world_note_plain(n)
+
+
 def _compile() -> bool:
     ok = compileall.compile_dir(ROOT / "engine", quiet=1)
     ok = compileall.compile_dir(ROOT / "ai", quiet=1) and ok
@@ -26,6 +33,7 @@ def _compile() -> bool:
     ok = bool(compileall.compile_file(ROOT / "scripts" / "verify.py", quiet=1)) and ok
     ok = bool(compileall.compile_file(ROOT / "scripts" / "migrate_save.py", quiet=1)) and ok
     ok = bool(compileall.compile_file(ROOT / "scripts" / "validate_all.py", quiet=1)) and ok
+    ok = bool(compileall.compile_file(ROOT / "scripts" / "trim_feed_archive.py", quiet=1)) and ok
     return ok
 
 
@@ -269,7 +277,7 @@ def _smoke() -> None:
         ensure_reputation_lanes,
         premium_intel_pay_cap,
     )
-    from engine.systems.black_market import ITEM_REPUTATION_TIER
+    from engine.systems.black_market_tiers import ITEM_REPUTATION_TIER
     from engine.social.informant_ops import pay_informant
     from engine.npc.npc_agenda import tick_npc_agendas_daily
     from engine.world.districts import default_district_for_city, district_neighbor_ids, ensure_city_districts
@@ -464,6 +472,7 @@ def _smoke() -> None:
     ctx_phone_nl = parse_action_intent("telepon budi")
     assert (ctx_phone_nl.get("smartphone_op") or {}).get("op") == "call"
     assert str((ctx_phone_nl.get("smartphone_op") or {}).get("target", "")).lower() == "budi"
+    assert str(ctx_phone_nl.get("registry_action_id", "") or "") == "other.nl_smartphone_w2"
 
     st_ph = initialize_state({"name": "PhoneTest", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
     ensure_smartphone(st_ph)
@@ -509,7 +518,7 @@ def _smoke() -> None:
     st_tr.setdefault("economy", {})["last_economic_cycle_day"] = 2
     update_economy(st_tr, {})
     assert int(st_tr["trace"]["trace_pct"]) > pct_before
-    assert any("PhoneTrack" in str(n) for n in (st_tr.get("world_notes") or []))
+    assert any("PhoneTrack" in _world_note_plain(n) for n in (st_tr.get("world_notes") or []))
 
     st_tr_off = initialize_state({"name": "PhoneTrackOff", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
     ensure_smartphone(st_tr_off)
@@ -528,9 +537,11 @@ def _smoke() -> None:
     ctx_sleep_6 = parse_action_intent("tidur 6 jam")
     assert ctx_sleep_6.get("action_type") == "sleep"
     assert int(ctx_sleep_6.get("rested_minutes", 0) or 0) == 6 * 60
+    assert str(ctx_sleep_6.get("registry_action_id", "") or "") == "sleep.nl_duration_hours"
     ctx_sleep_mau = parse_action_intent("aku mau tidur 6 jam")
     assert ctx_sleep_mau.get("action_type") == "sleep"
     assert int(ctx_sleep_mau.get("rested_minutes", 0) or 0) == 6 * 60
+    assert str(ctx_sleep_mau.get("registry_action_id", "") or "") == "sleep.nl_duration_hours"
     ctx_sleep_10 = parse_action_intent("aku mau tidur 10 jam")
     assert int(ctx_sleep_10.get("rested_minutes", 0) or 0) == 10 * 60
     ctx_sleep_ingin = parse_action_intent("saya ingin tidur")
@@ -538,7 +549,7 @@ def _smoke() -> None:
     assert int(ctx_sleep_ingin.get("rested_minutes", 0) or 0) == 8 * 60
     assert str(ctx_sleep_ingin.get("registry_action_id", "") or "") == "sleep.nl_default_8h"
     ctx_stay_nl = parse_action_intent("booking hotel semalam satu malam")
-    assert (ctx_stay_nl.get("accommodation_intent") or {}) and not ctx_stay_nl.get("registry_action_id")
+    assert (ctx_stay_nl.get("accommodation_intent") or {}) and str(ctx_stay_nl.get("registry_action_id", "") or "") == "economy.nl_accommodation_stay"
     ctx_sleep_want = parse_action_intent("i want to sleep")
     assert ctx_sleep_want.get("action_type") == "sleep"
     ctx_shoot_nl = parse_action_intent("mencoba menembak orang itu dengan pistolku")
@@ -604,6 +615,10 @@ def _smoke() -> None:
     assert str(ctx_int_block.get("registry_action_id", "") or "") != "social.nl_intimacy_private"
     assert "sleep.nl_default_8h" in allowed_registry_action_ids()
     assert is_known_registry_action_id("travel.nl_generic") is True
+    assert is_known_registry_action_id("instant.nl_hedge_uncertainty") is True
+    ctx_hedge_only = parse_action_intent("mungkin besok saja")
+    assert ctx_hedge_only.get("uncertain") is True and ctx_hedge_only.get("risk_level") == "high"
+    assert str(ctx_hedge_only.get("registry_action_id", "") or "") == "instant.nl_hedge_uncertainty"
     assert is_known_registry_action_id("totally.fake.id") is False
     assert sanitize_registry_action_id_hint("combat.nl_melee") == "combat.nl_melee"
     assert sanitize_registry_action_id_hint("not_in_registry") is None
@@ -612,7 +627,7 @@ def _smoke() -> None:
     assert registry_hint_alignment("", "travel.nl_generic") == "llm_only"
     assert registry_hint_alignment("combat.nl_melee", "combat.nl_melee") == "match"
     assert registry_hint_alignment("combat.nl_melee", "travel.nl_generic") == "mismatch"
-    from ai.intent_resolver import normalize_resolved_intent
+    from ai.intent_resolver import normalize_resolved_intent, parse_and_normalize_intent_json
     from engine.core.action_intent import (
         INTENT_MERGE_FIELD_KEYS,
         apply_parser_registry_anchor_after_llm,
@@ -675,6 +690,101 @@ def _smoke() -> None:
         }
     )
     assert isinstance(v1_hint_ok, dict) and v1_hint_ok.get("registry_action_id_hint") == "sleep.nl_default_8h"
+    assert v1_hint_ok.get("action_type") == "sleep" and v1_hint_ok.get("domain") == "other"
+    assert v1_hint_ok.get("stakes") == "none" and v1_hint_ok.get("risk_level") == "low"
+    assert int(v1_hint_ok.get("rested_minutes", 0) or 0) == 480
+    assert int(v1_hint_ok.get("sleep_duration_h", 0) or 0) == 8
+    assert v1_hint_ok.get("has_stakes") is False and v1_hint_ok.get("uncertain") is False
+    v3_stub = normalize_resolved_intent(
+        {
+            "version": 3,
+            "intent_schema_version": 3,
+            "confidence": 0.99,
+            "registry_action_id_hint": "sleep.nl_default_8h",
+            "player_goal": "sleep",
+            "context_assumptions": ["stub"],
+        }
+    )
+    assert isinstance(v3_stub, dict) and int(v3_stub.get("version", 0) or 0) == 1
+    assert v3_stub.get("action_type") == "sleep" and int(v3_stub.get("rested_minutes", 0) or 0) == 480
+    assert v3_stub.get("registry_action_id_hint") == "sleep.nl_default_8h"
+    assert normalize_resolved_intent({"version": 3, "intent_schema_version": 2, "registry_action_id_hint": "sleep.nl_default_8h"}) is None
+    assert normalize_resolved_intent({"version": 3, "intent_schema_version": 3, "registry_action_id_hint": "not_in_registry"}) is None
+    v3_params = normalize_resolved_intent(
+        {
+            "version": 3,
+            "intent_schema_version": 3,
+            "registry_action_id_hint": "sleep.nl_default_8h",
+            "params": {"suggested_dc": 72, "rested_minutes": 360, "unknown_key": 999},
+        }
+    )
+    assert isinstance(v3_params, dict) and int(v3_params.get("suggested_dc", 0) or 0) == 72
+    assert int(v3_params.get("rested_minutes", 0) or 0) == 360
+    assert "unknown_key" not in v3_params
+    mreg = normalize_resolved_intent(
+        {"registry_action_id": "sleep.nl_default_8h", "params": {"suggested_dc": 61, "rested_minutes": 300}}
+    )
+    assert isinstance(mreg, dict) and mreg.get("action_type") == "sleep"
+    assert int(mreg.get("suggested_dc", 0) or 0) == 61 and int(mreg.get("rested_minutes", 0) or 0) == 300
+    assert normalize_resolved_intent({"registry_action_id": "not_in_registry", "params": {}}) is None
+    assert normalize_resolved_intent({"registry_action_id": "sleep.nl_default_8h", "version": 1}) is None
+    mal = normalize_resolved_intent({"action_id": "rest.nl_prefix_60m", "params": {}})
+    assert isinstance(mal, dict) and mal.get("action_type") == "rest"
+    assert (
+        normalize_resolved_intent(
+            {"registry_action_id": "sleep.nl_default_8h", "registry_action_id_hint": "combat.nl_melee"}
+        )
+        is None
+    )
+    mphone = normalize_resolved_intent(
+        {
+            "registry_action_id": "other.nl_smartphone_w2",
+            "params": {
+                "smartphone_op": {"op": "power", "value": "on"},
+                "action_type": "instant",
+                "domain": "other",
+                "intent_note": "smartphone",
+            },
+        }
+    )
+    assert isinstance(mphone, dict) and mphone.get("smartphone_op") == {"op": "power", "value": "on"}
+    pj = parse_and_normalize_intent_json('  {"action_id": "rest.nl_prefix_60m"}  ')
+    assert isinstance(pj, dict) and pj.get("action_type") == "rest"
+    acc_n = normalize_resolved_intent(
+        {
+            "registry_action_id": "economy.nl_accommodation_stay",
+            "params": {
+                "accommodation_intent": {"nights": 2, "hotel": "Grand", "bad": {"nested": 1}},
+            },
+        }
+    )
+    assert isinstance(acc_n, dict)
+    ai0 = acc_n.get("accommodation_intent")
+    assert isinstance(ai0, dict) and ai0.get("nights") == 2 and ai0.get("hotel") == "Grand" and "bad" not in ai0
+    ctx_tr = {"action_type": "instant", "domain": "evasion"}
+    m_tr = normalize_resolved_intent(
+        {
+            "registry_action_id": "travel.nl_generic",
+            "params": {"travel_destination": "osaka", "action_type": "travel"},
+        }
+    )
+    merge_intent_into_action_ctx(ctx_tr, m_tr)
+    assert ctx_tr.get("action_type") == "travel" and "osaka" in str(ctx_tr.get("travel_destination", "")).lower()
+    assert ctx_tr.get("llm_registry_action_id_hint") == "travel.nl_generic"
+    v1_melee_wrong = normalize_resolved_intent(
+        {
+            "version": 1,
+            "intent_schema_version": 2,
+            "confidence": 0.8,
+            "action_type": "instant",
+            "domain": "social",
+            "intent_note": "walk",
+            "registry_action_id_hint": "combat.nl_melee",
+        }
+    )
+    assert isinstance(v1_melee_wrong, dict)
+    assert v1_melee_wrong.get("action_type") == "combat" and v1_melee_wrong.get("domain") == "combat"
+    assert v1_melee_wrong.get("combat_style") == "melee"
     ctx_merge: dict = {"action_type": "instant", "domain": "evasion"}
     merge_intent_into_action_ctx(ctx_merge, v1_hint_ok)
     assert ctx_merge.get("llm_registry_action_id_hint") == "sleep.nl_default_8h"
@@ -741,6 +851,8 @@ def _smoke() -> None:
     assert str(ctx_scan_reg.get("registry_action_id", "") or "") == "social.nl_scan_crowd"
     ctx_triv_reg = parse_action_intent("check inventory quickly")
     assert ctx_triv_reg.get("trivial") is True and str(ctx_triv_reg.get("registry_action_id", "") or "") == "instant.nl_trivial"
+    ctx_not_triv_phys = parse_action_intent("terbang tanpa alat saja")
+    assert ctx_not_triv_phys.get("physically_impossible") is True and ctx_not_triv_phys.get("trivial") is not True
     assert "social.inquiry.nl_keywords" in list_action_ids()
     m_inq = match_registry_action_prefixed("what time is it now", "social.inquiry.")
     assert isinstance(m_inq, dict) and m_inq.get("id") == "social.inquiry.nl_keywords"
@@ -1020,7 +1132,7 @@ def _smoke() -> None:
     assert _hs_gigs(st_g, f"WORK {gid0}") is True
     t1 = int(st_g.get("meta", {}).get("time_min", 0) or 0)
     assert t1 != t0  # time advanced (instant_minutes applied)
-    assert any(str(x).startswith("[Economy]") for x in (st_g.get("world_notes") or []))
+    assert any(_world_note_plain(x).startswith("[Economy]") for x in (st_g.get("world_notes") or []))
 
     # Gig risk: failing a hacking/stealth/security gig increases trace by +10.
     st_gr = initialize_state({"name": "GigRisk", "location": "london", "year": "2025", "occupation": "hacker"}, seed_pack="minimal")
@@ -1046,7 +1158,7 @@ def _smoke() -> None:
     assert _hs_gigs(st_gr, f"WORK {gid_r}") is True
     tr1 = int((st_gr.get("trace") or {}).get("trace_pct", 0) or 0)
     assert tr1 >= tr0 + 10
-    assert any("left a digital trail" in str(x) for x in (st_gr.get("world_notes") or []))
+    assert any("left a digital trail" in _world_note_plain(x) for x in (st_gr.get("world_notes") or []))
 
     # Targeted hacking system: success gives cash, failure raises trace, missing tools blocks.
     from engine.systems.targeted_hacking import deterministic_hack_roll_1_100
@@ -1079,14 +1191,14 @@ def _smoke() -> None:
     assert _hs_hack(st_hs, "HACK atm") is True
     cash1 = int((st_hs.get("economy") or {}).get("cash", 0) or 0)
     assert cash1 > cash0
-    assert any(str(x).startswith("[Cyber] Successfully breached atm.") for x in (st_hs.get("world_notes") or []))
+    assert any(_world_note_plain(x).startswith("[Cyber] Successfully breached atm.") for x in (st_hs.get("world_notes") or []))
 
     st_hs["meta"]["turn"] = hit_f
     tr0 = int((st_hs.get("trace") or {}).get("trace_pct", 0) or 0)
     assert _hs_hack(st_hs, "HACK atm") is True
     tr1 = int((st_hs.get("trace") or {}).get("trace_pct", 0) or 0)
     assert tr1 >= tr0 + 15
-    assert any(str(x).startswith("[Cyber] Intrusion detected at atm.") for x in (st_hs.get("world_notes") or []))
+    assert any(_world_note_plain(x).startswith("[Cyber] Intrusion detected at atm.") for x in (st_hs.get("world_notes") or []))
 
     # Hacking heat escalation: corporate faction heat increases on corp_server success.
     st_fh = initialize_state({"name": "HackHeat", "location": "london", "year": "2025"}, seed_pack="minimal")
@@ -1108,14 +1220,14 @@ def _smoke() -> None:
     assert _hs_hack(st_fh, "HACK corp_server") is True
     fh = (st_fh.get("world", {}) or {}).get("faction_heat", {}) or {}
     assert int(fh.get("corporate", 0) or 0) >= 20
-    assert any("Corporate heat increased" in str(x) for x in (st_fh.get("world_notes") or []))
+    assert any("Corporate heat increased" in _world_note_plain(x) for x in (st_fh.get("world_notes") or []))
 
     st_no = initialize_state({"name": "HackNoTool", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_no.setdefault("meta", {}).update({"day": 2, "time_min": 8 * 60})
     st_no.setdefault("inventory", {})["bag_contents"] = []
     st_no.setdefault("inventory", {})["pocket_contents"] = []
     assert _hs_hack(st_no, "HACK atm") is True
-    assert any("Missing equipment" in str(x) for x in (st_no.get("world_notes") or []))
+    assert any("Missing equipment" in _world_note_plain(x) for x in (st_no.get("world_notes") or []))
 
     # Underworld economy: black market stock is accessible at night; blocked at noon unless a Fixer/Smuggler is nearby.
     from engine.systems.black_market import buy_black_market_item, generate_black_market_inventory
@@ -1190,7 +1302,7 @@ def _smoke() -> None:
     assert cash1 == cash0 - int(price_s)
     asc = st_sting.get("active_scene") or {}
     assert str(asc.get("scene_type", "")) == "sting_operation"
-    assert any("sting operation has been triggered" in str(x) for x in (st_sting.get("world_notes") or []))
+    assert any("sting operation has been triggered" in _world_note_plain(x) for x in (st_sting.get("world_notes") or []))
     bag_s = (st_sting.get("inventory", {}) or {}).get("bag_contents", []) or []
     assert iid_s not in [str(x) for x in bag_s]
 
@@ -1239,7 +1351,7 @@ def _smoke() -> None:
     asc = st_sec.get("active_scene") or {}
     assert str(asc.get("scene_type", "")) == "police_stop"
     assert str(asc.get("phase", "")) == "approach"
-    assert "[Security]" in " ".join(st_sec.get("world_notes") or [])
+    assert "[Security]" in " ".join(_world_note_plain(x) for x in (st_sec.get("world_notes") or []))
 
     ctx_blk = parse_action_intent("aku pergi ke jakarta")
     apply_active_scene_intent_lock(st_sec, ctx_blk, "aku pergi ke jakarta")
@@ -1289,7 +1401,7 @@ def _smoke() -> None:
     assert int((st_ar.get("economy") or {}).get("bank", 0) or 0) == 8500
     assert str(st_ar.get("inventory", {}).get("active_weapon_id", "x") or "") == ""
     assert st_ar.get("active_scene") is None
-    assert any("[Arrest]" in str(x) for x in (st_ar.get("world_notes") or []))
+    assert any("[Arrest]" in _world_note_plain(x) for x in (st_ar.get("world_notes") or []))
 
     ctx = parse_action_intent("tembak target")
     apply_combat_gates(st, ctx)
@@ -1349,13 +1461,21 @@ def _smoke() -> None:
 
     scan = parse_action_intent("coba mencari orang sekitar, cewe terutama")
     assert scan["domain"] == "social" and scan.get("intent_note") == "social_scan_crowd"
+    assert str(scan.get("registry_action_id", "") or "") == "social.nl_scan_crowd"
+    # Hedge "coba" then apply_social_post_hedge_risk_rules: calm scan lowers risk to medium (not left high).
+    assert scan.get("risk_level") == "medium"
+    assert scan.get("uncertain") is True and scan.get("has_stakes") is True
 
     q = parse_action_intent("tahun berapa ini?")
     assert q.get("intent_note") == "social_inquiry"
     assert q.get("social_mode") == "non_conflict"
+    assert str(q.get("registry_action_id", "") or "") == "social.inquiry.nl_keywords"
+    assert q.get("risk_level") == "medium"
     talk = parse_action_intent("aku mau bicara dengan orang sekitar")
     assert talk.get("intent_note") == "social_dialogue"
     assert talk.get("social_mode") == "non_conflict"
+    assert str(talk.get("registry_action_id", "") or "") == "social.nl_dialogue"
+    assert talk.get("risk_level") == "medium"
     rp = compute_roll_package(st, talk)
     assert rp.get("roll") is None and "No Roll" in str(rp.get("outcome", ""))
 
@@ -1494,7 +1614,7 @@ def _smoke() -> None:
     assert after_trust < before_trust
     assert st_npc.get("npcs", {}).get(npc_name, {}).get("mood") == "betrayed"
     assert any(
-        "[NPC]" in str(n) and "mengkhianati rumor" in str(n)
+        "[NPC]" in _world_note_plain(n) and "mengkhianati rumor" in _world_note_plain(n)
         for n in (st_npc.get("world_notes", []) or [])
     )
 
@@ -2994,8 +3114,12 @@ def _smoke() -> None:
     assert evaluate_precondition(st_pv, {}, {"kind": "weapon_drawn", "op": "eq", "value": True}) is True
 
     # Golden corpus (parser): stable mechanical mapping for slang / short NL.
-    assert parse_action_intent("telepon budi").get("smartphone_op", {}).get("op") == "call"
-    assert parse_action_intent("dark web").get("smartphone_op", {}).get("op") == "dark_web"
+    _ctx_telp = parse_action_intent("telepon budi")
+    assert _ctx_telp.get("smartphone_op", {}).get("op") == "call"
+    assert str(_ctx_telp.get("registry_action_id", "") or "") == "other.nl_smartphone_w2"
+    _ctx_dw = parse_action_intent("dark web")
+    assert _ctx_dw.get("smartphone_op", {}).get("op") == "dark_web"
+    assert str(_ctx_dw.get("registry_action_id", "") or "") == "other.nl_smartphone_w2"
     assert parse_action_intent("aku mau tidur").get("action_type") == "sleep"
 
     # Deterministic replay: identical state + ctx -> same day/time/cash/trace fingerprint.
@@ -3060,6 +3184,34 @@ def _smoke() -> None:
     assert _ok_ffci is not None
     assert _ok_ffci["plan"]["steps"][0].get("noise_key") is None
     assert int(_ok_ffci["plan"]["steps"][0]["suggested_dc"]) == 100
+    _v2_hint_melee = normalize_resolved_intent(
+        {
+            "version": 2,
+            "intent_schema_version": INTENT_SCHEMA_VERSION,
+            "confidence": 0.85,
+            "player_goal": "strike",
+            "context_assumptions": [],
+            "plan": {
+                "plan_id": "p_melee_hint",
+                "steps": [
+                    {
+                        "step_id": "s_m",
+                        "label": "wrong labels",
+                        "action_type": "instant",
+                        "domain": "social",
+                        "intent_note": "abstract",
+                        "suggested_dc": 55,
+                    }
+                ],
+            },
+            "safety": {"refuse": False, "refuse_reason": ""},
+            "registry_action_id_hint": "combat.nl_melee",
+        }
+    )
+    assert _v2_hint_melee is not None
+    assert _v2_hint_melee["plan"]["steps"][0].get("action_type") == "combat"
+    assert _v2_hint_melee["plan"]["steps"][0].get("domain") == "combat"
+    assert _v2_hint_melee["plan"]["steps"][0].get("combat_style") == "melee"
     _v1_norm = normalize_resolved_intent(
         {
             "version": 1,
@@ -3182,7 +3334,7 @@ def _smoke() -> None:
     _warns = reconcile_cross_system(st_bad)
     assert _warns and "RECONCILER_WARN" in _warns[0]
     append_world_note(st_ij, "mutation gateway ok")
-    assert "mutation gateway ok" in str(st_ij.get("world_notes", [])[-1])
+    assert "mutation gateway ok" in _world_note_plain(st_ij.get("world_notes", [])[-1])
 
     from engine.core.intent_plan_runtime import advance_plan_runtime_after_roll, sync_plan_runtime_start
 
@@ -3355,7 +3507,7 @@ def _smoke() -> None:
     we_def = st_def.get("world_events", []) or []
     assert any(isinstance(x, dict) and x.get("kind") == "ABORTED_EVENT" and x.get("type") == "BETRAYAL_RISK" for x in we_def)
     notes_def = st_def.get("world_notes", []) or []
-    assert any(isinstance(n, str) and "[Ripple Defused]" in n for n in notes_def)
+    assert any("[Ripple Defused]" in _world_note_plain(n) for n in notes_def)
     at_b = (st_def.get("npcs", {}) or {}).get("Brutus", {}).get("active_triggers", {}) or {}
     assert at_b.get("BETRAYAL_RISK") is False
 
@@ -3393,7 +3545,7 @@ def _smoke() -> None:
     sus1 = int((st_go["npcs"]["G_B"].get("belief_summary") or {}).get("suspicion", 0) or 0)
     assert sus1 > sus0
     notes_g = st_go.get("world_notes", []) or []
-    assert any(isinstance(x, str) and x.startswith("[Gossip] Reputation spread from G_A to G_B") for x in notes_g)
+    assert any(_world_note_plain(x).startswith("[Gossip] Reputation spread from G_A to G_B") for x in notes_g)
     ctx_gb = get_narrative_anchor_context(st_go, "G_B")
     assert isinstance(ctx_gb, str) and "[RUMOR]" in ctx_gb
 
@@ -3423,7 +3575,7 @@ def _smoke() -> None:
     assert int((st_sn.get("trace", {}) or {}).get("trace_pct", 0) or 0) == 30
     assert any(isinstance(x, dict) and x.get("kind") == "REPORT_FILED" for x in (st_sn.get("world_events", []) or []))
     notes_sn = st_sn.get("world_notes", []) or []
-    assert any(isinstance(x, str) and x.startswith("[Snitch]") for x in notes_sn)
+    assert any(_world_note_plain(x).startswith("[Snitch]") for x in notes_sn)
     ctx_rep = get_narrative_anchor_context(st_sn, "Sn")
     assert isinstance(ctx_rep, str) and "[REPORTING_RISK]" in ctx_rep
 
@@ -3473,7 +3625,7 @@ def _smoke() -> None:
         isinstance(x, dict) and x.get("type") == "REPORTING_RISK" and x.get("source_npc") == "Sn3" for x in pe3
     )
     assert any(
-        isinstance(x, str) and "below 80" in x and "Sn3" in x for x in (st_rd.get("world_notes", []) or [])
+        "below 80" in _world_note_plain(x) and "Sn3" in _world_note_plain(x) for x in (st_rd.get("world_notes", []) or [])
     )
 
     # Trace tier friction: Lockdown scales travel minutes; HUD label uses security tier names.
@@ -3509,7 +3661,10 @@ def _smoke() -> None:
     assert adv1 > adv0
     # Lockdown doubles the pre-modifier travel_minutes bucket (100 → 200) before other shared modifiers.
     assert (adv1 - adv0) >= 95
-    assert any("[Security] Travel friction increased due to high Trace." in str(x) for x in (st_trv1.get("world_notes", []) or []))
+    assert any(
+        "[Security] Travel friction increased due to high Trace." in _world_note_plain(x)
+        for x in (st_trv1.get("world_notes", []) or [])
+    )
 
     from engine.systems.scenes import advance_scene
 
@@ -3639,7 +3794,10 @@ def _smoke() -> None:
         update_timers(st_guard, {"action_type": "instant", "instant_minutes": 0})
         assert int((st_guard.get("economy", {}) or {}).get("daily_burn", 0) or 0) == 5
         assert int((st_guard.get("trace", {}) or {}).get("trace_pct", 0) or 0) == 20
-        assert any("registered handler failed for event_type=debt_collection_ping" in str(n) for n in (st_guard.get("world_notes", []) or []))
+        assert any(
+            "registered handler failed for event_type=debt_collection_ping" in _world_note_plain(n)
+            for n in (st_guard.get("world_notes", []) or [])
+        )
     finally:
         if callable(saved_h):
             timers_mod.EVENT_HANDLERS["debt_collection_ping"] = saved_h
@@ -4547,7 +4705,7 @@ def _smoke() -> None:
     finally:
         _er.handle_triggered_event = _orig_handle
     notes_rf = st_rf.get("world_notes", []) or []
-    assert any("router-first handler failed" in str(x).lower() for x in notes_rf)
+    assert any("router-first handler failed" in _world_note_plain(x).lower() for x in notes_rf)
     world_rf = st_rf.get("world", {}) or {}
     locs_rf = world_rf.get("locations", {}) or {}
     tokyo_rf = locs_rf.get("tokyo", {}) if isinstance(locs_rf, dict) else {}
@@ -5174,6 +5332,86 @@ def _smoke() -> None:
     labels = [k for k, _v in (pkg_neg.get("mods") or [])]
     assert labels.count("Stat (charisma)") == 1
     assert "Negotiation skill" in labels
+
+    # world_notes / news_feed: age + cap pruning with merge into save/archive.json
+    from engine.core.feed_prune import effective_prune_limits, prune_world_notes_and_news_feed
+
+    _, max_ent, _ = effective_prune_limits()
+    st_fp = initialize_state({"name": "FeedPrune", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_fp.setdefault("meta", {})["day"] = 20
+    st_fp["world_notes"] = [
+        {"day": 5, "text": "[Test] ancient note"},
+        {"day": 19, "text": "[Test] fresh note"},
+    ]
+    st_fp.setdefault("world", {})["news_feed"] = [
+        {"day": 5, "text": "old headline", "source": "x"},
+        {"day": 18, "text": "new headline", "source": "y"},
+    ]
+    with tempfile.TemporaryDirectory() as _fp_dir:
+        _ap = Path(_fp_dir) / "archive.json"
+        prune_world_notes_and_news_feed(st_fp, archive_path=_ap)
+        assert _ap.exists()
+        arch = json.loads(_ap.read_text(encoding="utf-8"))
+        assert any(_world_note_plain(x) == "[Test] ancient note" for x in arch.get("world_notes", []))
+        assert any(isinstance(x, dict) and x.get("text") == "old headline" for x in arch.get("news_feed", []))
+        wn = st_fp.get("world_notes") or []
+        nf = (st_fp.get("world", {}) or {}).get("news_feed") or []
+        assert len(wn) <= max_ent and len(nf) <= max_ent
+        assert int(arch.get("last_pruned_meta_day", 0)) == 20
+        assert "[Test] fresh note" in [_world_note_plain(x) for x in wn]
+        assert any(isinstance(it, dict) and it.get("text") == "new headline" for it in nf)
+    st_fp2 = initialize_state({"name": "FeedCap", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_fp2.setdefault("meta", {})["day"] = 30
+    st_fp2["world_notes"] = [{"day": 25, "text": f"[Cap] n={i}"} for i in range(max_ent + 8)]
+    with tempfile.TemporaryDirectory() as _fp2_dir:
+        _ap2 = Path(_fp2_dir) / "archive.json"
+        prune_world_notes_and_news_feed(st_fp2, archive_path=_ap2)
+        assert len(st_fp2.get("world_notes") or []) == max_ent
+        arch2 = json.loads(_ap2.read_text(encoding="utf-8"))
+        assert len(arch2.get("world_notes", [])) >= 8
+        assert arch2.get("last_pruned_at_utc", "").startswith("20")
+
+    # trim_feed_archive.py CLI (publish / housekeeping)
+    with tempfile.TemporaryDirectory() as _trim_dir:
+        _tin = Path(_trim_dir) / "archive.json"
+        _tin.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "last_pruned_meta_day": 9,
+                    "last_pruned_at_utc": "2099-01-01T00:00:00+00:00",
+                    "world_notes": [{"day": 1, "text": f"n{i}"} for i in range(40)],
+                    "news_feed": [{"day": 1, "text": f"h{i}", "source": "x"} for i in range(30)],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        _tout = Path(_trim_dir) / "trimmed.json"
+        r_trim = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "trim_feed_archive.py"),
+                str(_tin),
+                "--notes-keep",
+                "12",
+                "--news-keep",
+                "7",
+                "-o",
+                str(_tout),
+                "--redact-metadata",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(ROOT),
+            check=False,
+        )
+        assert r_trim.returncode == 0, r_trim.stderr + r_trim.stdout
+        trimmed = json.loads(_tout.read_text(encoding="utf-8"))
+        assert len(trimmed.get("world_notes") or []) == 12
+        assert len(trimmed.get("news_feed") or []) == 7
+        assert "last_pruned_meta_day" not in trimmed
+        assert "archive_trimmed_at_utc" in trimmed
 
     assert resolve_roll_primary_stat("stealth", {"intent_note": "", "normalized_input": ""}) == "agility"
     thresholds = _load_base_thresholds()

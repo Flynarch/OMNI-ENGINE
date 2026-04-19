@@ -25,8 +25,10 @@ def main() -> int:
     st = json.loads(p.read_text(encoding="utf-8"))
     meta = st.get("meta", {}) or {}
     tel = meta.get("telemetry_turn_last") if isinstance(meta.get("telemetry_turn_last"), dict) else {}
+    from engine.core.feed_prune import world_note_plain
+
     notes = st.get("world_notes", []) or []
-    tail = [str(x) for x in notes[-12:]] if isinstance(notes, list) else []
+    tail = [world_note_plain(x) for x in notes[-12:]] if isinstance(notes, list) else []
     out = {
         "source_file": str(p),
         "telemetry_turn_last": tel,

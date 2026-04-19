@@ -1,6 +1,10 @@
 ### Secrets
 .env
 
+### Engine runtime logs (tracebacks from swallowed exceptions)
+logs/
+!logs/.gitkeep
+
 ### Local saves / runtime state
 save/current.json
 save/previous.json

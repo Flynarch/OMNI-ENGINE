@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
+
+from engine.core.factions import sync_faction_statuses_from_trace
+from engine.systems.quests import create_black_market_delivery_quest
+from engine.world.timers_bus import enqueue_ripple as _queue_ripple
+from engine.world.timers_bus import push_news as _push_news
 
 
 def handle_delivery_drop(state: dict[str, Any], ev: dict[str, Any], *, day: int, time_min: int) -> bool:
     payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
-    from engine.world.timers_bus import enqueue_ripple as _queue_ripple
-    from engine.world.timers_bus import push_news as _push_news
 
     loc = str(payload.get("location", "") or str((state.get("player", {}) or {}).get("location", "") or "")).strip().lower()
     drop_district = str(payload.get("drop_district", "") or "").strip().lower()
@@ -46,19 +50,17 @@ def handle_delivery_drop(state: dict[str, Any], ev: dict[str, Any], *, day: int,
     tr = state.setdefault("trace", {})
     try:
         tp = int(tr.get("trace_pct", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_49:
+        log_swallowed_exception('engine/world/timers_handlers_delivery.py:49', _omni_sw_49)
         tp = 0
     bump = 1 if delivery == "dead_drop" else 2
     if pp >= 4:
         bump += 1
     tr["trace_pct"] = max(0, min(100, tp + bump))
     try:
-        from engine.core.factions import sync_faction_statuses_from_trace
-
         sync_faction_statuses_from_trace(state)
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_59:
+        log_swallowed_exception('engine/world/timers_handlers_delivery.py:59', _omni_sw_59)
     text = "Paketmu sudah siap diambil."
     if delivery == "dead_drop":
         text = "Dead drop aktif: paket sudah ditaruh di titik yang kamu sepakati."
@@ -91,8 +93,6 @@ def handle_delivery_drop(state: dict[str, Any], ev: dict[str, Any], *, day: int,
 
 def handle_delivery_expire(state: dict[str, Any], ev: dict[str, Any], *, day: int, time_min: int) -> bool:
     payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
-    from engine.world.timers_bus import enqueue_ripple as _queue_ripple
-    from engine.world.timers_bus import push_news as _push_news
 
     loc = str(payload.get("location", "") or "").strip().lower()
     drop_district = str(payload.get("drop_district", "") or "").strip().lower()
@@ -155,21 +155,19 @@ def handle_delivery_expire(state: dict[str, Any], ev: dict[str, Any], *, day: in
 
 def handle_black_market_offer(state: dict[str, Any], ev: dict[str, Any], *, day: int, time_min: int) -> bool:
     payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
-    from engine.world.timers_bus import enqueue_ripple as _queue_ripple
-    from engine.world.timers_bus import push_news as _push_news
 
     loc = str(payload.get("location", "") or str(state.get("player", {}).get("location", "") or "")).strip().lower()
     try:
         bm_pw = int(payload.get("bm_power", 65) or 65)
-    except Exception:
+    except Exception as _omni_sw_164:
+        log_swallowed_exception('engine/world/timers_handlers_delivery.py:164', _omni_sw_164)
         bm_pw = 65
     try:
         bm_st = int(payload.get("bm_stability", 35) or 35)
-    except Exception:
+    except Exception as _omni_sw_168:
+        log_swallowed_exception('engine/world/timers_handlers_delivery.py:168', _omni_sw_168)
         bm_st = 35
     try:
-        from engine.systems.quests import create_black_market_delivery_quest
-
         q = create_black_market_delivery_quest(state, origin_location=loc, bm_power=bm_pw, bm_stability=bm_st)
         _push_news(state, text=f"Rumor: offer pasar gelap muncul di {loc} (quest {q.get('id','?')}).", source="faction_network")
         _queue_ripple(
@@ -189,7 +187,7 @@ def handle_black_market_offer(state: dict[str, Any], ev: dict[str, Any], *, day:
                 "meta": {"quest_id": q.get("id", ""), "location": loc},
             },
         )
-    except Exception:
-        pass
+    except Exception as _omni_sw_192:
+        log_swallowed_exception('engine/world/timers_handlers_delivery.py:192', _omni_sw_192)
     return True
 

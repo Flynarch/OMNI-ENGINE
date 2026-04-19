@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.core.factions import sync_faction_statuses_from_trace
 import hashlib
 from typing import Any
+
+from engine.social.news import push_news
+from engine.social.ripple_queue import enqueue_ripple
 
 
 def _event_exists(state: dict[str, Any], event_type: str, *, day: int) -> bool:
@@ -89,7 +94,8 @@ def _new_quest_id(state: dict[str, Any]) -> str:
     q = _ensure_quests(state)
     try:
         n = int(q.get("last_id", 0) or 0) + 1
-    except Exception:
+    except Exception as _omni_sw_92:
+        log_swallowed_exception('engine/systems/quests.py:92', _omni_sw_92)
         n = 1
     q["last_id"] = n
     return f"Q{n:04d}"
@@ -275,7 +281,8 @@ def create_debt_repayment_quest(state: dict[str, Any]) -> dict[str, Any]:
     econ = state.get("economy", {}) or {}
     try:
         debt = int(econ.get("debt", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_278:
+        log_swallowed_exception('engine/systems/quests.py:278', _omni_sw_278)
         debt = 0
     qid = _new_quest_id(state)
     target = min(200, max(50, int(debt * 0.25))) if debt > 0 else 100
@@ -336,8 +343,8 @@ def tick_quest_chains(state: dict[str, Any], action_ctx: dict[str, Any]) -> None
                     tp = int(tr.get("trace_pct", 0) or 0)
                     tp = max(0, min(100, tp + int((quest.get("failure") or {}).get("trace_delta", 0) or 0)))
                     _set_trace_pct(state, tp)
-                except Exception:
-                    pass
+                except Exception as _omni_sw_339:
+                    log_swallowed_exception('engine/systems/quests.py:339', _omni_sw_339)
                 q.setdefault("failed", []).append(quest)
                 world_notes.append(f"[Quest] {qid} FAILED (deadline passed).")
                 continue
@@ -353,14 +360,14 @@ def tick_quest_chains(state: dict[str, Any], action_ctx: dict[str, Any]) -> None
                 tp = int(tr.get("trace_pct", 0) or 0)
                 tp = max(0, min(100, tp + int((fail or {}).get("trace_delta", 0) or 0)))
                 _set_trace_pct(state, tp)
-            except Exception:
-                pass
+            except Exception as _omni_sw_356:
+                log_swallowed_exception('engine/systems/quests.py:356', _omni_sw_356)
             try:
                 econ = state.setdefault("economy", {})
                 if "daily_burn_delta" in (fail or {}):
                     econ["daily_burn"] = int(econ.get("daily_burn", 0) or 0) + int((fail or {}).get("daily_burn_delta", 0) or 0)
-            except Exception:
-                pass
+            except Exception as _omni_sw_362:
+                log_swallowed_exception('engine/systems/quests.py:362', _omni_sw_362)
             q.setdefault("failed", []).append(quest)
             world_notes.append(f"[Quest] {qid} FAILED (deadline passed).")
             continue
@@ -385,8 +392,8 @@ def tick_quest_chains(state: dict[str, Any], action_ctx: dict[str, Any]) -> None
                         tp = int(tr.get("trace_pct", 0) or 0)
                         tp = max(0, min(100, tp + int((rew or {}).get("trace_delta", 0) or 0)))
                         _set_trace_pct(state, tp)
-                    except Exception:
-                        pass
+                    except Exception as _omni_sw_388:
+                        log_swallowed_exception('engine/systems/quests.py:388', _omni_sw_388)
                     quest["status"] = "completed"
                     q.setdefault("completed", []).append(quest)
                     world_notes.append(f"[Quest] {qid} COMPLETED (trace reduced).")
@@ -429,15 +436,15 @@ def tick_quest_chains(state: dict[str, Any], action_ctx: dict[str, Any]) -> None
                     try:
                         econ = state.setdefault("economy", {})
                         econ["cash"] = int(econ.get("cash", 0) or 0) + int((rew or {}).get("cash", 0) or 0)
-                    except Exception:
-                        pass
+                    except Exception as _omni_sw_432:
+                        log_swallowed_exception('engine/systems/quests.py:432', _omni_sw_432)
                     try:
                         tr = state.setdefault("trace", {})
                         tp = int(tr.get("trace_pct", 0) or 0)
                         tp = max(0, min(100, tp + int((rew or {}).get("trace_delta", 0) or 0)))
                         _set_trace_pct(state, tp)
-                    except Exception:
-                        pass
+                    except Exception as _omni_sw_439:
+                        log_swallowed_exception('engine/systems/quests.py:439', _omni_sw_439)
                     quest["status"] = "completed"
                     q.setdefault("completed", []).append(quest)
                     world_notes.append(f"[Quest] {qid} COMPLETED (corp job).")
@@ -453,11 +460,13 @@ def tick_quest_chains(state: dict[str, Any], action_ctx: dict[str, Any]) -> None
             econ = state.get("economy", {}) or {}
             try:
                 cash = int(econ.get("cash", 0) or 0)
-            except Exception:
+            except Exception as _omni_sw_456:
+                log_swallowed_exception('engine/systems/quests.py:456', _omni_sw_456)
                 cash = 0
             try:
                 debt = int(econ.get("debt", 0) or 0)
-            except Exception:
+            except Exception as _omni_sw_460:
+                log_swallowed_exception('engine/systems/quests.py:460', _omni_sw_460)
                 debt = 0
             target = int((data or {}).get("target_payment", 100) or 100)
             paid = int((data or {}).get("paid", 0) or 0)
@@ -484,15 +493,15 @@ def tick_quest_chains(state: dict[str, Any], action_ctx: dict[str, Any]) -> None
                         try:
                             econ3 = state.setdefault("economy", {})
                             econ3["fico"] = int(econ3.get("fico", 600) or 600) + int((rew or {}).get("fico_delta", 0) or 0)
-                        except Exception:
-                            pass
+                        except Exception as _omni_sw_487:
+                            log_swallowed_exception('engine/systems/quests.py:487', _omni_sw_487)
                         try:
                             tr = state.setdefault("trace", {})
                             tp = int(tr.get("trace_pct", 0) or 0)
                             tp = max(0, min(100, tp + int((rew or {}).get("trace_delta", 0) or 0)))
                             _set_trace_pct(state, tp)
-                        except Exception:
-                            pass
+                        except Exception as _omni_sw_494:
+                            log_swallowed_exception('engine/systems/quests.py:494', _omni_sw_494)
                         quest["status"] = "completed"
                         q.setdefault("completed", []).append(quest)
                         world_notes.append(f"[Quest] {qid} COMPLETED (debt pressure eased).")
@@ -524,9 +533,8 @@ def tick_quest_chains(state: dict[str, Any], action_ctx: dict[str, Any]) -> None
                     if isinstance(quest.get("data"), dict):
                         quest["data"]["spotted"] = True
                         quest["data"]["spotted_day"] = day
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_527:
+            log_swallowed_exception('engine/systems/quests.py:527', _omni_sw_527)
         if step == 0:
             # Meet/contact confirmation: social action with contact keyword.
             if action_ctx.get("domain") == "social" and ("black market" in norm or "pasar gelap" in norm or contact.lower() in norm):
@@ -570,8 +578,8 @@ def tick_quest_chains(state: dict[str, Any], action_ctx: dict[str, Any]) -> None
                     if was_overdue:
                         cash_add = max(0, int(rew.get("cash", 0) or 0) // 2)
                     econ["cash"] = int(econ.get("cash", 0) or 0) + cash_add
-                except Exception:
-                    pass
+                except Exception as _omni_sw_573:
+                    log_swallowed_exception('engine/systems/quests.py:573', _omni_sw_573)
                 try:
                     tr = state.setdefault("trace", {})
                     tp = int(tr.get("trace_pct", 0) or 0)
@@ -580,15 +588,15 @@ def tick_quest_chains(state: dict[str, Any], action_ctx: dict[str, Any]) -> None
                         trace_delta = max(trace_delta, +2)
                     tp = max(0, min(100, tp + trace_delta))
                     _set_trace_pct(state, tp)
-                except Exception:
-                    pass
+                except Exception as _omni_sw_583:
+                    log_swallowed_exception('engine/systems/quests.py:583', _omni_sw_583)
                 # Local market reward: slightly reduce weapons scarcity at drop location.
                 try:
                     lm = _ensure_local_market_from_global(state, drop_loc)
                     if isinstance(lm.get("weapons"), dict):
                         lm["weapons"]["scarcity"] = _clamp_int(int(lm["weapons"].get("scarcity", 0) or 0) - 2, 0, 100)
-                except Exception:
-                    pass
+                except Exception as _omni_sw_590:
+                    log_swallowed_exception('engine/systems/quests.py:590', _omni_sw_590)
                 quest["status"] = "completed"
                 q.setdefault("completed", []).append(quest)
                 world_notes.append(f"[Quest] {qid} COMPLETED.")
@@ -616,16 +624,12 @@ def _det_roll_1_100(*parts: Any) -> int:
 
 
 def _push_news(state: dict[str, Any], *, text: str, source: str, day: int) -> None:
-    from engine.social.news import push_news
-
     push_news(state, text=text, source=source, day=day)
 
 
 def _add_ripple_dict(state: dict[str, Any], rp: dict[str, Any]) -> None:
     if not isinstance(rp, dict):
         return
-    from engine.social.ripple_queue import enqueue_ripple
-
     enqueue_ripple(state, rp)
 
 
@@ -635,13 +639,9 @@ def _set_trace_pct(state: dict[str, Any], pct: int) -> None:
     tr["trace_pct"] = p
     tr["trace_status"] = "Ghost" if p <= 25 else "Flagged" if p <= 50 else "Investigated" if p <= 75 else "Manhunt"
     try:
-        from engine.core.factions import sync_faction_statuses_from_trace
-
         sync_faction_statuses_from_trace(state)
-    except Exception:
-        pass
-
-
+    except Exception as _omni_sw_641:
+        log_swallowed_exception('engine/systems/quests.py:641', _omni_sw_641)
 def generate_daily_news(state: dict[str, Any]) -> None:
     """Auto news feed (rate-limited) that reflects world state.
 
@@ -868,10 +868,9 @@ def generate_faction_events(state: dict[str, Any]) -> None:
     # New: inter-faction strikes + daily news (both rate-limited).
     try:
         generate_faction_strikes(state)
-    except Exception:
-        pass
+    except Exception as _omni_sw_871:
+        log_swallowed_exception('engine/systems/quests.py:871', _omni_sw_871)
     try:
         generate_daily_news(state)
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_875:
+        log_swallowed_exception('engine/systems/quests.py:875', _omni_sw_875)

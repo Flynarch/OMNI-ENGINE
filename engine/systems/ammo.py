@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
 
 
 def _clamp_int(v: Any, lo: int, hi: int, default: int) -> int:
     try:
         x = int(v)
-    except Exception:
+    except Exception as _omni_sw_11:
+        log_swallowed_exception('engine/systems/ammo.py:11', _omni_sw_11)
         return int(default)
     return max(lo, min(hi, x))
 

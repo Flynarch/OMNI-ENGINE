@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
 
 from engine.core.rng import det_roll_1_100
@@ -34,7 +35,8 @@ def _hacking_level(state: dict[str, Any]) -> int:
         return 1
     try:
         return max(1, int(row.get("level", 1) or 1))
-    except Exception:
+    except Exception as _omni_sw_37:
+        log_swallowed_exception('engine/systems/targeted_hacking.py:37', _omni_sw_37)
         return 1
 
 
@@ -49,7 +51,8 @@ def execute_hack(state: dict[str, Any], target_type: str) -> dict[str, Any]:
         state["meta"] = meta
     try:
         hacks_before = int(meta.get("daily_hacks_attempted", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_52:
+        log_swallowed_exception('engine/systems/targeted_hacking.py:52', _omni_sw_52)
         hacks_before = 0
     # Each prior attempt increases effective failure pressure by 10%.
     fatigue_penalty = max(0, int(hacks_before) * 10)
@@ -80,7 +83,8 @@ def execute_hack(state: dict[str, Any], target_type: str) -> dict[str, Any]:
     fh.setdefault("police", 0)
     try:
         tp = int(tr.get("trace_pct", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_83:
+        log_swallowed_exception('engine/systems/targeted_hacking.py:83', _omni_sw_83)
         tp = 0
 
     # Heat map keys (loc|corporate/police/black_market) serve as "cyber heat".
@@ -94,9 +98,8 @@ def execute_hack(state: dict[str, Any], target_type: str) -> dict[str, Any]:
             row["noise"] = int(min(100, int(row.get("noise", 0) or 0) + (12 if tgt != "atm" else 6)))
             row["signal"] = int(min(100, int(row.get("signal", 0) or 0) + (8 if tgt != "atm" else 4)))
             hh[key] = row
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_97:
+        log_swallowed_exception('engine/systems/targeted_hacking.py:97', _omni_sw_97)
     if success:
         payout = 0
         if tgt == "atm":
@@ -107,7 +110,8 @@ def execute_hack(state: dict[str, Any], target_type: str) -> dict[str, Any]:
             _cash_apply(econ, payout)
             try:
                 fh["corporate"] = int(fh.get("corporate", 0) or 0) + 20
-            except Exception:
+            except Exception as _omni_sw_110:
+                log_swallowed_exception('engine/systems/targeted_hacking.py:110', _omni_sw_110)
                 fh["corporate"] = 20
             state.setdefault("world_notes", []).append("[Cyber] Corporate trace detected. Corporate heat increased.")
         else:
@@ -127,7 +131,8 @@ def execute_hack(state: dict[str, Any], target_type: str) -> dict[str, Any]:
     if tgt == "police_archive":
         try:
             fh["police"] = int(fh.get("police", 0) or 0) + 20
-        except Exception:
+        except Exception as _omni_sw_130:
+            log_swallowed_exception('engine/systems/targeted_hacking.py:130', _omni_sw_130)
             fh["police"] = 20
     state.setdefault("world_notes", []).append(f"[Cyber] Intrusion detected at {tgt}. Connection traced!")
     return {

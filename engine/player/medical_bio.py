@@ -1,6 +1,7 @@
 """W2-13: pain, trauma, addiction, withdrawal — daily tick + roll modifiers (engine authority)."""
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
 
 
@@ -29,7 +30,8 @@ def ensure_medical_bio(state: dict[str, Any]) -> dict[str, Any]:
                 b[k] = max(0, int(b.get(k, 0) or 0))
             else:
                 b[k] = max(0, min(100, int(b.get(k, 0) or 0)))
-        except Exception:
+        except Exception as _omni_sw_32:
+            log_swallowed_exception('engine/player/medical_bio.py:32', _omni_sw_32)
             b[k] = dv
     return b
 
@@ -40,7 +42,8 @@ def tick_medical_daily(state: dict[str, Any], *, day: int) -> None:
         return
     try:
         last = int(world.get("last_medical_bio_day", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_43:
+        log_swallowed_exception('engine/player/medical_bio.py:43', _omni_sw_43)
         last = 0
     if last == int(day):
         return
@@ -104,7 +107,8 @@ def record_substance_use(state: dict[str, Any], *, kind: str) -> None:
     meta = state.get("meta", {}) or {}
     try:
         day = int(meta.get("day", 1) or 1)
-    except Exception:
+    except Exception as _omni_sw_107:
+        log_swallowed_exception('engine/player/medical_bio.py:107', _omni_sw_107)
         day = 1
     b = ensure_medical_bio(state)
     b["last_substance_day"] = int(day)

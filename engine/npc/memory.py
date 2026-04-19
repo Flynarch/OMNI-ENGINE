@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
 
 
 def _clamp_int(v: Any, lo: int, hi: int, default: int) -> int:
     try:
         n = int(v)
-    except Exception:
+    except Exception as _omni_sw_9:
+        log_swallowed_exception('engine/npc/memory.py:9', _omni_sw_9)
         n = int(default)
     return max(int(lo), min(int(hi), int(n)))
 
@@ -57,7 +59,8 @@ def _rumor_tag_line(state: dict[str, Any], npc_id: str) -> str:
     turn = int(meta.get("turn", 0) or 0)
     try:
         rt = int(npc.get("rumor_influence_turn", -1_000_000) or -1_000_000)
-    except Exception:
+    except Exception as _omni_sw_60:
+        log_swallowed_exception('engine/npc/memory.py:60', _omni_sw_60)
         rt = -1_000_000
     if rt != turn:
         return ""
@@ -96,7 +99,8 @@ def _foreshadow_pending_line(state: dict[str, Any], npc_id: str) -> str:
             continue
         try:
             ttt = int(e.get("turns_to_trigger", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_99:
+            log_swallowed_exception('engine/npc/memory.py:99', _omni_sw_99)
             ttt = 0
         et = str(e.get("type", "") or "").strip() or "unknown"
         eid = str(e.get("id", "") or "")
@@ -174,7 +178,8 @@ def get_behavioral_anchors(state: dict[str, Any], npc_id: str) -> dict[str, int]
         for k, v in a.items():
             try:
                 n = int(v)
-            except Exception:
+            except Exception as _omni_sw_177:
+                log_swallowed_exception('engine/npc/memory.py:177', _omni_sw_177)
                 continue
             if k.startswith("min_"):
                 out[k] = max(int(out.get(k, -10_000)), n)
@@ -280,7 +285,8 @@ def get_npc_social_modifiers(state: dict[str, Any], npc_id: str) -> dict[str, in
                 for k in ("trust", "respect", "suspicion", "fear"):
                     try:
                         out[k] += int(mods.get(k, 0) or 0)
-                    except Exception:
+                    except Exception as _omni_sw_283:
+                        log_swallowed_exception('engine/npc/memory.py:283', _omni_sw_283)
                         continue
 
     # Optionally bridge existing belief_summary into same space (lightweight).
@@ -288,13 +294,12 @@ def get_npc_social_modifiers(state: dict[str, Any], npc_id: str) -> dict[str, in
     if isinstance(bs, dict):
         try:
             out["suspicion"] += int((int(bs.get("suspicion", 0) or 0) - 50) / 2)
-        except Exception:
-            pass
+        except Exception as _omni_sw_291:
+            log_swallowed_exception('engine/npc/memory.py:291', _omni_sw_291)
         try:
             out["respect"] += int((int(bs.get("respect", 50) or 50) - 50) / 2)
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_295:
+            log_swallowed_exception('engine/npc/memory.py:295', _omni_sw_295)
     for k in ("trust", "respect", "suspicion", "fear"):
         out[k] = _clamp_int(out.get(k, 0), -100, 100, 0)
 
@@ -341,12 +346,14 @@ def is_trigger_condition_met(state: dict[str, Any], npc_id: str, trigger_type: s
     respect_coef = int(sm.get("respect", 0) or 0)
     try:
         trust = int(npc.get("trust", 50) or 50)
-    except Exception:
+    except Exception as _omni_sw_344:
+        log_swallowed_exception('engine/npc/memory.py:344', _omni_sw_344)
         trust = 50
     trust = max(0, min(100, trust))
     try:
         fear = int(npc.get("fear", 10) or 10)
-    except Exception:
+    except Exception as _omni_sw_349:
+        log_swallowed_exception('engine/npc/memory.py:349', _omni_sw_349)
         fear = 10
     fear = max(0, min(100, fear))
     bs = npc.get("belief_summary") if isinstance(npc.get("belief_summary"), dict) else {}
@@ -354,7 +361,8 @@ def is_trigger_condition_met(state: dict[str, Any], npc_id: str, trigger_type: s
         bs = {}
     try:
         suspicion = int(bs.get("suspicion", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_357:
+        log_swallowed_exception('engine/npc/memory.py:357', _omni_sw_357)
         suspicion = 0
     suspicion = max(0, min(100, suspicion))
 
@@ -364,7 +372,8 @@ def is_trigger_condition_met(state: dict[str, Any], npc_id: str, trigger_type: s
     if key == "LOYA_REWARD":
         try:
             rep0 = int(bs.get("respect", 50) or 50)
-        except Exception:
+        except Exception as _omni_sw_367:
+            log_swallowed_exception('engine/npc/memory.py:367', _omni_sw_367)
             rep0 = 50
         return (trust >= int(req.get("trust", 85) or 85)) and (rep0 >= int(req.get("respect", 60) or 60))
     if key == "SUBMISSIVE_LEAK":
@@ -503,7 +512,8 @@ def process_memory_decay(
 
             keep.sort(key=_key, reverse=True)
             npc["memories"] = keep[:50]
-        except Exception:
+        except Exception as _omni_sw_506:
+            log_swallowed_exception('engine/npc/memory.py:506', _omni_sw_506)
             npc["memories"] = keep[:50]
 
     return {"decayed": int(decayed), "removed": int(removed), "consolidated": int(consolidated)}

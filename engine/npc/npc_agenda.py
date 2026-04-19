@@ -4,6 +4,10 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.social.ripple_queue import enqueue_ripple
+from engine.world.heat import bump_heat
+
 GOAL_TYPES = ("earn_money", "spread_influence", "reduce_heat")
 
 
@@ -38,7 +42,8 @@ def tick_npc_agendas_daily(state: dict[str, Any], *, day: int) -> dict[str, int]
         return {"npcs": 0, "ripples": 0, "completed": 0}
     try:
         last = int(world.get("last_npc_agenda_day", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_41:
+        log_swallowed_exception('engine/npc/npc_agenda.py:41', _omni_sw_41)
         last = 0
     if last == int(day):
         return {"npcs": 0, "ripples": 0, "completed": 0, "skipped": 1}
@@ -83,20 +88,15 @@ def tick_npc_agendas_daily(state: dict[str, Any], *, day: int) -> dict[str, int]
             loc = str(npc.get("current_location", "") or npc.get("home_location", "") or "").strip().lower()
             if loc and prev_prog < 40 <= prog:
                 try:
-                    from engine.world.heat import bump_heat
-
                     bump_heat(state, loc=loc, delta=-2, reason="npc_agenda_cool", ttl_days=3)
-                except Exception:
-                    pass
-
+                except Exception as _omni_sw_89:
+                    log_swallowed_exception('engine/npc/npc_agenda.py:89', _omni_sw_89)
         ripple_prog = int(prog)
         ag["goal_progress"] = int(prog)
         deadline = int(ag.get("goal_deadline_day", 0) or 0)
 
         if goal == "spread_influence" and ripples_left > 0 and ripple_prog >= 55 and _h("ripple", seed, day, nm) % 5 != 0:
             try:
-                from engine.social.ripple_queue import enqueue_ripple
-
                 loc = str(npc.get("current_location", "") or npc.get("home_location", "") or "").strip().lower()
                 if loc:
                     enqueue_ripple(
@@ -119,9 +119,8 @@ def tick_npc_agendas_daily(state: dict[str, Any], *, day: int) -> dict[str, int]
                     )
                     ripples_left -= 1
                     stats["ripples"] += 1
-            except Exception:
-                pass
-
+            except Exception as _omni_sw_122:
+                log_swallowed_exception('engine/npc/npc_agenda.py:122', _omni_sw_122)
         prog = int(ag.get("goal_progress", 0) or 0)
         if prog >= 100:
             ag["goal_outcome"] = "success"

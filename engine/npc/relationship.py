@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
 
 
 def _clamp_int(v: Any, lo: int, hi: int, default: int) -> int:
     try:
         n = int(v)
-    except Exception:
+    except Exception as _omni_sw_9:
+        log_swallowed_exception('engine/npc/relationship.py:9', _omni_sw_9)
         n = int(default)
     return max(lo, min(hi, n))
 

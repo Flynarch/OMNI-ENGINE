@@ -1,10 +1,12 @@
 """Data-driven action registry (intent → action_id + ctx_patch).
 
 - Load / match: always available.
-- Sleep NL: `action_intent._registry_try_sleep` (after accommodation).
-- Combat NL: `action_intent._registry_try_combat` (before legacy combat_terms).
-- Travel NL: `action_intent._registry_try_travel` (before `_TRAVEL_LEGACY_KEYWORDS`); heuristics in `_apply_travel_heuristics`.
-- Skill domains: `action_intent._registry_try_skill_domain` for `hacking.*`, `medical.*`, `driving.*`, `stealth.*` (before legacy domain elifs).
+- Smartphone NL: `action_intent._registry_try_smartphone_nl` via ``other.nl_smartphone_w2`` + ``try_parse_smartphone_nl`` (first branch in ``parse_action_intent``).
+- Economy stay NL: `action_intent._registry_try_accommodation_nl` via ``economy.nl_accommodation_stay`` + ``apply_accommodation_nl`` (after smartphone, before travel).
+- Sleep NL: `action_intent._registry_try_sleep` (keyword match), then `_registry_try_sleep_hours_nl` for parsed hours / default 8h via ``sleep.nl_duration_hours`` + ``apply_sleep_duration_from_nl`` (after accommodation).
+- Combat NL: `action_intent._registry_try_combat` then `_registry_try_combat_keyword_fallback` (keywords from ``combat.nl_ranged_attempt`` / ``combat.nl_melee``).
+- Travel NL: `action_intent._registry_try_travel` then `_registry_try_travel_keyword_fallback` (keywords from ``travel.nl_generic``); heuristics in `_apply_travel_heuristics`.
+- Skill domains: `action_intent._registry_try_skill_domain` then `_registry_try_skill_domain_keyword_fallback` (keywords from JSON).
 - Prefixed match: `match_registry_action_prefixed` for `social.*`, `social.inquiry.*`, `instant.*`, etc. without competing with global priority order.
 - Multi-hit: ``iter_registry_matches_by_prefix`` yields every matching action (e.g. several ``instant.nl_stop_*`` STOP flags in one input).
 - Inquiry phrases: `inquiry_phrases_match` mirrors ``social.inquiry.*`` keywords (used by `_is_social_inquiry`).
@@ -12,12 +14,13 @@
 - Allowlist surface: ``allowed_registry_action_ids()`` (same ids as JSON; fed into FFCI intent snapshot).
 - Validation: ``is_known_registry_action_id``, ``sanitize_registry_action_id_hint`` for optional LLM field ``registry_action_id_hint``.
 - Telemetry: ``registry_hint_alignment`` (parser id vs LLM hint in ``main`` / ``meta``).
-- Code-only ids: ``get_registry_action_by_id`` loads ``ctx_patch`` when matching needs Python (e.g. ``social.nl_conflict``, ``social.nl_intimacy_private``, ``rest.nl_prefix_60m`` with empty ``keywords_any``). Frasa istirahat singkat: ``rest.nl_istirahat_short``.
+- Code-only ids: ``get_registry_action_by_id`` loads ``ctx_patch`` when matching needs Python when keywords cannot express the gate (e.g. ``social.nl_conflict`` AND people-words, ``social.nl_intimacy_private``, ``rest.nl_prefix_60m`` with empty ``keywords_any``). Negotiation synonym list: ``social.nl_negotiation.match.keywords_any`` in JSON. Frasa istirahat singkat: ``rest.nl_istirahat_short``.
 - See docs/action-registry-plan.md for full roadmap.
 """
 
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 import json
 from pathlib import Path
 from collections.abc import Iterator
@@ -186,7 +189,8 @@ def match_registry_action(player_text: str) -> dict[str, Any] | None:
             continue
         try:
             pri = int(a.get("priority", 100))
-        except Exception:
+        except Exception as _omni_sw_191:
+            log_swallowed_exception('engine/core/action_registry.py:191', _omni_sw_191)
             pri = 100
         rows.append((pri, idx, a))
     rows.sort(key=lambda x: (x[0], x[1]))
@@ -221,7 +225,8 @@ def match_registry_action_prefixed(player_text: str, id_prefix: str) -> dict[str
             continue
         try:
             pri = int(a.get("priority", 100))
-        except Exception:
+        except Exception as _omni_sw_226:
+            log_swallowed_exception('engine/core/action_registry.py:226', _omni_sw_226)
             pri = 100
         rows.append((pri, idx, a))
     rows.sort(key=lambda x: (x[0], x[1]))
@@ -256,7 +261,8 @@ def iter_registry_matches_by_prefix(player_text: str, id_prefix: str) -> Iterato
             continue
         try:
             pri = int(a.get("priority", 100))
-        except Exception:
+        except Exception as _omni_sw_261:
+            log_swallowed_exception('engine/core/action_registry.py:261', _omni_sw_261)
             pri = 100
         rows.append((pri, idx, a))
     rows.sort(key=lambda x: (x[0], x[1]))

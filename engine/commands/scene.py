@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any, Callable
 
 from display.renderer import console
+from engine.systems.scenes import advance_scene
 
 
 def _scene_domain_for_action(scene_type: str, scene_action: str) -> str:
@@ -72,8 +74,6 @@ def handle_scene_commands(
             return True
 
         act = sub
-        from engine.systems.scenes import advance_scene
-
         scene_type = str(sc.get("scene_type", "") or "")
         action_ctx: dict[str, Any] = {
             "action_type": "instant",
@@ -88,7 +88,8 @@ def handle_scene_commands(
             if act in ("bribe",):
                 try:
                     action_ctx["bribe_amount"] = int(parts[2].strip())
-                except Exception:
+                except Exception as _omni_sw_91:
+                    log_swallowed_exception('engine/commands/scene.py:91', _omni_sw_91)
                     action_ctx["bribe_amount"] = 0
         res = advance_scene(state, action_ctx)
         if not bool(res.get("ok")):
@@ -98,8 +99,8 @@ def handle_scene_commands(
             action_ctx["instant_minutes"] = 5
         try:
             run_pipeline(state, action_ctx)
-        except Exception:
-            pass
+        except Exception as _omni_sw_101:
+            log_swallowed_exception('engine/commands/scene.py:101', _omni_sw_101)
         if bool(res.get("ended")):
             console.print("[green]SCENE resolved[/green]")
         else:

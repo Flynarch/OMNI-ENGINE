@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.core.trace import get_trace_tier
 import hashlib
 from typing import Any
 
 from engine.core.balance import BALANCE, get_balance_snapshot
+from engine.systems.safehouse import ensure_safehouse_here
+from engine.world.atlas import ensure_location_profile
 
 
 def _here_key(state: dict[str, Any]) -> str:
@@ -127,7 +131,8 @@ def deterministic_stay_raid_roll_percent(state: dict[str, Any]) -> int:
     seed = str(meta.get("world_seed", "") or meta.get("seed_pack", "") or "").strip() or "seed"
     try:
         turn = int(meta.get("turn", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_130:
+        log_swallowed_exception('engine/systems/accommodation.py:130', _omni_sw_130)
         turn = 0
     loc = _here_key(state)
     h = hashlib.md5(f"{seed}|{turn}|{loc}|raid_trigger".encode("utf-8", errors="ignore")).hexdigest()
@@ -139,10 +144,9 @@ def maybe_trigger_stay_raid(state: dict[str, Any]) -> dict[str, Any]:
     if isinstance(state.get("active_scene"), dict) and state.get("active_scene"):
         return {"triggered": False, "reason": "scene_active"}
     try:
-        from engine.core.trace import get_trace_tier
-
         tier_id = str((get_trace_tier(state) or {}).get("tier_id", "") or "")
-    except Exception:
+    except Exception as _omni_sw_145:
+        log_swallowed_exception('engine/systems/accommodation.py:145', _omni_sw_145)
         tier_id = ""
     if tier_id not in ("Wanted", "Lockdown"):
         return {"triggered": False, "reason": "tier_below_wanted", "tier_id": tier_id}
@@ -154,10 +158,9 @@ def maybe_trigger_stay_raid(state: dict[str, Any]) -> dict[str, Any]:
 
     loc = _here_key(state) or "unknown"
     try:
-        from engine.world.atlas import ensure_location_profile
-
         prof = ensure_location_profile(state, loc)
-    except Exception:
+    except Exception as _omni_sw_160:
+        log_swallowed_exception('engine/systems/accommodation.py:160', _omni_sw_160)
         prof = {}
     sh_row = ((state.get("world", {}) or {}).get("safehouses", {}) or {}).get(loc, {})
     if not isinstance(sh_row, dict):
@@ -165,11 +168,13 @@ def maybe_trigger_stay_raid(state: dict[str, Any]) -> dict[str, Any]:
     meta = state.get("meta", {}) or {}
     try:
         day = int(meta.get("day", 1) or 1)
-    except Exception:
+    except Exception as _omni_sw_168:
+        log_swallowed_exception('engine/systems/accommodation.py:168', _omni_sw_168)
         day = 1
     try:
         tmin = int(meta.get("time_min", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_172:
+        log_swallowed_exception('engine/systems/accommodation.py:172', _omni_sw_172)
         tmin = 0
     scene_id = hashlib.md5(f"{loc}|{day}|{tmin}|stay_safehouse_raid".encode("utf-8", errors="ignore")).hexdigest()[:10]
     state["active_scene"] = {
@@ -220,13 +225,11 @@ def process_accommodation_daily(state: dict[str, Any]) -> None:
 def apply_accommodation_rest_bonus(state: dict[str, Any]) -> None:
     """Weaker trace relief on rest/sleep when prepaid stay active and no safehouse."""
     try:
-        from engine.systems.safehouse import ensure_safehouse_here
-
         sh = ensure_safehouse_here(state)
         if str(sh.get("status", "none") or "none") != "none":
             return
-    except Exception:
-        pass
+    except Exception as _omni_sw_228:
+        log_swallowed_exception('engine/systems/accommodation.py:228', _omni_sw_228)
     row = get_stay_here(state)
     if not row:
         return

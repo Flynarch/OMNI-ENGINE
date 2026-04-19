@@ -1,6 +1,8 @@
 """W2-2: numeric reputation lanes drive access (black market tier, informant premium), not just labels."""
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.systems.black_market_tiers import ITEM_REPUTATION_TIER
 from typing import Any
 
 LANES = ("criminal", "corporate", "political", "street", "underground")
@@ -20,7 +22,8 @@ def ensure_reputation_lanes(state: dict[str, Any]) -> dict[str, Any]:
             scores[lane] = 50
         try:
             scores[lane] = max(0, min(100, int(scores[lane])))
-        except Exception:
+        except Exception as _omni_sw_23:
+            log_swallowed_exception('engine/social/reputation_lanes.py:23', _omni_sw_23)
             scores[lane] = 50
     rep["scores"] = scores
     return rep
@@ -33,7 +36,8 @@ def lane_score(state: dict[str, Any], lane: str) -> int:
     lk = str(lane or "").strip().lower()
     try:
         return max(0, min(100, int(scores.get(lk, 50) or 50)))
-    except Exception:
+    except Exception as _omni_sw_36:
+        log_swallowed_exception('engine/social/reputation_lanes.py:36', _omni_sw_36)
         return 50
 
 
@@ -59,7 +63,8 @@ def dominant_lane(state: dict[str, Any]) -> str:
     for lane in LANES:
         try:
             v = int(scores.get(lane, 50) or 50)
-        except Exception:
+        except Exception as _omni_sw_62:
+            log_swallowed_exception('engine/social/reputation_lanes.py:62', _omni_sw_62)
             v = 50
         if v > best or (v == best and lane < best_l):
             best = v
@@ -99,10 +104,9 @@ def black_market_price_percent(state: dict[str, Any]) -> int:
 
 def black_market_item_required_tier(item_id: str) -> int:
     try:
-        from engine.systems.black_market import ITEM_REPUTATION_TIER
-
         return int(ITEM_REPUTATION_TIER.get(str(item_id or "").strip().lower(), 0))
-    except Exception:
+    except Exception as _omni_sw_105:
+        log_swallowed_exception('engine/social/reputation_lanes.py:105', _omni_sw_105)
         return 0
 
 

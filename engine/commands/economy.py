@@ -3,6 +3,17 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from display.renderer import console
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.player.banking import bank_aml_snapshot, bank_deposit, bank_withdraw
+from engine.systems.accommodation import (
+    get_stay_here,
+    maybe_trigger_stay_raid,
+    nightly_rate,
+    normalize_stay_kind,
+    stay_checkin,
+    stay_help_aliases,
+    stay_kind_label,
+)
 
 
 def handle_economy(
@@ -16,8 +27,6 @@ def handle_economy(
         parts = cmd.split(maxsplit=2)
         sub = parts[1].strip().lower() if len(parts) >= 2 else "status"
         try:
-            from engine.player.banking import bank_aml_snapshot, bank_deposit, bank_withdraw
-
             econ = state.setdefault("economy", {})
             cash = int(econ.get("cash", 0) or 0)
             bank = int(econ.get("bank", 0) or 0)
@@ -36,7 +45,8 @@ def handle_economy(
                     return True
                 try:
                     amt = int(parts[2].strip())
-                except Exception:
+                except Exception as _omni_sw_39:
+                    log_swallowed_exception('engine/commands/economy.py:39', _omni_sw_39)
                     console.print("[red]BANK deposit: amount tidak valid.[/red]")
                     return True
                 res = bank_deposit(state, amt)
@@ -55,8 +65,8 @@ def handle_economy(
                             "cash_deposit": float(res.get("cash_deposit", 0) or 0),
                         },
                     )
-                except Exception:
-                    pass
+                except Exception as _omni_sw_58:
+                    log_swallowed_exception('engine/commands/economy.py:58', _omni_sw_58)
                 console.print(f"[green]BANK deposit OK[/green] {amt} cash→bank (AML log updated)")
                 return True
             if sub == "withdraw":
@@ -65,7 +75,8 @@ def handle_economy(
                     return True
                 try:
                     amt = int(parts[2].strip())
-                except Exception:
+                except Exception as _omni_sw_68:
+                    log_swallowed_exception('engine/commands/economy.py:68', _omni_sw_68)
                     console.print("[red]BANK withdraw: amount tidak valid.[/red]")
                     return True
                 res = bank_withdraw(state, amt)
@@ -83,28 +94,19 @@ def handle_economy(
                             "stakes": "low",
                         },
                     )
-                except Exception:
-                    pass
+                except Exception as _omni_sw_86:
+                    log_swallowed_exception('engine/commands/economy.py:86', _omni_sw_86)
                 console.print(f"[green]BANK withdraw OK[/green] {amt} bank→cash")
                 return True
             console.print("[yellow]Pakai: BANK status|deposit <n>|withdraw <n>[/yellow]")
-        except Exception:
+        except Exception as _omni_sw_91:
+            log_swallowed_exception('engine/commands/economy.py:91', _omni_sw_91)
             console.print("[red]BANK error.[/red]")
         return True
     if up == "STAY" or up.startswith("STAY "):
         parts = cmd.split(maxsplit=3)
         sub = parts[1].strip().lower() if len(parts) >= 2 else "status"
         try:
-            from engine.systems.accommodation import (
-                get_stay_here,
-                maybe_trigger_stay_raid,
-                nightly_rate,
-                normalize_stay_kind,
-                stay_checkin,
-                stay_help_aliases,
-                stay_kind_label,
-            )
-
             loc = str((state.get("player", {}) or {}).get("location", "") or "").strip() or "-"
             if sub in ("status", "info"):
                 row = get_stay_here(state)
@@ -127,7 +129,8 @@ def handle_economy(
                 n_raw = parts[2].strip() if len(parts) >= 3 else "1"
                 try:
                     nn = int(n_raw)
-                except Exception:
+                except Exception as _omni_sw_130:
+                    log_swallowed_exception('engine/commands/economy.py:130', _omni_sw_130)
                     nn = 1
                 rr = maybe_trigger_stay_raid(state)
                 if bool(rr.get("triggered")):
@@ -152,8 +155,8 @@ def handle_economy(
                             "stakes": "low",
                         },
                     )
-                except Exception:
-                    pass
+                except Exception as _omni_sw_155:
+                    log_swallowed_exception('engine/commands/economy.py:155', _omni_sw_155)
                 tier_name = stay_kind_label(str(res.get("kind") or nk), short=True)
                 console.print(
                     f"[green]STAY OK[/green] {tier_name} +{res.get('nights_added')}n total_nights={res.get('nights_remaining')} paid={res.get('paid')} cash={res.get('cash_after')}"
@@ -161,7 +164,8 @@ def handle_economy(
                 return True
             console.print("[yellow]Pakai: STAY status|hotel <n>|boarding <n>|suite <n>[/yellow]")
             console.print(f"[dim]{stay_help_aliases()}[/dim]")
-        except Exception:
+        except Exception as _omni_sw_164:
+            log_swallowed_exception('engine/commands/economy.py:164', _omni_sw_164)
             console.print("[red]STAY error.[/red]")
         return True
     return False

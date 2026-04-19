@@ -5,6 +5,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
+from engine.core.action_intent import apply_step_to_action_ctx
+
 
 def _steps(action_ctx: dict[str, Any]) -> List[dict[str, Any]]:
     plan = action_ctx.get("intent_plan") if isinstance(action_ctx.get("intent_plan"), dict) else {}
@@ -143,8 +145,6 @@ def apply_pending_runtime_step(state: dict[str, Any], action_ctx: dict[str, Any]
     st = _step_by_id(steps, pend)
     if not st:
         return
-    from engine.core.action_intent import apply_step_to_action_ctx
-
     action_ctx["intent_version"] = 2
     action_ctx["intent_plan"] = {"plan_id": snap.get("plan_id", "plan"), "steps": steps}
     action_ctx["step_now_id"] = pend

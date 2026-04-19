@@ -3,6 +3,10 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.core.trace import get_trace_tier
+from engine.world.atlas import ensure_country_history_idx, ensure_location_profile
+
 
 def deterministic_security_roll_percent(state: dict[str, Any]) -> int:
     """Deterministic 0..99 roll for security encounter checks (tests may import this)."""
@@ -10,11 +14,13 @@ def deterministic_security_roll_percent(state: dict[str, Any]) -> int:
     seed = str(meta.get("world_seed", "") or meta.get("seed_pack", "") or "").strip() or "seed"
     try:
         day = int(meta.get("day", 1) or 1)
-    except Exception:
+    except Exception as _omni_sw_13:
+        log_swallowed_exception('engine/systems/encounter_scheduler.py:13', _omni_sw_13)
         day = 1
     try:
         turn = int(meta.get("turn", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_17:
+        log_swallowed_exception('engine/systems/encounter_scheduler.py:17', _omni_sw_17)
         turn = 0
     loc = str((state.get("player", {}) or {}).get("location", "") or "").strip().lower()
     s = "|".join([seed, str(day), str(turn), loc, "security_encounter_v1"])
@@ -29,11 +35,13 @@ def _brief(state: dict[str, Any]) -> tuple[str, str, int, int]:
     meta = state.get("meta", {}) or {}
     try:
         day = int(meta.get("day", 1) or 1)
-    except Exception:
+    except Exception as _omni_sw_32:
+        log_swallowed_exception('engine/systems/encounter_scheduler.py:32', _omni_sw_32)
         day = 1
     try:
         tmin = int(meta.get("time_min", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_36:
+        log_swallowed_exception('engine/systems/encounter_scheduler.py:36', _omni_sw_36)
         tmin = 0
     return (loc, did, day, tmin)
 
@@ -50,7 +58,8 @@ def _local_level(world: dict[str, Any], root_key: str, loc: str) -> int:
         return 0
     try:
         return int(row.get("level", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_53:
+        log_swallowed_exception('engine/systems/encounter_scheduler.py:53', _omni_sw_53)
         return 0
 
 
@@ -73,7 +82,8 @@ def schedule_travel_encounters(state: dict[str, Any], action_ctx: dict[str, Any]
     meta = state.get("meta", {}) or {}
     try:
         turn = int(meta.get("turn", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_76:
+        log_swallowed_exception('engine/systems/encounter_scheduler.py:76', _omni_sw_76)
         turn = 0
     sched = world.setdefault("encounter_sched", {})
     if not isinstance(sched, dict):
@@ -87,7 +97,8 @@ def schedule_travel_encounters(state: dict[str, Any], action_ctx: dict[str, Any]
     susp = _local_level(world, "suspicion", loc)
     try:
         trace = int((state.get("trace", {}) or {}).get("trace_pct", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_90:
+        log_swallowed_exception('engine/systems/encounter_scheduler.py:90', _omni_sw_90)
         trace = 0
 
     # Deterministic score -> choose encounter type.
@@ -100,8 +111,6 @@ def schedule_travel_encounters(state: dict[str, Any], action_ctx: dict[str, Any]
     bc = 0
     if dest:
         try:
-            from engine.world.atlas import ensure_country_history_idx, ensure_location_profile
-
             meta = state.get("meta", {}) or {}
             sy = int(meta.get("sim_year", 0) or 0)
             prof = ensure_location_profile(state, dest)
@@ -109,7 +118,8 @@ def schedule_travel_encounters(state: dict[str, Any], action_ctx: dict[str, Any]
             if c:
                 hi = ensure_country_history_idx(state, c, sim_year=sy)
                 bc = int((hi.get("border_controls", 0) if isinstance(hi, dict) else 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_112:
+            log_swallowed_exception('engine/systems/encounter_scheduler.py:112', _omni_sw_112)
             bc = 0
 
     # Pick one event type (traffic_stop simpler, vehicle_search harsher).
@@ -144,10 +154,9 @@ def evaluate_security_encounters(state: dict[str, Any], action_ctx: dict[str, An
         return {"triggered": False, "reason": "scene_active"}
 
     try:
-        from engine.core.trace import get_trace_tier
-
         tier_id = str((get_trace_tier(state) or {}).get("tier_id", "") or "")
-    except Exception:
+    except Exception as _omni_sw_150:
+        log_swallowed_exception('engine/systems/encounter_scheduler.py:150', _omni_sw_150)
         tier_id = ""
 
     if tier_id not in ("Wanted", "Lockdown"):
@@ -156,11 +165,13 @@ def evaluate_security_encounters(state: dict[str, Any], action_ctx: dict[str, An
     meta = state.get("meta", {}) or {}
     try:
         day = int(meta.get("day", 1) or 1)
-    except Exception:
+    except Exception as _omni_sw_159:
+        log_swallowed_exception('engine/systems/encounter_scheduler.py:159', _omni_sw_159)
         day = 1
     try:
         turn = int(meta.get("turn", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_163:
+        log_swallowed_exception('engine/systems/encounter_scheduler.py:163', _omni_sw_163)
         turn = 0
 
     world = state.setdefault("world", {})
@@ -197,7 +208,8 @@ def evaluate_security_encounters(state: dict[str, Any], action_ctx: dict[str, An
     loc, did, day_brief, tmin = _brief(state)
     try:
         tmin_i = int(tmin)
-    except Exception:
+    except Exception as _omni_sw_200:
+        log_swallowed_exception('engine/systems/encounter_scheduler.py:200', _omni_sw_200)
         tmin_i = 0
     scene_id = hashlib.md5(f"{loc}|{did}|security_patrol|{day_brief}|{turn}".encode("utf-8", errors="ignore")).hexdigest()[:10]
 

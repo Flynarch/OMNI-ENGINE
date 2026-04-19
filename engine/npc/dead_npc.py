@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
 
 
@@ -25,11 +26,13 @@ def cleanup_dead_npcs(state: dict[str, Any]) -> None:
             continue
         try:
             alive = bool(npc.get("alive", True))
-        except Exception:
+        except Exception as _omni_sw_28:
+            log_swallowed_exception('engine/npc/dead_npc.py:28', _omni_sw_28)
             alive = True
         try:
             hp = int(npc.get("hp", 1) or 1)
-        except Exception:
+        except Exception as _omni_sw_32:
+            log_swallowed_exception('engine/npc/dead_npc.py:32', _omni_sw_32)
             hp = 1
         if alive and hp > 0:
             continue

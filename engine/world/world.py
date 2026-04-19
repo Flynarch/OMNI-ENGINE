@@ -1,7 +1,40 @@
 from __future__ import annotations
 
-from typing import Any
 import hashlib
+from typing import Any
+
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.core.errors import record_error
+from engine.core.feed_prune import prune_world_notes_and_news_feed
+from engine.npc.npc_sim import tick_npc_sim
+from engine.social.police_check import maybe_schedule_weapon_check
+from engine.social.ripple_queue import enqueue_ripple
+from engine.systems.disguise import maybe_caught
+from engine.systems.hacking import decay_hacking_heat, ensure_location_factions
+from engine.systems.judicial import is_incarcerated
+from engine.systems.quests import (
+    create_corp_infiltration_quest,
+    create_debt_repayment_quest,
+    create_trace_cleanup_quest,
+    generate_faction_events,
+)
+from engine.systems.safehouse_raid import maybe_schedule_safehouse_raid
+from engine.world.atlas import (
+    apply_w2_travel_gates,
+    default_city_for_country,
+    ensure_country_profile,
+    ensure_geopolitics,
+    ensure_location_profile,
+    is_known_place,
+    resolve_place,
+    sync_daily_burn_from_city_stats,
+)
+from engine.world.districts import default_district_for_city, is_valid_district
+from engine.world.faction_report import maybe_record_faction_daily_snapshot
+from engine.world.heat import clear_local_pressure_for_city
+from engine.world.location_presets import apply_location_preset_if_first_visit
+from engine.world.timers_bus import push_news as _push_news
+from engine.world.weather import ensure_weather
 
 
 def _event_exists(events: list[dict[str, Any]], event_type: str, day: int) -> bool:
@@ -45,7 +78,6 @@ def _add_ripple(
                 return
     origin_loc = str(state.get("player", {}).get("location", "") or "").strip().lower()
     try:
-        from engine.social.ripple_queue import enqueue_ripple
 
         enqueue_ripple(
             state,
@@ -65,7 +97,8 @@ def _add_ripple(
                 "meta": {},
             },
         )
-    except Exception:
+    except Exception as _omni_sw_68:
+        log_swallowed_exception('engine/world/world.py:68', _omni_sw_68)
         state.setdefault("active_ripples", []).append(
             {
                 "text": text,
@@ -87,47 +120,47 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
     meta = state.setdefault("meta", {})
     day = int(meta.get("day", 1))
     time_min = int(meta.get("time_min", 0))
+    try:
+
+        prune_world_notes_and_news_feed(state)
+    except Exception as _omni_sw_95:
+        log_swallowed_exception("engine/world/world.py:95", _omni_sw_95)
     notes = state.setdefault("world_notes", [])
     try:
-        from engine.world.faction_report import maybe_record_faction_daily_snapshot
 
         maybe_record_faction_daily_snapshot(state)
     except Exception as e:
+        log_swallowed_exception('engine/world/world.py:95', e)
         try:
-            from engine.core.errors import record_error
 
             record_error(state, "world.maybe_record_faction_daily_snapshot", e)
-        except Exception:
-            pass
+        except Exception as _omni_sw_100:
+            log_swallowed_exception('engine/world/world.py:100', _omni_sw_100)
     trace_pct = int(state.get("trace", {}).get("trace_pct", 0))
     # Weather refresh (deterministic per day+location).
     try:
-        from engine.world.weather import ensure_weather
 
         cur_loc = str(state.get("player", {}).get("location", "") or "").strip().lower()
         if cur_loc:
             ensure_weather(state, cur_loc, day)
     except Exception as e:
+        log_swallowed_exception('engine/world/world.py:110', e)
         try:
-            from engine.core.errors import record_error
 
             record_error(state, "world.ensure_weather", e)
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_115:
+            log_swallowed_exception('engine/world/world.py:115', _omni_sw_115)
     # Daily cooldowns / slow systems.
     try:
-        from engine.systems.hacking import decay_hacking_heat
 
         decay_hacking_heat(state)
     except Exception as e:
+        log_swallowed_exception('engine/world/world.py:123', e)
         try:
-            from engine.core.errors import record_error
 
             record_error(state, "world.decay_hacking_heat", e)
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_128:
+            log_swallowed_exception('engine/world/world.py:128', _omni_sw_128)
     # Daily housekeeping: prune expired NPC offers (role/econ).
     try:
         world = state.setdefault("world", {})
@@ -141,7 +174,8 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                         continue
                     try:
                         exp = int(v.get("expires_day", day) or day)
-                    except Exception:
+                    except Exception as _omni_sw_144:
+                        log_swallowed_exception('engine/world/world.py:144', _omni_sw_144)
                         exp = day
                     if exp >= day:
                         keep[str(k)] = v
@@ -153,44 +187,38 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                 econ["offers"] = keep
                 world["npc_economy"] = econ
     except Exception as e:
+        log_swallowed_exception('engine/world/world.py:155', e)
         try:
-            from engine.core.errors import record_error
 
             record_error(state, "world.prune_npc_offers", e)
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_160:
+            log_swallowed_exception('engine/world/world.py:160', _omni_sw_160)
     # Police stop-check: if carrying illegal weapons in a high-attention context,
     # schedule a structured event for AI-driven dialog.
     try:
-        from engine.social.police_check import maybe_schedule_weapon_check
 
         maybe_schedule_weapon_check(state)
     except Exception as e:
+        log_swallowed_exception('engine/world/world.py:169', e)
         try:
-            from engine.core.errors import record_error
 
             record_error(state, "world.maybe_schedule_weapon_check", e)
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_174:
+            log_swallowed_exception('engine/world/world.py:174', _omni_sw_174)
     # Safehouse raid: contraband stashed can be raided under high attention.
     try:
-        from engine.systems.safehouse_raid import maybe_schedule_safehouse_raid
 
         maybe_schedule_safehouse_raid(state)
     except Exception as e:
+        log_swallowed_exception('engine/world/world.py:182', e)
         try:
-            from engine.core.errors import record_error
 
             record_error(state, "world.maybe_schedule_safehouse_raid", e)
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_187:
+            log_swallowed_exception('engine/world/world.py:187', _omni_sw_187)
     # Travel destination changes scene/world objects.
     if action_ctx.get("action_type") == "travel":
         try:
-            from engine.systems.judicial import is_incarcerated
 
             if is_incarcerated(state):
                 notes.append("[Judicial] Travel blocked while serving sentence.")
@@ -198,13 +226,12 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                 action_ctx.pop("travel_destination", None)
                 action_ctx["instant_minutes"] = int(action_ctx.get("instant_minutes", 2) or 2)
                 return
-        except Exception:
-            pass
+        except Exception as _omni_sw_201:
+            log_swallowed_exception('engine/world/world.py:201', _omni_sw_201)
         dest = action_ctx.get("travel_destination")
         if dest:
             # Earth-only travel gate: block unknown/imaginary cities (DLC later).
             try:
-                from engine.world.atlas import default_city_for_country, is_known_place, resolve_place
 
                 raw_dest = str(dest)
                 if not is_known_place(raw_dest):
@@ -228,13 +255,12 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                         return
                     notes.append(f"[Travel] '{raw_dest}' interpreted as country → default city '{dc}'.")
                     action_ctx["travel_destination"] = dc
-            except Exception:
-                pass
+            except Exception as _omni_sw_231:
+                log_swallowed_exception('engine/world/world.py:231', _omni_sw_231)
             # W2-8: ticket / passport / wanted / city_stats pricing (skip TRAVELTO district mode).
             dest_gate = str(action_ctx.get("travel_destination", "") or "").strip().lower()
             cur_loc_gate = str((state.get("player", {}) or {}).get("location", "") or "").strip().lower()
             try:
-                from engine.world.atlas import apply_w2_travel_gates
 
                 block_msg = apply_w2_travel_gates(state, action_ctx, cur_loc_gate, dest_gate)
                 if block_msg:
@@ -245,12 +271,12 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                     action_ctx.pop("w2_travel_precalc", None)
                     return
             except Exception as e:
+                log_swallowed_exception('engine/world/world.py:247', e)
                 try:
-                    from engine.core.errors import record_error
 
                     record_error(state, "world.apply_w2_travel_gates", e)
-                except Exception:
-                    pass
+                except Exception as _omni_sw_252:
+                    log_swallowed_exception('engine/world/world.py:252', _omni_sw_252)
             # Persist current location scene before moving.
             cur_loc = str(state.get("player", {}).get("location", "") or "").strip().lower()
             world = state.setdefault("world", {})
@@ -270,8 +296,8 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                             # Keep any seed key if present.
                             if "factions_seed_key" in world and "factions_seed_key" not in slot:
                                 slot["factions_seed_key"] = world.get("factions_seed_key")
-                    except Exception:
-                        pass
+                    except Exception as _omni_sw_273:
+                        log_swallowed_exception('engine/world/world.py:273', _omni_sw_273)
                     local_npcs: dict[str, Any] = {}
                     for name, npc in (state.get("npcs", {}) or {}).items():
                         if not isinstance(npc, dict):
@@ -289,21 +315,19 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
             state.setdefault("player", {})["location"] = dest_key_norm
             # Normalize district on travel so district-scoped systems don't desync.
             try:
-                from engine.world.districts import default_district_for_city, is_valid_district
 
                 p = state.setdefault("player", {})
                 cur_d = str((p.get("district", "") if isinstance(p, dict) else "") or "").strip().lower()
                 if not cur_d or not is_valid_district(state, dest_key_norm, cur_d):
                     p["district"] = default_district_for_city(state, dest_key_norm) or ""
-            except Exception:
-                pass
+            except Exception as _omni_sw_298:
+                log_swallowed_exception('engine/world/world.py:298', _omni_sw_298)
             # Ensure deterministic cultural/econ background exists for this location.
             try:
-                from engine.world.atlas import ensure_location_profile
 
                 ensure_location_profile(state, dest_key_norm)
-            except Exception:
-                pass
+            except Exception as _omni_sw_305:
+                log_swallowed_exception('engine/world/world.py:305', _omni_sw_305)
             # Preserve any previously persisted per-location factions across seed merges.
             try:
                 dest_key0 = dest_s.strip().lower()
@@ -317,17 +341,18 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                     if isinstance(pf, dict) and pf:
                         prev_factions = pf
                     prev_fk = prev_slot.get("factions_seed_key")
-            except Exception:
+            except Exception as _omni_sw_320:
+                log_swallowed_exception('engine/world/world.py:320', _omni_sw_320)
                 prev_slot = None
                 prev_factions = None
                 prev_fk = None
             # Location presets (applied once per location on first visit).
             try:
-                from engine.world.location_presets import apply_location_preset_if_first_visit
 
                 applied = apply_location_preset_if_first_visit(state, dest_key_norm)
                 notes.append(f"Arrived: {dest_key_norm}" + (" (preset applied)." if applied else "."))
-            except Exception:
+            except Exception as _omni_sw_330:
+                log_swallowed_exception('engine/world/world.py:330', _omni_sw_330)
                 notes.append(f"Arrived: {dest_key_norm} (preset apply error).")
             # Re-apply persisted factions if seed merge overwrote the destination slot.
             try:
@@ -342,9 +367,8 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                             if prev_fk and "factions_seed_key" not in ls1[dk]:
                                 ls1[dk]["factions_seed_key"] = prev_fk
                         w1["locations"] = ls1
-            except Exception:
-                pass
-
+            except Exception as _omni_sw_345:
+                log_swallowed_exception('engine/world/world.py:345', _omni_sw_345)
             # Snapshot NPCs AFTER seed merge so seeded locals are not lost on rebuild.
             seeded_npcs: dict[str, Any] = dict(state.get("npcs", {}) or {}) if isinstance(state.get("npcs", {}), dict) else {}
 
@@ -370,9 +394,8 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                                 if isinstance(wlocs.get(dest_key), dict):
                                     wlocs[dest_key].setdefault("profile", snap_prof)
                                     world["locations"] = wlocs
-                        except Exception:
-                            pass
-
+                        except Exception as _omni_sw_373:
+                            log_swallowed_exception('engine/world/world.py:373', _omni_sw_373)
             # Two-layer NPC model (always rebuild on travel):
             # - local NPCs for this destination
             # - global contacts preserved across travel
@@ -433,69 +456,60 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                     cash0 = int(econ.get("cash", 0) or 0)
                     econ["cash"] = max(0, cash0 - ch)
                     notes.append(f"[Travel] Tiket dibeli: -${ch} (sisa cash ${int(econ.get('cash', 0) or 0)}).")
-            except Exception:
-                pass
+            except Exception as _omni_sw_436:
+                log_swallowed_exception('engine/world/world.py:436', _omni_sw_436)
             try:
                 rk = str(action_ctx.get("travel_route_kind", "") or "")
                 if rk in ("intercity", "international"):
-                    from engine.world.heat import clear_local_pressure_for_city
 
                     clear_local_pressure_for_city(state, dest_key_norm)
-            except Exception:
-                pass
+            except Exception as _omni_sw_444:
+                log_swallowed_exception('engine/world/world.py:444', _omni_sw_444)
             try:
-                from engine.world.atlas import sync_daily_burn_from_city_stats
 
                 sync_daily_burn_from_city_stats(state, dest_key_norm)
-            except Exception:
-                pass
+            except Exception as _omni_sw_450:
+                log_swallowed_exception('engine/world/world.py:450', _omni_sw_450)
             action_ctx.pop("w2_travel_precalc", None)
 
             # After changing location, reseed faction baseline for that destination.
             try:
-                from engine.systems.hacking import ensure_location_factions
 
                 ensure_location_factions(state)
-            except Exception:
-                pass
+            except Exception as _omni_sw_459:
+                log_swallowed_exception('engine/world/world.py:459', _omni_sw_459)
     else:
         # Non-travel beats: keep faction baseline consistent with current location.
         try:
-            from engine.systems.hacking import ensure_location_factions
 
             ensure_location_factions(state)
-        except Exception:
-            pass
+        except Exception as _omni_sw_467:
+            log_swallowed_exception('engine/world/world.py:467', _omni_sw_467)
         # Ensure profile exists for current location too (on older saves).
         try:
             cur = str(state.get("player", {}).get("location", "") or "").strip()
             if cur:
-                from engine.world.atlas import ensure_location_profile
 
                 ensure_location_profile(state, cur)
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_476:
+            log_swallowed_exception('engine/world/world.py:476', _omni_sw_476)
     # Minimal autonomous world movement.
     if action_ctx.get("action_type") in {"sleep", "rest", "travel"}:
         notes.append(f"Day {day}: World advanced while player was occupied.")
 
     # Faction-driven event generation (once per day).
     try:
-        from engine.systems.quests import generate_faction_events
 
         generate_faction_events(state)
     except Exception as e:
+        log_swallowed_exception('engine/world/world.py:488', e)
         try:
-            from engine.core.errors import record_error
 
             record_error(state, "world.generate_faction_events", e)
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_493:
+            log_swallowed_exception('engine/world/world.py:493', _omni_sw_493)
     # Global geopolitics tick (once per day): sanctions/conflict pressure affects world economy indirectly.
     try:
-        from engine.world.atlas import ensure_geopolitics, ensure_location_profile, ensure_country_profile
 
         gp = ensure_geopolitics(state)
         last = int(gp.get("last_tick_day", 0) or 0)
@@ -543,22 +557,23 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                     # Increase global tension index.
                     try:
                         t0 = int(gp.get("tension_idx", 0) or 0)
-                    except Exception:
+                    except Exception as _omni_sw_546:
+                        log_swallowed_exception('engine/world/world.py:546', _omni_sw_546)
                         t0 = 0
                     gp["tension_idx"] = max(0, min(100, t0 + (8 if stance == "rival" else 4)))
                     state.setdefault("world_notes", []).append(f"[Geopol] Sanction {c1}↔{c2}")
                     # News surfaces via broadcast (player can know).
                     try:
-                        from engine.world.timers_bus import push_news as _push_news
 
                         _push_news(state, text=f"Sanksi dagang meningkat: {c1} ↔ {c2}.", source="broadcast")
-                    except Exception:
-                        pass
+                    except Exception as _omni_sw_555:
+                        log_swallowed_exception('engine/world/world.py:555', _omni_sw_555)
                 else:
                     # Slow decay when no new sanction.
                     try:
                         t0 = int(gp.get("tension_idx", 0) or 0)
-                    except Exception:
+                    except Exception as _omni_sw_561:
+                        log_swallowed_exception('engine/world/world.py:561', _omni_sw_561)
                         t0 = 0
                     gp["tension_idx"] = max(0, t0 - 2)
 
@@ -568,13 +583,12 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                 atlas["geopolitics"] = gp
                 state.setdefault("world", {})["atlas"] = atlas
     except Exception as e:
+        log_swallowed_exception('engine/world/world.py:570', e)
         try:
-            from engine.core.errors import record_error
 
             record_error(state, "world.geopolitics_tick", e)
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_575:
+            log_swallowed_exception('engine/world/world.py:575', _omni_sw_575)
     # Location-specific remote events (once per day): other cities can have their own incidents.
     # This does not change sim clock; it only schedules events tagged with payload.location.
     try:
@@ -650,22 +664,19 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                             origin_faction=("police" if et == "police_sweep" else "corporate" if et == "corporate_lockdown" else "black_market"),
                             witnesses=[],
                         )
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_653:
+        log_swallowed_exception('engine/world/world.py:653', _omni_sw_653)
     # NPC simulation tick (deterministic utility rules).
     try:
-        from engine.npc.npc_sim import tick_npc_sim
 
         tick_npc_sim(state, action_ctx)
     except Exception as e:
+        log_swallowed_exception('engine/world/world.py:661', e)
         try:
-            from engine.core.errors import record_error
 
             record_error(state, "world.tick_npc_sim", e)
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_666:
+            log_swallowed_exception('engine/world/world.py:666', _omni_sw_666)
     # Trace-pressure event generator (persistent world consequence).
     if trace_pct >= 51:
         notes.append(f"Day {day}: Investigative pressure increased (trace={trace_pct}%).")
@@ -679,11 +690,10 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
         )
         # Auto quest offer: trace cleanup chain (optional).
         try:
-            from engine.systems.quests import create_trace_cleanup_quest
 
             create_trace_cleanup_quest(state, origin_location=str(state.get("player", {}).get("location", "") or ""), trace_snapshot=trace_pct)
-        except Exception:
-            pass
+        except Exception as _omni_sw_685:
+            log_swallowed_exception('engine/world/world.py:685', _omni_sw_685)
     if trace_pct >= 76:
         _add_event(
             state,
@@ -720,12 +730,10 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
         )
         # Auto quest offer: debt repayment plan (optional).
         try:
-            from engine.systems.quests import create_debt_repayment_quest
 
             create_debt_repayment_quest(state)
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_726:
+            log_swallowed_exception('engine/world/world.py:726', _omni_sw_726)
     # Auto quest offer: corporate infiltration when lockdown active in current city.
     try:
         cur_loc = str(state.get("player", {}).get("location", "") or "").strip().lower()
@@ -735,20 +743,17 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
         if isinstance(restr, dict):
             try:
                 cl = int(restr.get("corporate_lockdown_until_day", 0) or 0)
-            except Exception:
+            except Exception as _omni_sw_738:
+                log_swallowed_exception('engine/world/world.py:738', _omni_sw_738)
                 cl = 0
             if cl >= day:
-                from engine.systems.quests import create_corp_infiltration_quest
 
                 create_corp_infiltration_quest(state, origin_location=cur_loc)
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_744:
+        log_swallowed_exception('engine/world/world.py:744', _omni_sw_744)
     # Disguise: chance to get caught under sweep if acting publicly.
     try:
-        from engine.systems.disguise import maybe_caught
 
         maybe_caught(state, action_ctx)
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_752:
+        log_swallowed_exception('engine/world/world.py:752', _omni_sw_752)

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from engine.core.character_stats import ensure_player_character_stats
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.npc.relationship import get_relationship
 from typing import Any
 
 _SKILL_KEYS = (
@@ -47,11 +50,9 @@ def update_skills(state: dict, action_ctx: dict) -> None:
     W2-9 career promotion gates read `skills[*].level` from this module (deterministic).
     """
     try:
-        from engine.core.character_stats import ensure_player_character_stats
-
         ensure_player_character_stats(state)
-    except Exception:
-        pass
+    except Exception as _omni_sw_53:
+        log_swallowed_exception('engine/player/skills.py:53', _omni_sw_53)
     day = int(state.get("meta", {}).get("day", 1))
     total_decay_penalty = 0
     any_mastery_active = False
@@ -137,8 +138,6 @@ def apply_skill_xp_after_roll(state: dict[str, Any], action_ctx: dict[str, Any],
 
     mentor_bonus = 0
     try:
-        from engine.npc.relationship import get_relationship
-
         targets = action_ctx.get("targets") if isinstance(action_ctx.get("targets"), list) else []
         focus = str((state.get("meta", {}) or {}).get("npc_focus", "") or "").strip()
         cand: list[str] = [str(x) for x in targets if isinstance(x, str)]
@@ -150,7 +149,8 @@ def apply_skill_xp_after_roll(state: dict[str, Any], action_ctx: dict[str, Any],
                 st = int(rel.get("strength", 50) or 50)
                 mentor_bonus = max(1, min(3, 1 + (st // 40)))
                 break
-    except Exception:
+    except Exception as _omni_sw_153:
+        log_swallowed_exception('engine/player/skills.py:153', _omni_sw_153)
         mentor_bonus = 0
 
     xp = int(s.get("xp", 0) or 0) + base_xp + int(mentor_bonus)

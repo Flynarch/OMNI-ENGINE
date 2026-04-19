@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 import json
 from functools import lru_cache
 from pathlib import Path
@@ -19,7 +20,8 @@ def load_ffci_tuning(path: str | None = None) -> dict[str, Any]:
     try:
         raw = json.loads(p.read_text(encoding="utf-8"))
         return raw if isinstance(raw, dict) else {"pack_version": 0}
-    except Exception:
+    except Exception as _omni_sw_22:
+        log_swallowed_exception('engine/core/tuning_pack.py:22', _omni_sw_22)
         return {"pack_version": 0}
 
 

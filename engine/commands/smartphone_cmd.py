@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
 
 from display.renderer import console
+from engine.systems.smartphone import ensure_smartphone, parse_phone_command
 
 
 def handle_smartphone(state: dict[str, Any], cmd: str, *, run_pipeline: Any) -> bool:
-    from engine.systems.smartphone import ensure_smartphone, parse_phone_command
-
     raw = str(cmd or "").strip()
     up = raw.upper()
     if not (up.startswith("PHONE") or up.startswith("SMARTPHONE")):
@@ -40,6 +40,7 @@ def handle_smartphone(state: dict[str, Any], cmd: str, *, run_pipeline: Any) -> 
     try:
         run_pipeline(state, parsed)
     except Exception as e:
+        log_swallowed_exception('engine/commands/smartphone_cmd.py:42', e)
         console.print(f"[red]PHONE error: {e}[/red]")
         return True
 

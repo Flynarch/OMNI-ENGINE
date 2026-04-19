@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
+
+from engine.npc.relationship import get_top_relationships
 
 
 def _loc_district(state: dict[str, Any], *, loc: str = "", district: str = "") -> tuple[str, str]:
@@ -47,11 +50,13 @@ def bump_heat(
     meta = state.get("meta", {}) or {}
     try:
         day = int(meta.get("day", 1) or 1)
-    except Exception:
+    except Exception as _omni_sw_50:
+        log_swallowed_exception('engine/world/heat.py:50', _omni_sw_50)
         day = 1
     try:
         ttl = int(ttl_days or 0)
-    except Exception:
+    except Exception as _omni_sw_54:
+        log_swallowed_exception('engine/world/heat.py:54', _omni_sw_54)
         ttl = 0
     ttl = max(0, min(30, ttl))
 
@@ -64,7 +69,8 @@ def bump_heat(
     row = _ensure_bucket(world, "heat_map", loc0, scope_key)
     try:
         lv0 = int(row.get("level", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_67:
+        log_swallowed_exception('engine/world/heat.py:67', _omni_sw_67)
         lv0 = 0
     lv1 = max(0, min(100, lv0 + int(delta)))
     row["level"] = int(lv1)
@@ -99,11 +105,13 @@ def bump_suspicion(
     meta = state.get("meta", {}) or {}
     try:
         day = int(meta.get("day", 1) or 1)
-    except Exception:
+    except Exception as _omni_sw_102:
+        log_swallowed_exception('engine/world/heat.py:102', _omni_sw_102)
         day = 1
     try:
         ttl = int(ttl_days or 0)
-    except Exception:
+    except Exception as _omni_sw_106:
+        log_swallowed_exception('engine/world/heat.py:106', _omni_sw_106)
         ttl = 0
     ttl = max(0, min(14, ttl))
 
@@ -116,7 +124,8 @@ def bump_suspicion(
     row = _ensure_bucket(world, "suspicion", loc0, scope_key)
     try:
         lv0 = int(row.get("level", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_119:
+        log_swallowed_exception('engine/world/heat.py:119', _omni_sw_119)
         lv0 = 0
     lv1 = max(0, min(100, lv0 + int(delta)))
     row["level"] = int(lv1)
@@ -153,11 +162,13 @@ def decay_heat_and_suspicion(state: dict[str, Any], *, cur_day: int) -> None:
                     continue
                 try:
                     until = int(row.get("until_day", 0) or 0)
-                except Exception:
+                except Exception as _omni_sw_156:
+                    log_swallowed_exception('engine/world/heat.py:156', _omni_sw_156)
                     until = 0
                 try:
                     lv = int(row.get("level", 0) or 0)
-                except Exception:
+                except Exception as _omni_sw_160:
+                    log_swallowed_exception('engine/world/heat.py:160', _omni_sw_160)
                     lv = 0
                 if until and cur_day > until:
                     row["level"] = 0
@@ -172,8 +183,6 @@ def decay_heat_and_suspicion(state: dict[str, Any], *, cur_day: int) -> None:
     world["suspicion"] = _decay_map(sp, decay_per_day=5)
     # Relationship relief: strong allies/close friends can cool local heat a bit.
     try:
-        from engine.npc.relationship import get_top_relationships
-
         rels = get_top_relationships(state, limit=8)
         relief = 0
         for _nm, rel in rels:
@@ -194,16 +203,15 @@ def decay_heat_and_suspicion(state: dict[str, Any], *, cur_day: int) -> None:
                     if isinstance(row, dict):
                         try:
                             lv = int(row.get("level", 0) or 0)
-                        except Exception:
+                        except Exception as _omni_sw_197:
+                            log_swallowed_exception('engine/world/heat.py:197', _omni_sw_197)
                             lv = 0
                         row["level"] = max(0, lv - int(relief))
                         loc_map[scope] = row
                 hm2[loc0] = loc_map
                 world["heat_map"] = hm2
-    except Exception:
-        pass
-
-
+    except Exception as _omni_sw_203:
+        log_swallowed_exception('engine/world/heat.py:203', _omni_sw_203)
 def clear_local_pressure_for_city(state: dict[str, Any], loc_key: str) -> None:
     """W2-8: on intercity/international arrival, reset heat/suspicion buckets for the destination city.
 

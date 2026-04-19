@@ -4,6 +4,8 @@ import json
 import re
 from typing import Any
 
+from engine.core.errors import record_error
+
 MH_BLOCK = re.compile(r"<MEMORY_HASH>(.*?)</MEMORY_HASH>", re.DOTALL)
 SECTION_TAGS = [
     "OMNI_MONITOR",
@@ -149,8 +151,6 @@ def apply_memory_hash_to_state(state: dict[str, Any], mh: dict[str, Any]) -> Non
                 _apply_npc_memory_deltas(state, deltas)
         except Exception as e:
             try:
-                from engine.core.errors import record_error
-
                 record_error(state, "ai.memory_hash_v2", e)
             except Exception:
                 pass
@@ -190,8 +190,6 @@ def _apply_npc_memory_deltas(state: dict[str, Any], deltas: list[Any]) -> None:
         npc = npcs.get(npc_id)
         if not isinstance(npc, dict):
             try:
-                from engine.core.errors import record_error
-
                 record_error(state, "ai.memory_hash_v2", Exception(f"Unknown npc_id in npc_memory_deltas: {npc_id}"))
             except Exception:
                 pass

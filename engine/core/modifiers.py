@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 import json
 import random
 from pathlib import Path
 from typing import Any
 
+from engine.core.balance import BALANCE, get_balance_snapshot
+from engine.core.character_stats import append_character_stat_modifiers
 from engine.core.ffci import feasibility_custom_intent
+from engine.core.language import communication_quality, is_high_stakes_social
+from engine.core.rng import roll_for_action
+from engine.npc.memory import get_behavioral_anchors, get_npc_social_modifiers
+from engine.player.medical_bio import medical_roll_modifiers
+from engine.systems.disguise import ensure_disguise
+from engine.world.atlas import ensure_country_history_idx, ensure_location_profile
+from engine.world.weather import ensure_weather, stealth_bonus
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILLS_TABLE_PATH = ROOT / "data" / "skills_table.json"
@@ -41,8 +51,8 @@ def _load_base_thresholds() -> dict[str, tuple[int, int]]:
                     tr, un = row.get("trained"), row.get("unskilled")
                     if isinstance(tr, (int, float)) and isinstance(un, (int, float)):
                         out[str(key)] = (int(tr), int(un))
-        except Exception:
-            pass
+        except Exception as _omni_sw_44:
+            log_swallowed_exception('engine/core/modifiers.py:44', _omni_sw_44)
     _cached_base = out
     return out
 
@@ -69,11 +79,6 @@ def apply_social_decay(state: dict[str, Any], npc_id: str) -> dict[str, int]:
     if not isinstance(npc, dict):
         return {"trust": 0, "fear": 0, "suspicion": 0, "respect": 0}
 
-    try:
-        from engine.npc.memory import get_behavioral_anchors
-    except Exception:
-        return {"trust": 0, "fear": 0, "suspicion": 0, "respect": 0}
-
     anchors = get_behavioral_anchors(state, str(npc_id))
     if not isinstance(anchors, dict) or not anchors:
         return {"trust": 0, "fear": 0, "suspicion": 0, "respect": 0}
@@ -90,7 +95,8 @@ def apply_social_decay(state: dict[str, Any], npc_id: str) -> dict[str, int]:
     # Trust
     try:
         tr0 = int(npc.get("trust", 50) or 50)
-    except Exception:
+    except Exception as _omni_sw_93:
+        log_swallowed_exception('engine/core/modifiers.py:93', _omni_sw_93)
         tr0 = 50
     tr = max(0, min(100, tr0))
     if "max_trust" in anchors:
@@ -110,7 +116,8 @@ def apply_social_decay(state: dict[str, Any], npc_id: str) -> dict[str, int]:
     # Fear
     try:
         f0 = int(npc.get("fear", 10) or 10)
-    except Exception:
+    except Exception as _omni_sw_113:
+        log_swallowed_exception('engine/core/modifiers.py:113', _omni_sw_113)
         f0 = 10
     f = max(0, min(100, f0))
     if "min_fear" in anchors:
@@ -128,7 +135,8 @@ def apply_social_decay(state: dict[str, Any], npc_id: str) -> dict[str, int]:
         npc["belief_summary"] = bs
     try:
         s0 = int(bs.get("suspicion", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_131:
+        log_swallowed_exception('engine/core/modifiers.py:131', _omni_sw_131)
         s0 = 0
     s = max(0, min(100, s0))
     if "min_suspicion" in anchors:
@@ -147,7 +155,8 @@ def apply_social_decay(state: dict[str, Any], npc_id: str) -> dict[str, int]:
 
     try:
         r0 = int(bs.get("respect", 50) or 50)
-    except Exception:
+    except Exception as _omni_sw_150:
+        log_swallowed_exception('engine/core/modifiers.py:150', _omni_sw_150)
         r0 = 50
     r = max(0, min(100, r0))
     if "min_respect" in anchors:
@@ -270,8 +279,8 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
                     "outcome": "No Roll (Missing Tools)",
                     "net_threshold_locked": True,
                 }
-        except Exception:
-            pass
+        except Exception as _omni_sw_273:
+            log_swallowed_exception('engine/core/modifiers.py:273', _omni_sw_273)
     # Ordered modifier stack (v6.9 deterministic order).
     # 0. FFCI custom: translate suggested_dc into threshold pressure (50 = neutral; higher DC = harder).
     if str(act_type).lower() == "custom":
@@ -289,8 +298,6 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
         mods.append(("Skill decay", decay_pen))
     # 1b. Skill level (domain) — tuned via BAL_SKILL_MOD_* env / meta.balance
     try:
-        from engine.core.balance import get_balance_snapshot
-
         snap0 = get_balance_snapshot(state)
         per = int(snap0.get("skill_mod_per_level", 2) or 2)
         cap = int(snap0.get("skill_mod_max_cap", 24) or 24)
@@ -328,7 +335,8 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
                         return 1
                     try:
                         return max(1, min(20, int(row.get("level", 1) or 1)))
-                    except Exception:
+                    except Exception as _omni_sw_331:
+                        log_swallowed_exception('engine/core/modifiers.py:331', _omni_sw_331)
                         return 1
 
                 if str(domain).lower() == "social":
@@ -375,17 +383,15 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
                         b = min(10, max(0, (_lvl("management") - 1) * per))
                         if b:
                             mods.append(("Management skill", b))
-        except Exception:
-            pass
+        except Exception as _omni_sw_378:
+            log_swallowed_exception('engine/core/modifiers.py:378', _omni_sw_378)
         # 1c. W2-6 character stats (attributes): after skill lines; small bounded mods from skills_table.json.
         try:
-            from engine.core.character_stats import append_character_stat_modifiers
-
             append_character_stat_modifiers(state, action_ctx, mods)
-        except Exception:
-            pass
-    except Exception:
-        pass
+        except Exception as _omni_sw_385:
+            log_swallowed_exception('engine/core/modifiers.py:385', _omni_sw_385)
+    except Exception as _omni_sw_387:
+        log_swallowed_exception('engine/core/modifiers.py:387', _omni_sw_387)
     # 2. Trauma debuff
     if bool(action_ctx.get("trauma_debuff", False)):
         mods.append(("Trauma debuff", -10))
@@ -400,13 +406,11 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
         mods.append(("Burnout", -20))
     # 6b. W2-13 medical / withdrawal (bounded)
     try:
-        from engine.player.medical_bio import medical_roll_modifiers
-
         for label, delta in medical_roll_modifiers(state, str(domain)):
             if delta:
                 mods.append((label, int(delta)))
-    except Exception:
-        pass
+    except Exception as _omni_sw_408:
+        log_swallowed_exception('engine/core/modifiers.py:408', _omni_sw_408)
     # 6. Blood loss
     if bio.get("bp_state") == "Low" and domain == "combat":
         mods.append(("Blood loss low", -20))
@@ -435,7 +439,8 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
                 k = str(e.get("kind", "") or "").lower()
                 try:
                     st = int(e.get("stacks", 1) or 1)
-                except Exception:
+                except Exception as _omni_sw_438:
+                    log_swallowed_exception('engine/core/modifiers.py:438', _omni_sw_438)
                     st = 1
                 st = max(1, min(10, st))
                 if k == "shock":
@@ -446,9 +451,8 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
                         mods.append(("Bleeding", -6 * min(3, st)))
                     else:
                         mods.append(("Bleeding", -2 * min(3, st)))
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_449:
+        log_swallowed_exception('engine/core/modifiers.py:449', _omni_sw_449)
     # Location-specific restrictions (deterministic, no new scheduling).
     try:
         cur_loc = str(state.get("player", {}).get("location", "") or "").strip().lower()
@@ -462,7 +466,8 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
         if domain in ("stealth", "evasion") or act_type == "travel":
             try:
                 until_ps = int(restr.get("police_sweep_until_day", 0) or 0) if isinstance(restr, dict) else 0
-            except Exception:
+            except Exception as _omni_sw_465:
+                log_swallowed_exception('engine/core/modifiers.py:465', _omni_sw_465)
                 until_ps = 0
             if until_ps >= day:
                 # Evasion/stealth gets punished; travel gets a little punished even if no roll (threshold still matters for UI).
@@ -474,7 +479,8 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
             if isinstance(restr, dict):
                 try:
                     until = int(restr.get("corporate_lockdown_until_day", 0) or 0)
-                except Exception:
+                except Exception as _omni_sw_477:
+                    log_swallowed_exception('engine/core/modifiers.py:477', _omni_sw_477)
                     until = 0
                 if until >= day:
                     norm = str(action_ctx.get("normalized_input", "") or "").lower()
@@ -483,8 +489,6 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
                         mods.append(("Corporate lockdown", -10))
             # Abstract censorship/war pressure: hacking is harder in high censorship or war eras.
             try:
-                from engine.world.atlas import ensure_country_history_idx, ensure_location_profile
-
                 if cur_loc:
                     prof = ensure_location_profile(state, cur_loc)
                     c = str((prof.get("country") if isinstance(prof, dict) else "") or "").strip().lower()
@@ -501,9 +505,8 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
                             mods.append(("Censorship/security", -10))
                         elif ci >= 60:
                             mods.append(("Censorship/security", -5))
-            except Exception:
-                pass
-
+            except Exception as _omni_sw_504:
+                log_swallowed_exception('engine/core/modifiers.py:504', _omni_sw_504)
         # Area-level restrictions (simple districts): add a small penalty if player targets restricted districts by text.
         try:
             if isinstance(slot, dict):
@@ -519,7 +522,8 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
                             continue
                         try:
                             until_a = int(arow.get("until_day", 0) or 0)
-                        except Exception:
+                        except Exception as _omni_sw_522:
+                            log_swallowed_exception('engine/core/modifiers.py:522', _omni_sw_522)
                             until_a = 0
                         if until_a < day2:
                             continue
@@ -529,16 +533,12 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
                             else:
                                 mods.append((f"Restricted area ({area_name})", -3))
                             break
-        except Exception:
-            pass
-    except Exception:
-        pass
-
+        except Exception as _omni_sw_532:
+            log_swallowed_exception('engine/core/modifiers.py:532', _omni_sw_532)
+    except Exception as _omni_sw_534:
+        log_swallowed_exception('engine/core/modifiers.py:534', _omni_sw_534)
     # Weather modifier (stealth/evasion mostly).
     try:
-        from engine.world.weather import ensure_weather, stealth_bonus
-        from engine.core.balance import BALANCE, get_balance_snapshot
-
         if domain in ("stealth", "evasion"):
             snap = get_balance_snapshot(state)
             meta2 = state.get("meta", {}) or {}
@@ -559,14 +559,10 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
                     b2 = int(b * max(0, scw) / 100)
                     if b2:
                         mods.append(("Weather", b2))
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_562:
+        log_swallowed_exception('engine/core/modifiers.py:562', _omni_sw_562)
     # Disguise: small roll bonus for social / stealth / evasion when persona active.
     try:
-        from engine.core.balance import get_balance_snapshot
-        from engine.systems.disguise import ensure_disguise
-
         snapd = get_balance_snapshot(state)
         d = ensure_disguise(state)
         if bool(d.get("active")):
@@ -579,9 +575,8 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
                 bdis = int(snapd.get("disguise_social_roll_bonus", 4) or 4)
                 if bdis:
                     mods.append(("Disguise", bdis))
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_582:
+        log_swallowed_exception('engine/core/modifiers.py:582', _omni_sw_582)
     # 9. Hygiene tax
     if bio.get("hygiene_tax_active") and domain == "social":
         mods.append(("Hygiene tax", -30))
@@ -589,8 +584,6 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
     # Language barrier (year-aware, hybrid): affects social checks.
     if domain == "social":
         try:
-            from engine.core.language import communication_quality, is_high_stakes_social
-
             lc = communication_quality(state, action_ctx)
             action_ctx["language_ctx"] = {
                 "sim_year": lc.sim_year,
@@ -603,8 +596,6 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
             }
             # Apply penalties if not shared (scale via BAL_LANG_BARRIER_SCALE_PCT).
             if not lc.shared:
-                from engine.core.balance import get_balance_snapshot
-
                 lscale = int(get_balance_snapshot(state).get("lang_barrier_scale_pct", 100) or 100)
                 pen = int(int(lc.penalty) * max(0, lscale) / 100)
                 if pen:
@@ -612,8 +603,6 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
 
             # Abstract discrimination: when you're an outsider (no shared language), social can be harder by era/country.
             try:
-                from engine.world.atlas import ensure_country_history_idx, ensure_location_profile
-
                 loc = str((state.get("player", {}) or {}).get("location", "") or "").strip().lower()
                 if loc and not lc.shared:
                     prof = ensure_location_profile(state, loc)
@@ -626,9 +615,8 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
                             mods.append(("Discrimination pressure", -10))
                         elif di >= 55:
                             mods.append(("Discrimination pressure", -5))
-            except Exception:
-                pass
-
+            except Exception as _omni_sw_629:
+                log_swallowed_exception('engine/core/modifiers.py:629', _omni_sw_629)
             # Hybrid gate: high-stakes social needs adequate communication.
             if is_high_stakes_social(action_ctx):
                 # Threshold: either shared language or translator quality high enough.
@@ -641,9 +629,8 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
                         "outcome": "No Roll (Language Barrier)",
                         "net_threshold_locked": True,
                     }
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_644:
+            log_swallowed_exception('engine/core/modifiers.py:644', _omni_sw_644)
     # Social non-conflict: tidak perlu roll, tapi tetap terjadi (AI harus buat dialog/beat).
     if domain == "social" and action_ctx.get("social_mode") == "non_conflict":
         net = max(0, min(100, base + sum(v for _, v in mods)))
@@ -664,7 +651,8 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
             for k in ("looks", "outfit", "hygiene", "speaking"):
                 try:
                     v = int(stats.get(k, 0) or 0)
-                except Exception:
+                except Exception as _omni_sw_667:
+                    log_swallowed_exception('engine/core/modifiers.py:667', _omni_sw_667)
                     v = 0
                 total += max(-20, min(20, v))
             total = max(-25, min(25, total))
@@ -682,11 +670,13 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
                     if isinstance(bs, dict):
                         try:
                             suspicion = int(bs.get("suspicion", 0) or 0)
-                        except Exception:
+                        except Exception as _omni_sw_685:
+                            log_swallowed_exception('engine/core/modifiers.py:685', _omni_sw_685)
                             suspicion = 0
                         try:
                             respect = int(bs.get("respect", 50) or 50)
-                        except Exception:
+                        except Exception as _omni_sw_689:
+                            log_swallowed_exception('engine/core/modifiers.py:689', _omni_sw_689)
                             respect = 50
                         # suspicion makes social harder; respect makes it easier.
                         sus_mod = -min(20, max(0, int((suspicion - 30) / 3)))
@@ -698,8 +688,6 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
 
                     # Belief tags -> social coefficients (deterministic).
                     try:
-                        from engine.npc.memory import get_npc_social_modifiers
-
                         sm = get_npc_social_modifiers(state, str(t0))
                         if isinstance(sm, dict):
                             trust = int(sm.get("trust", 0) or 0)
@@ -715,9 +703,8 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
                                 state.setdefault("world_notes", []).append(
                                     f"[SocialMods] target={t0} trust={trust} respect={respect2} susp={suspicion2} fear={fear} => {mod:+d}%"
                                 )
-                    except Exception:
-                        pass
-
+                    except Exception as _omni_sw_718:
+                        log_swallowed_exception('engine/core/modifiers.py:718', _omni_sw_718)
                     # Relationship edge modifier (player <-> NPC) from world.social_graph
                     world = state.get("world", {}) or {}
                     g = world.get("social_graph", {}) or {}
@@ -729,7 +716,8 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
                                 et = str(edge.get("type", "neutral") or "neutral").lower()
                                 try:
                                     strength = int(edge.get("strength", 50) or 50)
-                                except Exception:
+                                except Exception as _omni_sw_732:
+                                    log_swallowed_exception('engine/core/modifiers.py:732', _omni_sw_732)
                                     strength = 50
                                 # Relationship makes it easier/harder depending on type and strength.
                                 rel_mod = 0
@@ -829,10 +817,9 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
         return {"base": base, "mods": mods, "net_threshold": net, "roll": None, "outcome": "No Roll", "net_threshold_locked": True}
     # Deterministic roll for replayability/debuggability (no hidden RNG drift).
     try:
-        from engine.core.rng import roll_for_action
-
         roll = int(roll_for_action(state, action_ctx, salt="roll_pkg"))
-    except Exception:
+    except Exception as _omni_sw_835:
+        log_swallowed_exception('engine/core/modifiers.py:835', _omni_sw_835)
         roll = random.randint(1, 100)
     success = roll <= net
     if roll <= 5:

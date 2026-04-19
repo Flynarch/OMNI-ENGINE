@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
 import hashlib
 
@@ -9,14 +10,60 @@ from engine.world.timers_bus import push_news as _bus_push_news
 from engine.world.timers_router import apply_triggered_events as _apply_triggered_events_v2
 from engine.world.timers_scheduler import collect_due_items as _collect_due_items_v2
 
+from engine.core.balance import BALANCE, get_balance_snapshot
+from engine.core.errors import record_error
+from engine.core.factions import sync_faction_statuses_from_trace
+from engine.core.trace import apply_trace_travel_friction, get_trace_tier
+from engine.npc.dead_npc import cleanup_dead_npcs
+from engine.npc.memory import process_memory_decay
+from engine.npc.npc_agenda import tick_npc_agendas_daily
+from engine.npc.npcs import apply_beliefs_from_ripple
+from engine.player.medical_bio import tick_medical_daily
+from engine.social.informants import maybe_queue_informant_tip
+from engine.social.investigation_chains import handle_informant_tip as informant_tip_investigation_chain
+from engine.social.ripples import apply_ripple_effects
+from engine.social.social_diffusion import propagate_rumor
+from engine.systems.accommodation import apply_accommodation_rest_bonus
+from engine.systems.ammo import item_is_ammo, rounds_per_purchase
+from engine.systems.disguise import tick_disguise_expiry
+from engine.systems.effects import tick_effects_expiry
+from engine.systems.encounter_scheduler import evaluate_security_encounters, schedule_travel_encounters
+from engine.systems.judicial import tick_judicial_daily
+from engine.systems.quests import create_black_market_delivery_quest, tick_quest_chains
+from engine.systems.safehouse import apply_lay_low_bonus
+from engine.systems.scenes import pump_scene_queue, start_drop_pickup_scene
+from engine.systems.shop import _district_police_presence  # type: ignore
+from engine.world.atlas import ensure_country_history_idx, ensure_location_profile
+from engine.world.heat import bump_heat, bump_suspicion, decay_heat_and_suspicion
+import engine.world.time_model as _time_model
+from engine.world.weather import ensure_weather, travel_minutes_modifier
+from engine.world.timers_handlers_delivery import (
+    handle_black_market_offer,
+    handle_delivery_drop,
+    handle_delivery_expire,
+)
+from engine.world.timers_handlers_economy import handle_debt_collection_ping
+from engine.world.timers_handlers_security import (
+    handle_corporate_lockdown,
+    handle_investigation_sweep,
+    handle_manhunt_lockdown,
+    handle_npc_sell_info,
+    handle_police_sweep,
+)
+from engine.world.timers_handlers_social import (
+    handle_informant_tip as handle_informant_tip_event,
+    handle_npc_offer,
+    handle_npc_report,
+    handle_paper_trail_ping,
+    handle_social_diffusion_hop,
+)
+
 
 def _record_soft_error(state: dict[str, Any], scope: str, err: Exception) -> None:
     try:
-        from engine.core.errors import record_error
-
         record_error(state, scope, err)
-    except Exception:
-        pass
+    except Exception as _omni_sw_18:
+        log_swallowed_exception('engine/world/timers.py:18', _omni_sw_18)
 
 
 def _advance(meta: dict[str, Any], minutes: int) -> None:
@@ -66,12 +113,11 @@ def _dispatch_registered_event_handler(
     try:
         return bool(h(state, ev, day=day, time_min=time_min))
     except Exception as e:
+        log_swallowed_exception('engine/world/timers.py:68', e)
         try:
-            from engine.core.errors import record_error
-
             record_error(state, f"timers.event_handler.{et}", e)
-        except Exception:
-            pass
+        except Exception as _omni_sw_73:
+            log_swallowed_exception('engine/world/timers.py:73', _omni_sw_73)
         return False
 
 
@@ -84,24 +130,22 @@ def _handle_event_legacy_by_type(
     time_min: int,
 ) -> bool:
     if et == "social_diffusion_hop":
-        try:
-            from engine.social.social_diffusion import propagate_rumor
-        except Exception:
-            return True
         frm = str(payload.get("from_npc", "") or "").strip()
         to = str(payload.get("to_npc", "") or "").strip()
         rumor = str(payload.get("rumor", "") or "").strip()
         cat = str(payload.get("category", "") or "").strip()
         try:
             hop = int(payload.get("hop", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_97:
+            log_swallowed_exception('engine/world/timers.py:97', _omni_sw_97)
             hop = 0
         if not (frm and to and rumor and cat):
             return True
         try:
             meta2 = state.get("meta", {}) or {}
             turn2 = int(meta2.get("turn", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_104:
+            log_swallowed_exception('engine/world/timers.py:104', _omni_sw_104)
             turn2 = 0
         world2 = state.setdefault("world", {})
         sd = world2.setdefault("social_diffusion", {})
@@ -110,11 +154,13 @@ def _handle_event_legacy_by_type(
             world2["social_diffusion"] = sd
         try:
             sd_day = int(sd.get("day", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_113:
+            log_swallowed_exception('engine/world/timers.py:113', _omni_sw_113)
             sd_day = 0
         try:
             sd_turn = int(sd.get("turn", -1) or -1)
-        except Exception:
+        except Exception as _omni_sw_117:
+            log_swallowed_exception('engine/world/timers.py:117', _omni_sw_117)
             sd_turn = -1
         if sd_day != day:
             sd["day"] = int(day)
@@ -134,7 +180,8 @@ def _handle_event_legacy_by_type(
         propagated = []
         try:
             propagated = propagate_rumor(state, frm, rumor, cat, hop=hop)
-        except Exception:
+        except Exception as _omni_sw_137:
+            log_swallowed_exception('engine/world/timers.py:137', _omni_sw_137)
             propagated = []
         if propagated:
             pending = state.setdefault("pending_events", [])
@@ -158,8 +205,6 @@ def _handle_event_legacy_by_type(
                         }
                     )
         try:
-            from engine.social.informants import maybe_queue_informant_tip
-
             maybe_queue_informant_tip(
                 state,
                 from_npc=frm,
@@ -168,19 +213,17 @@ def _handle_event_legacy_by_type(
                 category=cat,
                 hop=hop,
             )
-        except Exception:
-            pass
+        except Exception as _omni_sw_171:
+            log_swallowed_exception('engine/world/timers.py:171', _omni_sw_171)
         state.setdefault("world_notes", []).append(f"[SocialDiffusion] {to} mendengar: {rumor[:90]}")
         return True
 
     if et == "informant_tip":
         try:
-            from engine.social.investigation_chains import handle_informant_tip
-
             if isinstance(payload, dict):
-                handle_informant_tip(state, payload)
-        except Exception:
-            pass
+                informant_tip_investigation_chain(state, payload)
+        except Exception as _omni_sw_182:
+            log_swallowed_exception('engine/world/timers.py:182', _omni_sw_182)
         return True
 
     if et == "npc_report":
@@ -188,13 +231,15 @@ def _handle_event_legacy_by_type(
         aff = str(payload.get("affiliation", "") or "").strip().lower()
         try:
             sus = int(payload.get("suspicion", 50) or 50)
-        except Exception:
+        except Exception as _omni_sw_191:
+            log_swallowed_exception('engine/world/timers.py:191', _omni_sw_191)
             sus = 50
         sus = max(0, min(100, sus))
         tr = state.setdefault("trace", {})
         try:
             tp = int(tr.get("trace_pct", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_197:
+            log_swallowed_exception('engine/world/timers.py:197', _omni_sw_197)
             tp = 0
         before_tp = tp
         bump = 1 + int((sus - 50) / 20)
@@ -204,21 +249,17 @@ def _handle_event_legacy_by_type(
         tr["trace_pct"] = tp
         trace_delta = tp - before_tp
         try:
-            from engine.core.factions import sync_faction_statuses_from_trace
-
             sync_faction_statuses_from_trace(state)
-        except Exception:
-            pass
+        except Exception as _omni_sw_210:
+            log_swallowed_exception('engine/world/timers.py:210', _omni_sw_210)
         _push_news(state, text=f"Tip masuk: pihak berwenang menerima laporan anon tentang player ({reporter}).", source="broadcast")
         try:
-            from engine.world.heat import bump_heat, bump_suspicion
-
             loc0 = str(payload.get("origin_location", "") or str((state.get("player", {}) or {}).get("location", "") or "")).strip().lower()
             if loc0:
                 bump_suspicion(state, loc=loc0, delta=2 + (1 if aff == "police" else 0), reason="npc_report", ttl_days=2)
                 bump_heat(state, loc=loc0, delta=1, reason="npc_report", ttl_days=5)
-        except Exception:
-            pass
+        except Exception as _omni_sw_220:
+            log_swallowed_exception('engine/world/timers.py:220', _omni_sw_220)
         _queue_ripple(
             state,
             {
@@ -244,7 +285,8 @@ def _handle_event_legacy_by_type(
         aff = str(payload.get("affiliation", "police") or "police").strip().lower()
         try:
             sus = int(payload.get("suspicion", 55) or 55)
-        except Exception:
+        except Exception as _omni_sw_247:
+            log_swallowed_exception('engine/world/timers.py:247', _omni_sw_247)
             sus = 55
         origin_location = str(payload.get("origin_location", "") or "").strip().lower()
         delivery_id = str(payload.get("delivery_id", "") or "").strip()
@@ -268,14 +310,12 @@ def _handle_event_legacy_by_type(
             )
         state.setdefault("world_notes", []).append(f"[PaperTrail] ping reporter={reporter} sus={sus} delivery_id={delivery_id} item={item_id}")
         try:
-            from engine.world.heat import bump_heat, bump_suspicion
-
             loc0 = str(origin_location or str((state.get("player", {}) or {}).get("location", "") or "")).strip().lower()
             if loc0:
                 bump_suspicion(state, loc=loc0, delta=2, reason="paper_trail", ttl_days=2)
                 bump_heat(state, loc=loc0, delta=1, reason="paper_trail", ttl_days=6)
-        except Exception:
-            pass
+        except Exception as _omni_sw_277:
+            log_swallowed_exception('engine/world/timers.py:277', _omni_sw_277)
         return True
 
     if et == "npc_offer":
@@ -302,18 +342,20 @@ def _handle_event_legacy_by_type(
                     row = market.get(cat) or {}
                     try:
                         sc = int(row.get("scarcity", 0) or 0)
-                    except Exception:
+                    except Exception as _omni_sw_305:
+                        log_swallowed_exception('engine/world/timers.py:305', _omni_sw_305)
                         sc = 0
                     try:
                         px = int(row.get("price_idx", 100) or 100)
-                    except Exception:
+                    except Exception as _omni_sw_309:
+                        log_swallowed_exception('engine/world/timers.py:309', _omni_sw_309)
                         px = 100
                     row["scarcity"] = max(0, sc - 1)
                     row["price_idx"] = max(60, min(180, px - 1))
                     market[cat] = row
                     econ2["market"] = market
-        except Exception:
-            pass
+        except Exception as _omni_sw_315:
+            log_swallowed_exception('engine/world/timers.py:315', _omni_sw_315)
         _queue_ripple(
             state,
             {
@@ -370,18 +412,17 @@ def _handle_event_legacy_by_type(
         tr = state.setdefault("trace", {})
         try:
             tp = int(tr.get("trace_pct", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_373:
+            log_swallowed_exception('engine/world/timers.py:373', _omni_sw_373)
             tp = 0
         bump = 1 if delivery == "dead_drop" else 2
         if pp >= 4:
             bump += 1
         tr["trace_pct"] = max(0, min(100, tp + bump))
         try:
-            from engine.core.factions import sync_faction_statuses_from_trace
-
             sync_faction_statuses_from_trace(state)
-        except Exception:
-            pass
+        except Exception as _omni_sw_383:
+            log_swallowed_exception('engine/world/timers.py:383', _omni_sw_383)
         text = "Paketmu sudah siap diambil."
         if delivery == "dead_drop":
             text = "Dead drop aktif: paket sudah ditaruh di titik yang kamu sepakati."
@@ -474,7 +515,8 @@ def _handle_event_legacy_by_type(
         buyer = str(payload.get("buyer_faction", "black_market") or "black_market").strip().lower()
         try:
             sus = int(payload.get("suspicion", 50) or 50)
-        except Exception:
+        except Exception as _omni_sw_477:
+            log_swallowed_exception('engine/world/timers.py:477', _omni_sw_477)
             sus = 50
         sus = max(0, min(100, sus))
         world = state.setdefault("world", {})
@@ -483,11 +525,13 @@ def _handle_event_legacy_by_type(
             f = factions.get(buyer) or {}
             try:
                 pw = int(f.get("power", 50) or 50)
-            except Exception:
+            except Exception as _omni_sw_486:
+                log_swallowed_exception('engine/world/timers.py:486', _omni_sw_486)
                 pw = 50
             try:
                 st = int(f.get("stability", 50) or 50)
-            except Exception:
+            except Exception as _omni_sw_490:
+                log_swallowed_exception('engine/world/timers.py:490', _omni_sw_490)
                 st = 50
             bump = 1 + int((sus - 50) / 25)
             f["power"] = max(0, min(100, pw + max(1, min(3, bump))))
@@ -504,11 +548,13 @@ def _handle_event_legacy_by_type(
                         row = market2.get(cat) or {}
                         try:
                             sc2 = int(row.get("scarcity", 0) or 0)
-                        except Exception:
+                        except Exception as _omni_sw_507:
+                            log_swallowed_exception('engine/world/timers.py:507', _omni_sw_507)
                             sc2 = 0
                         try:
                             px2 = int(row.get("price_idx", 100) or 100)
-                        except Exception:
+                        except Exception as _omni_sw_511:
+                            log_swallowed_exception('engine/world/timers.py:511', _omni_sw_511)
                             px2 = 100
                         row["scarcity"] = max(0, sc2 - 1)
                         row["price_idx"] = max(60, min(200, px2 - 1))
@@ -519,18 +565,20 @@ def _handle_event_legacy_by_type(
                         row = market2.get(cat) or {}
                         try:
                             sc2 = int(row.get("scarcity", 0) or 0)
-                        except Exception:
+                        except Exception as _omni_sw_522:
+                            log_swallowed_exception('engine/world/timers.py:522', _omni_sw_522)
                             sc2 = 0
                         try:
                             px2 = int(row.get("price_idx", 100) or 100)
-                        except Exception:
+                        except Exception as _omni_sw_526:
+                            log_swallowed_exception('engine/world/timers.py:526', _omni_sw_526)
                             px2 = 100
                         row["scarcity"] = max(0, sc2 + 1)
                         row["price_idx"] = max(60, min(220, px2 + 2))
                         market2[cat] = row
                 econ3["market"] = market2
-        except Exception:
-            pass
+        except Exception as _omni_sw_532:
+            log_swallowed_exception('engine/world/timers.py:532', _omni_sw_532)
         _push_news(state, text=f"Intel diperdagangkan di bawah tanah (sumber: {npc}).", source="faction_network")
         _queue_ripple(
             state,
@@ -584,11 +632,13 @@ def _handle_event_legacy_by_type(
                     e = m.get("electronics") or {}
                     try:
                         e_sc = int(e.get("scarcity", 0) or 0)
-                    except Exception:
+                    except Exception as _omni_sw_587:
+                        log_swallowed_exception('engine/world/timers.py:587', _omni_sw_587)
                         e_sc = 0
                     try:
                         e_px = int(e.get("price_idx", 100) or 100)
-                    except Exception:
+                    except Exception as _omni_sw_591:
+                        log_swallowed_exception('engine/world/timers.py:591', _omni_sw_591)
                         e_px = 100
                     e["scarcity"] = max(0, min(100, e_sc + 3))
                     e["price_idx"] = max(60, min(300, e_px + 5))
@@ -619,15 +669,15 @@ def _handle_event_legacy_by_type(
         loc = str(payload.get("location", "") or str(state.get("player", {}).get("location", "") or "")).strip().lower()
         try:
             bm_pw = int(payload.get("bm_power", 65) or 65)
-        except Exception:
+        except Exception as _omni_sw_622:
+            log_swallowed_exception('engine/world/timers.py:622', _omni_sw_622)
             bm_pw = 65
         try:
             bm_st = int(payload.get("bm_stability", 35) or 35)
-        except Exception:
+        except Exception as _omni_sw_626:
+            log_swallowed_exception('engine/world/timers.py:626', _omni_sw_626)
             bm_st = 35
         try:
-            from engine.systems.quests import create_black_market_delivery_quest
-
             q = create_black_market_delivery_quest(state, origin_location=loc, bm_power=bm_pw, bm_stability=bm_st)
             _push_news(state, text=f"Rumor: offer pasar gelap muncul di {loc} (quest {q.get('id','?')}).", source="faction_network")
             _queue_ripple(
@@ -647,15 +697,16 @@ def _handle_event_legacy_by_type(
                     "meta": {"quest_id": q.get("id", ""), "location": loc},
                 },
             )
-        except Exception:
-            pass
+        except Exception as _omni_sw_650:
+            log_swallowed_exception('engine/world/timers.py:650', _omni_sw_650)
         return True
 
     if et == "investigation_sweep":
         loc = str(payload.get("location", "") or str(state.get("player", {}).get("location", "") or "")).strip().lower()
         try:
             trsnap = int(payload.get("trace_snapshot", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_658:
+            log_swallowed_exception('engine/world/timers.py:658', _omni_sw_658)
             trsnap = 0
         world = state.setdefault("world", {})
         locs = world.setdefault("locations", {})
@@ -697,14 +748,15 @@ def _handle_event_legacy_by_type(
         loc = str(payload.get("location", "") or str(state.get("player", {}).get("location", "") or "")).strip().lower()
         try:
             trsnap = int(payload.get("trace_snapshot", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_700:
+            log_swallowed_exception('engine/world/timers.py:700', _omni_sw_700)
             trsnap = 0
         try:
             tr = state.setdefault("trace", {})
             tp = int(tr.get("trace_pct", 0) or 0)
             tr["trace_pct"] = max(0, min(100, tp + 2))
-        except Exception:
-            pass
+        except Exception as _omni_sw_706:
+            log_swallowed_exception('engine/world/timers.py:706', _omni_sw_706)
         world = state.setdefault("world", {})
         locs = world.setdefault("locations", {})
         if isinstance(locs, dict) and loc:
@@ -745,21 +797,22 @@ def _handle_event_legacy_by_type(
     if et == "debt_collection_ping":
         try:
             debt = int(payload.get("debt", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_748:
+            log_swallowed_exception('engine/world/timers.py:748', _omni_sw_748)
             debt = 0
         try:
             econ = state.setdefault("economy", {})
             burn = int(econ.get("daily_burn", 0) or 0)
             if debt > 0:
                 econ["daily_burn"] = burn + 1
-        except Exception:
-            pass
+        except Exception as _omni_sw_755:
+            log_swallowed_exception('engine/world/timers.py:755', _omni_sw_755)
         try:
             tr = state.setdefault("trace", {})
             tp = int(tr.get("trace_pct", 0) or 0)
             tr["trace_pct"] = max(0, min(100, tp + (1 if debt > 0 else 0)))
-        except Exception:
-            pass
+        except Exception as _omni_sw_761:
+            log_swallowed_exception('engine/world/timers.py:761', _omni_sw_761)
         _push_news(state, text="Penagih utang mencari jejakmu (tekanan finansial naik).", source="contacts")
         _queue_ripple(
             state,
@@ -784,32 +837,11 @@ def _handle_event_legacy_by_type(
 
 
 def _register_event_handlers() -> None:
-    from engine.world.timers_handlers_delivery import (
-        handle_black_market_offer,
-        handle_delivery_drop,
-        handle_delivery_expire,
-    )
-    from engine.world.timers_handlers_economy import handle_debt_collection_ping
-    from engine.world.timers_handlers_security import (
-        handle_corporate_lockdown,
-        handle_investigation_sweep,
-        handle_manhunt_lockdown,
-        handle_npc_sell_info,
-        handle_police_sweep,
-    )
-    from engine.world.timers_handlers_social import (
-        handle_informant_tip,
-        handle_npc_offer,
-        handle_npc_report,
-        handle_paper_trail_ping,
-        handle_social_diffusion_hop,
-    )
-
     EVENT_HANDLERS.clear()
     EVENT_HANDLERS.update(
         {
             "social_diffusion_hop": handle_social_diffusion_hop,
-            "informant_tip": handle_informant_tip,
+            "informant_tip": handle_informant_tip_event,
             "npc_report": handle_npc_report,
             "paper_trail_ping": handle_paper_trail_ping,
             "npc_offer": handle_npc_offer,
@@ -856,8 +888,6 @@ def update_timers_v2(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
 
 
 def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
-    from engine.core.balance import BALANCE, get_balance_snapshot
-
     meta = state.setdefault("meta", {"day": 1, "time_min": 480})
     prev_day = int(meta.get("day", 1) or 1)
     # Queue hardening: keep only dict entries so malformed rows never crash tick cleanup.
@@ -873,16 +903,15 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
     kind = action_ctx.get("action_type", "instant")
     if kind != "combat":
         try:
-            from engine.systems.encounter_scheduler import evaluate_security_encounters
 
             evaluate_security_encounters(state, action_ctx)
         except Exception as e:
+            log_swallowed_exception('engine/world/timers.py:879', e)
             try:
-                from engine.core.errors import record_error
 
                 record_error(state, "timers.evaluate_security_encounters", e)
-            except Exception:
-                pass
+            except Exception as _omni_sw_884:
+                log_swallowed_exception('engine/world/timers.py:884', _omni_sw_884)
     if kind == "combat":
         action_ctx.setdefault("time_breakdown", []).append({"label": "combat", "minutes": 1})
         _advance(meta, 1)
@@ -890,31 +919,30 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
         snap = get_balance_snapshot(state)
         # Deterministic travel encounter scheduling (adds pending event; router will convert to scene when triggered).
         try:
-            from engine.systems.encounter_scheduler import schedule_travel_encounters
 
             schedule_travel_encounters(state, action_ctx)
         except Exception as e:
+            log_swallowed_exception('engine/world/timers.py:896', e)
             try:
-                from engine.core.errors import record_error
 
                 record_error(state, "timers.schedule_travel_encounters", e)
-            except Exception:
-                pass
+            except Exception as _omni_sw_901:
+                log_swallowed_exception('engine/world/timers.py:901', _omni_sw_901)
         # Vehicle hook: adjust travel_minutes + fuel/condition/trace before other modifiers.
         try:
+            # Lazy: ``vehicles`` may import this module — avoid import cycle at load.
             from engine.systems.vehicles import apply_vehicle_to_travel
 
             apply_vehicle_to_travel(state, action_ctx)
         except Exception as e:
+            log_swallowed_exception('engine/world/timers.py:908', e)
             try:
-                from engine.core.errors import record_error
 
                 record_error(state, "timers.apply_vehicle_to_travel", e)
-            except Exception:
-                pass
+            except Exception as _omni_sw_913:
+                log_swallowed_exception('engine/world/timers.py:913', _omni_sw_913)
         # Trace tier: multiply travel time (and optional cash estimate) when Wanted/Lockdown.
         try:
-            from engine.core.trace import apply_trace_travel_friction, get_trace_tier
 
             if bool(action_ctx.get("w2_travel_precalc")):
                 pass
@@ -937,10 +965,10 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                         try:
                             old_c = float(tcc)
                             action_ctx["travel_cash_cost"] = max(0, int(round(old_c * mult)))
-                        except Exception:
-                            pass
-        except Exception:
-            pass
+                        except Exception as _omni_sw_940:
+                            log_swallowed_exception('engine/world/timers.py:940', _omni_sw_940)
+        except Exception as _omni_sw_942:
+            log_swallowed_exception('engine/world/timers.py:942', _omni_sw_942)
         # Location-specific movement friction (e.g., police sweep).
         try:
             cur_loc = str(state.get("player", {}).get("location", "") or "").strip().lower()
@@ -956,7 +984,8 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                     if isinstance(r, dict):
                         try:
                             until = int(r.get("police_sweep_until_day", 0) or 0)
-                        except Exception:
+                        except Exception as _omni_sw_959:
+                            log_swallowed_exception('engine/world/timers.py:959', _omni_sw_959)
                             until = 0
                         if until >= day_now:
                             extra += int(snap.get("travel_friction_police_sweep_min", BALANCE.travel_friction_police_sweep_min) or BALANCE.travel_friction_police_sweep_min)
@@ -967,23 +996,23 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                     if isinstance(r2, dict):
                         try:
                             until2 = int(r2.get("corporate_lockdown_until_day", 0) or 0)
-                        except Exception:
+                        except Exception as _omni_sw_970:
+                            log_swallowed_exception('engine/world/timers.py:970', _omni_sw_970)
                             until2 = 0
                         if until2 >= day_now:
                             extra += int(snap.get("travel_friction_lockdown_min", BALANCE.travel_friction_lockdown_min) or BALANCE.travel_friction_lockdown_min)
             if extra > 0:
                 try:
                     action_ctx["travel_minutes"] = int(action_ctx.get("travel_minutes", 30) or 30) + extra
-                except Exception:
+                except Exception as _omni_sw_977:
+                    log_swallowed_exception('engine/world/timers.py:977', _omni_sw_977)
                     action_ctx["travel_minutes"] = 30 + extra
                 state.setdefault("world_notes", []).append(f"[Restriction] Travel friction +{extra}min")
                 action_ctx.setdefault("time_breakdown", []).append({"label": "restrictions", "minutes": int(extra)})
-        except Exception:
-            pass
+        except Exception as _omni_sw_981:
+            log_swallowed_exception('engine/world/timers.py:981', _omni_sw_981)
         # Weather travel modifier.
         try:
-            from engine.world.weather import ensure_weather, travel_minutes_modifier
-            from engine.core.balance import BALANCE
 
             world = state.get("world", {}) or {}
             meta2 = state.get("meta", {}) or {}
@@ -1022,11 +1051,10 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                     action_ctx["travel_minutes"] = int(action_ctx.get("travel_minutes", 30) or 30) + add2
                     if add2:
                         action_ctx.setdefault("time_breakdown", []).append({"label": "weather(dest)", "minutes": int(add2)})
-        except Exception:
-            pass
+        except Exception as _omni_sw_1025:
+            log_swallowed_exception('engine/world/timers.py:1025', _omni_sw_1025)
         # History border controls (year-aware): crossing into strict borders costs time.
         try:
-            from engine.world.atlas import ensure_country_history_idx, ensure_location_profile
 
             meta2 = state.get("meta", {}) or {}
             sy = int(meta2.get("sim_year", 0) or 0)
@@ -1047,12 +1075,13 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                     if extra_b:
                         action_ctx["travel_minutes"] = int(action_ctx.get("travel_minutes", 30) or 30) + extra_b
                         action_ctx.setdefault("time_breakdown", []).append({"label": "border_controls", "minutes": int(extra_b)})
-        except Exception:
-            pass
+        except Exception as _omni_sw_1050:
+            log_swallowed_exception('engine/world/timers.py:1050', _omni_sw_1050)
         # Base travel (whatever minutes currently set after modifiers).
         try:
             tm = int(action_ctx.get("travel_minutes", 30) or 30)
-        except Exception:
+        except Exception as _omni_sw_1055:
+            log_swallowed_exception('engine/world/timers.py:1055', _omni_sw_1055)
             tm = 30
         base_guess = max(0, tm)
         # If breakdown exists, subtract known extras to approximate base.
@@ -1064,8 +1093,8 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
             if label in ("restrictions", "weather", "weather(dest)", "border_controls", "trace_friction"):
                 try:
                     extras += int(it.get("minutes", 0) or 0)
-                except Exception:
-                    pass
+                except Exception as _omni_sw_1067:
+                    log_swallowed_exception('engine/world/timers.py:1067', _omni_sw_1067)
         base = max(0, base_guess - extras)
         action_ctx.setdefault("time_breakdown", []).insert(0, {"label": "travel_base", "minutes": int(base)})
         _advance(meta, int(action_ctx.get("travel_minutes", 30)))
@@ -1073,7 +1102,8 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
         if str(kind).lower() == "sleep":
             try:
                 rm = int(action_ctx.get("rested_minutes", 8 * 60) or 8 * 60)
-            except Exception:
+            except Exception as _omni_sw_1076:
+                log_swallowed_exception('engine/world/timers.py:1076', _omni_sw_1076)
                 rm = 8 * 60
             rm = max(60, min(12 * 60, rm))
             action_ctx["rested_minutes"] = rm
@@ -1093,60 +1123,53 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
         if isinstance(world, dict):
             last = int(world.get("last_heat_decay_day", 0) or 0)
             if last != int(cur_day):
-                from engine.world.heat import decay_heat_and_suspicion
 
                 decay_heat_and_suspicion(state, cur_day=int(cur_day))
                 try:
-                    from engine.systems.judicial import tick_judicial_daily
 
                     tick_judicial_daily(state, day=int(cur_day))
-                except Exception:
-                    pass
+                except Exception as _omni_sw_1103:
+                    log_swallowed_exception('engine/world/timers.py:1103', _omni_sw_1103)
                 try:
-                    from engine.npc.npc_agenda import tick_npc_agendas_daily
 
                     tick_npc_agendas_daily(state, day=int(cur_day))
-                except Exception:
-                    pass
+                except Exception as _omni_sw_1109:
+                    log_swallowed_exception('engine/world/timers.py:1109', _omni_sw_1109)
                 try:
-                    from engine.player.medical_bio import tick_medical_daily
 
                     tick_medical_daily(state, day=int(cur_day))
-                except Exception:
-                    pass
+                except Exception as _omni_sw_1115:
+                    log_swallowed_exception('engine/world/timers.py:1115', _omni_sw_1115)
                 # NPC memory decay + consolidation (once per day).
                 try:
-                    from engine.npc.memory import process_memory_decay
 
                     counts = process_memory_decay(state)
                     if isinstance(counts, dict) and (counts.get("decayed") or counts.get("removed") or counts.get("consolidated")):
                         state.setdefault("world_notes", []).append(
                             f"[Memory] decayed={int(counts.get('decayed',0) or 0)} removed={int(counts.get('removed',0) or 0)} consolidated={int(counts.get('consolidated',0) or 0)}"
                         )
-                except Exception:
-                    pass
+                except Exception as _omni_sw_1126:
+                    log_swallowed_exception('engine/world/timers.py:1126', _omni_sw_1126)
                 world["last_heat_decay_day"] = int(cur_day)
     except Exception as e:
+        log_swallowed_exception('engine/world/timers.py:1129', e)
         try:
-            from engine.core.errors import record_error
 
             record_error(state, "timers.decay_heat_and_suspicion", e)
-        except Exception:
-            pass
+        except Exception as _omni_sw_1134:
+            log_swallowed_exception('engine/world/timers.py:1134', _omni_sw_1134)
     _materialize_deliveries_if_arrived(state, cur_day=cur_day, cur_min=cur_min)
     # Cache sim year / tech epoch for this turn (UI + language barriers).
     try:
-        from engine.world.time_model import cache_sim_time
 
-        cache_sim_time(state)
+        _time_model.cache_sim_time(state)
     except Exception as e:
+        log_swallowed_exception('engine/world/timers.py:1142', e)
         try:
-            from engine.core.errors import record_error
 
             record_error(state, "timers.cache_sim_time", e)
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_1147:
+            log_swallowed_exception('engine/world/timers.py:1147', _omni_sw_1147)
     # Limit how many scheduled items we process per turn to avoid narrative/UI spam.
     # IMPORTANT: we do NOT change scheduling logic or sim clock; we simply defer overflow to next turn.
     cap = 3
@@ -1211,19 +1234,20 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                 if prop in ("contacts", "contact_network"):
                     rp["relay_pending"] = True
     except Exception as e:
-        _record_soft_error(state, "timers.tick_disguise_expiry", e)
+        log_swallowed_exception('engine/world/timers.py:1213', e)
+        _record_soft_error(state, "timers.ripple_cap_fairness", e)
 
     state["triggered_events_this_turn"] = triggered
     if triggered:
         try:
             _apply_triggered_events(state, triggered)
         except Exception as e:
+            log_swallowed_exception('engine/world/timers.py:1220', e)
             try:
-                from engine.core.errors import record_error
 
                 record_error(state, "timers.apply_triggered_events", e)
-            except Exception:
-                pass
+            except Exception as _omni_sw_1225:
+                log_swallowed_exception('engine/world/timers.py:1225', _omni_sw_1225)
     if triggered:
         state.setdefault("world_notes", []).extend([f"Triggered event: {ev.get('title', ev.get('event_type', 'unknown'))}" for ev in triggered])
     state["surfacing_ripples_this_turn"] = surfaced
@@ -1231,95 +1255,86 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
         state.setdefault("world_notes", []).extend([f"Surfaced ripple: {rp.get('text', 'unknown')}" for rp in surfaced])
         # Apply ripple effects only when they surface and are logically propagated.
         try:
-            from engine.social.ripples import apply_ripple_effects
 
             for rp in surfaced:
                 if isinstance(rp, dict) and not rp.get("dropped_by_propagation"):
                     apply_ripple_effects(state, rp)
         except Exception as e:
+            log_swallowed_exception('engine/world/timers.py:1239', e)
             try:
-                from engine.core.errors import record_error
 
                 record_error(state, "timers.apply_ripple_effects", e)
-            except Exception:
-                pass
+            except Exception as _omni_sw_1244:
+                log_swallowed_exception('engine/world/timers.py:1244', _omni_sw_1244)
         # Update NPC beliefs from surfaced ripples (contacts/witness/local).
         try:
-            from engine.npc.npcs import apply_beliefs_from_ripple
 
             for rp in surfaced:
                 if isinstance(rp, dict) and not rp.get("dropped_by_propagation"):
                     apply_beliefs_from_ripple(state, rp)
         except Exception as e:
+            log_swallowed_exception('engine/world/timers.py:1253', e)
             try:
-                from engine.core.errors import record_error
 
                 record_error(state, "timers.apply_beliefs_from_ripple", e)
-            except Exception:
-                pass
+            except Exception as _omni_sw_1258:
+                log_swallowed_exception('engine/world/timers.py:1258', _omni_sw_1258)
         # Dead NPC cleanup / non-interactable guardrail.
         try:
-            from engine.npc.dead_npc import cleanup_dead_npcs
 
             cleanup_dead_npcs(state)
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_1265:
+            log_swallowed_exception('engine/world/timers.py:1265', _omni_sw_1265)
     # Scene queue pump: if no active scene, start the next queued one.
     try:
         flags = state.get("flags", {}) or {}
         if isinstance(flags, dict) and bool(flags.get("scenes_enabled", True)) and state.get("active_scene") is None:
-            from engine.systems.scenes import pump_scene_queue
 
             pump_scene_queue(state)
     except Exception as e:
+        log_swallowed_exception('engine/world/timers.py:1275', e)
         try:
-            from engine.core.errors import record_error
 
             record_error(state, "timers.pump_scene_queue", e)
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_1280:
+            log_swallowed_exception('engine/world/timers.py:1280', _omni_sw_1280)
     # Quest chains tick (multi-step objectives).
     try:
-        from engine.systems.quests import tick_quest_chains
 
         tick_quest_chains(state, action_ctx)
     except Exception as e:
+        log_swallowed_exception('engine/world/timers.py:1288', e)
         try:
-            from engine.core.errors import record_error
 
             record_error(state, "timers.tick_quest_chains", e)
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_1293:
+            log_swallowed_exception('engine/world/timers.py:1293', _omni_sw_1293)
     # Disguise expiry tick.
     try:
-        from engine.systems.disguise import tick_disguise_expiry
 
         tick_disguise_expiry(state)
     except Exception as e:
-        _record_soft_error(state, "timers.tick_effects_expiry", e)
+        log_swallowed_exception('engine/world/timers.py:1301', e)
+        _record_soft_error(state, "timers.tick_disguise_expiry", e)
 
     # Status effects expiry tick (player + NPCs).
     try:
-        from engine.systems.effects import tick_effects_expiry
 
         tick_effects_expiry(state)
     except Exception as e:
-        _record_soft_error(state, "timers.apply_lay_low_bonus", e)
+        log_swallowed_exception('engine/world/timers.py:1309', e)
+        _record_soft_error(state, "timers.tick_effects_expiry", e)
 
     # Safehouse lay-low bonus on rest/sleep.
     try:
         if str(action_ctx.get("action_type", "") or "") in ("rest", "sleep"):
-            from engine.systems.safehouse import apply_lay_low_bonus
 
             apply_lay_low_bonus(state)
-            from engine.systems.accommodation import apply_accommodation_rest_bonus
 
             apply_accommodation_rest_bonus(state)
     except Exception as e:
-        _record_soft_error(state, "timers.cleanup_dead_npcs", e)
+        log_swallowed_exception('engine/world/timers.py:1321', e)
+        _record_soft_error(state, "timers.lay_low_accommodation", e)
 
     # Archive completed items to keep active queues clean.
     if triggered:
@@ -1333,11 +1348,11 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
     # Unified cleanup (lightweight, deterministic).
     try:
         # Keep dead NPC invariants stable even if no ripple surfaced this turn.
-        from engine.npc.dead_npc import cleanup_dead_npcs
 
         cleanup_dead_npcs(state)
     except Exception as e:
-        _record_soft_error(state, "timers.pending_deliveries_bound", e)
+        log_swallowed_exception('engine/world/timers.py:1339', e)
+        _record_soft_error(state, "timers.cleanup_dead_npcs", e)
     try:
         # Bound pending_deliveries list to avoid unbounded save growth.
         world3 = state.get("world", {}) or {}
@@ -1347,8 +1362,9 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
             unresolved = [r for r in pd if isinstance(r, dict) and not bool(r.get("delivered", False)) and not bool(r.get("expired", False))]
             resolved = [r for r in pd if isinstance(r, dict) and (bool(r.get("delivered", False)) or bool(r.get("expired", False)))]
             world3["pending_deliveries"] = (unresolved[:80] + resolved[:40])[:120]
-    except Exception:
-        pass
+    except Exception as e:
+        log_swallowed_exception('engine/world/timers.py:1350', e)
+        _record_soft_error(state, "timers.pending_deliveries_bound", e)
 
 
 def _materialize_deliveries_if_arrived(state: dict[str, Any], *, cur_day: int, cur_min: int) -> None:
@@ -1357,7 +1373,8 @@ def _materialize_deliveries_if_arrived(state: dict[str, Any], *, cur_day: int, c
         p = state.get("player", {}) or {}
         loc = str(p.get("location", "") or "").strip().lower()
         did = str(p.get("district", "") or "").strip().lower()
-    except Exception:
+    except Exception as _omni_sw_1360:
+        log_swallowed_exception('engine/world/timers.py:1360', _omni_sw_1360)
         return
 
     world = state.setdefault("world", {})
@@ -1383,7 +1400,8 @@ def _materialize_deliveries_if_arrived(state: dict[str, Any], *, cur_day: int, c
         try:
             rd = int(row.get("ready_day", 99999) or 99999)
             rt = int(row.get("ready_time", 99999) or 99999)
-        except Exception:
+        except Exception as _omni_sw_1386:
+            log_swallowed_exception('engine/world/timers.py:1386', _omni_sw_1386)
             rd, rt = 99999, 99999
         when = (rd, rt)
         if when > (int(cur_day), int(cur_min)):
@@ -1403,12 +1421,10 @@ def _materialize_deliveries_if_arrived(state: dict[str, Any], *, cur_day: int, c
         try:
             flags = state.get("flags", {}) or {}
             if isinstance(flags, dict) and bool(flags.get("scenes_enabled", True)) and state.get("active_scene") is None:
-                from engine.systems.scenes import start_drop_pickup_scene
 
                 start_drop_pickup_scene(state, delivery_row=row)
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_1409:
+            log_swallowed_exception('engine/world/timers.py:1409', _omni_sw_1409)
     if changed:
         world["pending_deliveries"] = pending
 
@@ -1439,18 +1455,20 @@ def _spawn_delivery_into_nearby(state: dict[str, Any], row: dict[str, Any]) -> N
         try:
             meta = state.get("meta", {}) or {}
             seed = str(meta.get("world_seed", "") or meta.get("seed_pack", "") or "").strip()
-        except Exception:
+        except Exception as _omni_sw_1442:
+            log_swallowed_exception('engine/world/timers.py:1442', _omni_sw_1442)
             seed = "seed"
         try:
             tp = int((state.get("trace", {}) or {}).get("trace_pct", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_1446:
+            log_swallowed_exception('engine/world/timers.py:1446', _omni_sw_1446)
             tp = 0
         try:
             # Use district police presence if available.
-            from engine.systems.shop import _district_police_presence  # type: ignore
 
             pp = int(_district_police_presence(state) or 0)
-        except Exception:
+        except Exception as _omni_sw_1453:
+            log_swallowed_exception('engine/world/timers.py:1453', _omni_sw_1453)
             pp = 0
 
         base = 6 if sting_bias == "higher" else 3
@@ -1471,7 +1489,6 @@ def _spawn_delivery_into_nearby(state: dict[str, Any], row: dict[str, Any]) -> N
         row["pickup_risk"] = pr
 
     try:
-        from engine.systems.ammo import item_is_ammo, rounds_per_purchase
 
         if callable(item_is_ammo) and item_is_ammo(state, iid):
             r = rounds_per_purchase(state, iid)
@@ -1498,7 +1515,8 @@ def _spawn_delivery_into_nearby(state: dict[str, Any], row: dict[str, Any]) -> N
                     "sting_on_pickup": bool(pr.get("sting_on_pickup", False)),
                 }
             )
-    except Exception:
+    except Exception as _omni_sw_1501:
+        log_swallowed_exception('engine/world/timers.py:1501', _omni_sw_1501)
         nearby.append(
             {
                 "id": iid,

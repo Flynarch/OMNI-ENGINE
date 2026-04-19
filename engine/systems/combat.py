@@ -3,6 +3,11 @@ from __future__ import annotations
 import random
 from typing import Any
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.core.factions import sync_faction_statuses_from_trace
+from engine.core.rng import roll_for_action
+from engine.npc.npc_combat_ai import apply_npc_combat_followup
+from engine.systems.effects import add_effect
 from engine.systems.hacking import ensure_location_factions
 
 
@@ -18,11 +23,9 @@ def roll_d100(state: dict[str, Any] | None = None, action_ctx: dict[str, Any] | 
     """Combat roll helper. Prefer deterministic roll when state/action_ctx provided."""
     if isinstance(state, dict) and isinstance(action_ctx, dict):
         try:
-            from engine.core.rng import roll_for_action
-
             return int(roll_for_action(state, action_ctx, salt="combat"))
-        except Exception:
-            pass
+        except Exception as _omni_sw_24:
+            log_swallowed_exception('engine/systems/combat.py:24', _omni_sw_24)
     return random.randint(1, 100)
 
 
@@ -107,8 +110,6 @@ def resolve_combat_after_roll(state: dict[str, Any], action_ctx: dict[str, Any],
             w["jammed"] = True
             # Combat status effect: jam shock (short), critical jam is stronger.
             try:
-                from engine.systems.effects import add_effect
-
                 add_effect(
                     state,
                     target=state.setdefault("player", {}),
@@ -121,8 +122,8 @@ def resolve_combat_after_roll(state: dict[str, Any], action_ctx: dict[str, Any],
                     source="combat",
                     meta={"reason": "jam", "critical": bool(crit_jam)},
                 )
-            except Exception:
-                pass
+            except Exception as _omni_sw_124:
+                log_swallowed_exception('engine/systems/combat.py:124', _omni_sw_124)
             return
         flags["ammo_ok"] = consume_ammo(w, 1)
         degrade_weapon(w, event="combat_damage")
@@ -132,8 +133,6 @@ def resolve_combat_after_roll(state: dict[str, Any], action_ctx: dict[str, Any],
     # Combat status effect: bleeding risk on critical failure / rough outcomes.
     try:
         if "Critical Failure" in outcome:
-            from engine.systems.effects import add_effect
-
             add_effect(
                 state,
                 target=state.setdefault("player", {}),
@@ -146,14 +145,11 @@ def resolve_combat_after_roll(state: dict[str, Any], action_ctx: dict[str, Any],
                 source="combat",
                 meta={"reason": "critical_failure"},
             )
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_149:
+        log_swallowed_exception('engine/systems/combat.py:149', _omni_sw_149)
     # World attention: combat tends to increase investigation/trace pressure,
     # unless phrased as stealth/private action.
     try:
-        from engine.core.factions import sync_faction_statuses_from_trace
-
         visibility = str(action_ctx.get("visibility", "public") or "public").lower()
         if visibility in ("low", "private", "stealth"):
             delta = 6
@@ -174,9 +170,8 @@ def resolve_combat_after_roll(state: dict[str, Any], action_ctx: dict[str, Any],
         trace["trace_pct"] = pct
         trace["trace_status"] = "Ghost" if pct <= 25 else "Flagged" if pct <= 50 else "Investigated" if pct <= 75 else "Manhunt"
         sync_faction_statuses_from_trace(state)
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_177:
+        log_swallowed_exception('engine/systems/combat.py:177', _omni_sw_177)
     # Faction impact: if target is affiliated (police/corporate/black_market),
     # adjust world.factions in a directed way (beyond generic trace noise).
     try:
@@ -243,17 +238,12 @@ def resolve_combat_after_roll(state: dict[str, Any], action_ctx: dict[str, Any],
             for f in ("corporate", "police", "black_market"):
                 for k in ("stability", "power"):
                     factions[f][k] = max(0, min(100, int(factions[f].get(k, 50) or 50)))
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_246:
+        log_swallowed_exception('engine/systems/combat.py:246', _omni_sw_246)
     try:
-        from engine.npc.npc_combat_ai import apply_npc_combat_followup
-
         apply_npc_combat_followup(state, action_ctx, roll_pkg)
-    except Exception:
-        pass
-
-
+    except Exception as _omni_sw_253:
+        log_swallowed_exception('engine/systems/combat.py:253', _omni_sw_253)
 def jam_check(weapon: dict[str, Any], roll: int) -> tuple[bool, bool]:
     # Poor condition (4): jam on 1-15; 1-5 also critical-failure consequences.
     tier = int(weapon.get("condition_tier", 2))

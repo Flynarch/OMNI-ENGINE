@@ -5,6 +5,9 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.core.trace import get_trace_tier
+
 
 def _h32(*parts: Any) -> int:
     s = "|".join(str(p) for p in parts)
@@ -57,8 +60,8 @@ def ensure_smartphone(state: dict[str, Any]) -> dict[str, Any]:
                     seen.add(nm.lower())
                 if len(contacts) >= 24:
                     break
-    except Exception:
-        pass
+    except Exception as _omni_sw_60:
+        log_swallowed_exception('engine/systems/smartphone.py:60', _omni_sw_60)
     return sp
 
 
@@ -71,7 +74,8 @@ def _skill_level(state: dict[str, Any], key: str) -> int:
         return 1
     try:
         return max(1, min(20, int(row.get("level", 1) or 1)))
-    except Exception:
+    except Exception as _omni_sw_74:
+        log_swallowed_exception('engine/systems/smartphone.py:74', _omni_sw_74)
         return 1
 
 
@@ -176,8 +180,8 @@ def apply_smartphone_pipeline(state: dict[str, Any], action_ctx: dict[str, Any])
                     if isinstance(n, dict):
                         tr = int(n.get("trust", 50) or 50)
                         n["trust"] = min(100, tr + 1)
-                except Exception:
-                    pass
+                except Exception as _omni_sw_179:
+                    log_swallowed_exception('engine/systems/smartphone.py:179', _omni_sw_179)
             _append_message(state, sp, direction="out", peer=peer, text="[voice call]", kind="call")
             im = max(im, 4)
     elif kind == "message":
@@ -197,8 +201,8 @@ def apply_smartphone_pipeline(state: dict[str, Any], action_ctx: dict[str, Any])
                     if isinstance(n, dict):
                         tr = int(n.get("trust", 50) or 50)
                         n["trust"] = min(100, tr + 1)
-                except Exception:
-                    pass
+                except Exception as _omni_sw_200:
+                    log_swallowed_exception('engine/systems/smartphone.py:200', _omni_sw_200)
             im = max(im, 3)
     elif kind == "dark_web":
         if not bool(sp.get("phone_on", True)):
@@ -215,15 +219,13 @@ def apply_smartphone_pipeline(state: dict[str, Any], action_ctx: dict[str, Any])
                 result["msg"] = "Dark web session connected (high risk)."
                 _append_message(state, sp, direction="out", peer="dark_web", text="[session start]", kind="dark_web")
                 try:
-                    from engine.core.trace import get_trace_tier
-
                     tier = str(get_trace_tier(state).get("tier_id", "") or "")
                     if tier in ("Wanted", "Lockdown"):
                         tr = state.setdefault("trace", {})
                         cur = int(tr.get("trace_pct", 0) or 0)
                         tr["trace_pct"] = min(100, cur + 1)
-                except Exception:
-                    pass
+                except Exception as _omni_sw_225:
+                    log_swallowed_exception('engine/systems/smartphone.py:225', _omni_sw_225)
                 im = max(im, 12)
     else:
         result = {"ok": False, "reason": "UNKNOWN_OP", "msg": "Unknown smartphone operation."}
@@ -240,8 +242,6 @@ def maybe_police_track_phone_daily(state: dict[str, Any]) -> None:
     if not bool(sp.get("phone_on", True)):
         return
     try:
-        from engine.core.trace import get_trace_tier
-
         tier = str(get_trace_tier(state).get("tier_id", "") or "")
         if tier not in ("Wanted", "Lockdown"):
             return
@@ -251,10 +251,8 @@ def maybe_police_track_phone_daily(state: dict[str, Any]) -> None:
         state.setdefault("world_notes", []).append(
             "[PhoneTrack] Carrier metadata + tower logs increased pressure while your phone stayed on."
         )
-    except Exception:
-        pass
-
-
+    except Exception as _omni_sw_254:
+        log_swallowed_exception('engine/systems/smartphone.py:254', _omni_sw_254)
 def parse_phone_command(cmd: str) -> dict[str, Any] | None:
     """Parse PHONE / SMARTPHONE CLI into smartphone_op + action_ctx fields, or None."""
     raw = str(cmd or "").strip()

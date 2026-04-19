@@ -5,14 +5,13 @@ from typing import Any
 from rich.table import Table
 
 from display.renderer import console
+from engine.systems import property as prop
 
 
 def handle_property(state: dict[str, Any], cmd: str) -> bool:
     up = cmd.strip().upper()
     if not up.startswith("PROPERTY"):
         return False
-
-    import engine.systems.property as prop
 
     prop.ensure_player_assets(state)
     parts = cmd.split()

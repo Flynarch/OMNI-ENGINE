@@ -6,67 +6,30 @@ import hashlib
 from engine.systems.scenes_delivery import dispatch_delivery_advance
 from engine.systems.scenes_police import dispatch_police_advance, dispatch_police_auto
 from engine.systems.scenes_raid import dispatch_raid_advance, dispatch_raid_auto
+from engine.systems.scene_roll import _now, _player_loc, _seed_key, scene_rng
 from engine.systems.scenes_sting import dispatch_sting_advance, dispatch_sting_auto
+
+from engine.core.errors import record_error
+from engine.core.factions import sync_faction_statuses_from_trace
+from engine.player.inventory_ops import apply_inventory_ops
+from engine.social.police_check import (
+    _firearm_policy_for_country,
+    _has_illegal_weapon,
+    _has_weapon_permit,
+    schedule_weapon_check,
+)
+from engine.systems.arrest import execute_arrest
+from engine.systems.search_conceal import apply_conceal, apply_dump, resolve_search
+from engine.world.atlas import ensure_location_profile
+from engine.world.casefile import append_casefile
+from engine.world.heat import bump_heat, bump_suspicion
 
 
 def _record_soft_error(state: dict[str, Any], scope: str, err: Exception) -> None:
     try:
-        from engine.core.errors import record_error
-
         record_error(state, scope, err)
     except Exception:
         pass
-
-
-def _now(state: dict[str, Any]) -> tuple[int, int]:
-    meta = state.get("meta", {}) or {}
-    try:
-        day = int(meta.get("day", 1) or 1)
-    except Exception:
-        day = 1
-    try:
-        tmin = int(meta.get("time_min", 0) or 0)
-    except Exception:
-        tmin = 0
-    return (day, tmin)
-
-
-def _seed_key(state: dict[str, Any]) -> str:
-    meta = state.get("meta", {}) or {}
-    if isinstance(meta, dict):
-        ws = str(meta.get("world_seed", "") or "").strip()
-        if ws:
-            return ws
-        sp = str(meta.get("seed_pack", "") or "").strip()
-        if sp:
-            return sp
-    return "seed"
-
-
-def _player_loc(state: dict[str, Any]) -> tuple[str, str]:
-    p = state.get("player", {}) or {}
-    loc = str(p.get("location", "") or "").strip().lower()
-    did = str(p.get("district", "") or "").strip().lower()
-    return (loc, did)
-
-
-def _h100(*parts: Any) -> int:
-    s = "|".join([str(p) for p in parts])
-    h = hashlib.md5(s.encode("utf-8", errors="ignore")).hexdigest()
-    return int(h[:8], 16) % 100
-
-
-def scene_rng(state: dict[str, Any], *, scene_id: str, scene_type: str, salt: str) -> int:
-    """Deterministic 0..99 RNG for scenes (never use random())."""
-    seed = _seed_key(state)
-    day, tmin = _now(state)
-    meta = state.get("meta", {}) or {}
-    try:
-        turn = int(meta.get("turn", 0) or 0)
-    except Exception:
-        turn = 0
-    loc, did = _player_loc(state)
-    return _h100(seed, day, tmin, turn, loc, did, str(scene_id), str(scene_type), str(salt))
 
 
 def has_active_scene(state: dict[str, Any]) -> bool:
@@ -389,7 +352,6 @@ def _advance_border_control(state: dict[str, Any], sc: dict[str, Any], action_ct
         arg = str(action_ctx.get("scene_arg", "") or "").strip()
         if not arg:
             return _scene_return(ok=False, reason="missing_arg", phase_before=phase_before, phase_after=phase_before, ended=False, next_options=list(sc.get("next_options") or []), effects=[], messages=["Usage: SCENE CONCEAL <item_id>"])
-        from engine.systems.search_conceal import apply_conceal
 
         r0 = apply_conceal(state, item_id=arg, method="vehicle")
         if not bool(r0.get("ok")):
@@ -399,7 +361,6 @@ def _advance_border_control(state: dict[str, Any], sc: dict[str, Any], action_ct
         arg = str(action_ctx.get("scene_arg", "") or "").strip()
         if not arg:
             return _scene_return(ok=False, reason="missing_arg", phase_before=phase_before, phase_after=phase_before, ended=False, next_options=list(sc.get("next_options") or []), effects=[], messages=["Usage: SCENE DUMP <item_id>"])
-        from engine.systems.search_conceal import apply_dump
 
         r0 = apply_dump(state, item_id=arg)
         if not bool(r0.get("ok")):
@@ -438,7 +399,6 @@ def _advance_border_control(state: dict[str, Any], sc: dict[str, Any], action_ct
         bc = int((((sc.get("context") or {}) if isinstance(sc.get("context"), dict) else {}).get("payload") or {}).get("border_controls", 0) or 0)
         intensity = 70 if bc >= 80 else 60
         try:
-            from engine.systems.search_conceal import resolve_search
 
             sr = resolve_search(state, scene_id=str(sc.get("scene_id", "")), scene_type="border_control", intensity=int(intensity), salt="border_search")
             if sr.get("found"):
@@ -490,7 +450,6 @@ def _advance_traffic_stop(state: dict[str, Any], sc: dict[str, Any], action_ctx:
         arg = str(action_ctx.get("scene_arg", "") or "").strip()
         if not arg:
             return _scene_return(ok=False, reason="missing_arg", phase_before=phase_before, phase_after=phase_before, ended=False, next_options=list(sc.get("next_options") or []), effects=[], messages=["Usage: SCENE CONCEAL <item_id>"])
-        from engine.systems.search_conceal import apply_conceal
 
         r0 = apply_conceal(state, item_id=arg, method="body")
         if not bool(r0.get("ok")):
@@ -500,7 +459,6 @@ def _advance_traffic_stop(state: dict[str, Any], sc: dict[str, Any], action_ctx:
         arg = str(action_ctx.get("scene_arg", "") or "").strip()
         if not arg:
             return _scene_return(ok=False, reason="missing_arg", phase_before=phase_before, phase_after=phase_before, ended=False, next_options=list(sc.get("next_options") or []), effects=[], messages=["Usage: SCENE DUMP <item_id>"])
-        from engine.systems.search_conceal import apply_dump
 
         r0 = apply_dump(state, item_id=arg)
         if not bool(r0.get("ok")):
@@ -537,7 +495,6 @@ def _advance_traffic_stop(state: dict[str, Any], sc: dict[str, Any], action_ctx:
     if act in ("comply", "cooperate"):
         # Deterministic search outcome using conceal marks.
         try:
-            from engine.systems.search_conceal import resolve_search
 
             sr = resolve_search(state, scene_id=str(sc.get("scene_id", "")), scene_type="traffic_stop", intensity=55, salt="traffic_search")
             if sr.get("found"):
@@ -589,7 +546,6 @@ def _advance_vehicle_search(state: dict[str, Any], sc: dict[str, Any], action_ct
         arg = str(action_ctx.get("scene_arg", "") or "").strip()
         if not arg:
             return _scene_return(ok=False, reason="missing_arg", phase_before=phase_before, phase_after=phase_before, ended=False, next_options=list(sc.get("next_options") or []), effects=[], messages=["Usage: SCENE CONCEAL <item_id>"])
-        from engine.systems.search_conceal import apply_conceal
 
         r0 = apply_conceal(state, item_id=arg, method="bag")
         if not bool(r0.get("ok")):
@@ -599,7 +555,6 @@ def _advance_vehicle_search(state: dict[str, Any], sc: dict[str, Any], action_ct
         arg = str(action_ctx.get("scene_arg", "") or "").strip()
         if not arg:
             return _scene_return(ok=False, reason="missing_arg", phase_before=phase_before, phase_after=phase_before, ended=False, next_options=list(sc.get("next_options") or []), effects=[], messages=["Usage: SCENE DUMP <item_id>"])
-        from engine.systems.search_conceal import apply_dump
 
         r0 = apply_dump(state, item_id=arg)
         if not bool(r0.get("ok")):
@@ -635,7 +590,6 @@ def _advance_vehicle_search(state: dict[str, Any], sc: dict[str, Any], action_ct
         return _scene_return(ok=True, reason="", phase_before=phase_before, phase_after="", ended=True, next_options=[], effects=effects, messages=["You bribe your way out of a vehicle search."])
     if act in ("comply", "cooperate"):
         try:
-            from engine.systems.search_conceal import resolve_search
 
             sr = resolve_search(state, scene_id=str(sc.get("scene_id", "")), scene_type="vehicle_search", intensity=75, salt="vehicle_search")
             if sr.get("found"):
@@ -671,7 +625,6 @@ def start_checkpoint_sweep_scene(state: dict[str, Any], *, payload: dict[str, An
     state["active_scene"] = sc
     state.setdefault("world_notes", []).append(f"[Scene] start checkpoint_sweep loc={loc0} att={att}")
     try:
-        from engine.world.casefile import append_casefile
 
         append_casefile(
             state,
@@ -687,7 +640,7 @@ def start_checkpoint_sweep_scene(state: dict[str, Any], *, payload: dict[str, An
             },
         )
     except Exception as e:
-        _record_soft_error(state, "scenes.sync_faction_statuses", e)
+        _record_soft_error(state, "scenes.checkpoint_sweep_casefile", e)
     return {"ok": True, "scene_id": scene_id, "scene_type": "checkpoint_sweep"}
 
 
@@ -740,7 +693,6 @@ def _advance_checkpoint_sweep(state: dict[str, Any], sc: dict[str, Any], action_
     def _maybe_schedule_stop(reason: str) -> dict[str, Any] | None:
         # Deterministically schedule a follow-up stop if illegal weapons are carried.
         try:
-            from engine.social.police_check import _has_illegal_weapon, schedule_weapon_check
 
             has_illegal, wids = _has_illegal_weapon(state)
             if not has_illegal or not wids:
@@ -831,7 +783,6 @@ def _advance_checkpoint_sweep(state: dict[str, Any], sc: dict[str, Any], action_
         corruption = "medium"
         firearm_policy = "standard_permit"
         try:
-            from engine.world.atlas import ensure_location_profile
 
             prof = ensure_location_profile(state, loc_here)
             if isinstance(prof, dict):
@@ -841,7 +792,6 @@ def _advance_checkpoint_sweep(state: dict[str, Any], sc: dict[str, Any], action_
         except Exception:
             pass
         try:
-            from engine.social.police_check import _firearm_policy_for_country, _has_weapon_permit
 
             fp = _firearm_policy_for_country(state, country=country or "unknown")
             firearm_policy = str(fp.get("firearm_policy", firearm_policy) or firearm_policy)
@@ -899,7 +849,6 @@ def _advance_checkpoint_sweep(state: dict[str, Any], sc: dict[str, Any], action_
         if not arg:
             return _scene_return(ok=False, reason="missing_arg", phase_before=phase_before, phase_after=phase_before, ended=False, next_options=list(sc.get("next_options") or []), effects=[], messages=["Usage: SCENE CONCEAL <item_id>"])
         try:
-            from engine.systems.search_conceal import apply_conceal
 
             r0 = apply_conceal(state, item_id=arg, method="bag")
         except Exception:
@@ -913,7 +862,6 @@ def _advance_checkpoint_sweep(state: dict[str, Any], sc: dict[str, Any], action_
         if not arg:
             return _scene_return(ok=False, reason="missing_arg", phase_before=phase_before, phase_after=phase_before, ended=False, next_options=list(sc.get("next_options") or []), effects=[], messages=["Usage: SCENE DUMP <item_id>"])
         try:
-            from engine.systems.search_conceal import apply_dump
 
             r0 = apply_dump(state, item_id=arg)
         except Exception:
@@ -1037,7 +985,6 @@ def _bump_trace(state: dict[str, Any], delta: int) -> int:
     tp = max(0, min(100, tp + int(delta)))
     tr["trace_pct"] = tp
     try:
-        from engine.core.factions import sync_faction_statuses_from_trace
 
         sync_faction_statuses_from_trace(state)
     except Exception:
@@ -1140,7 +1087,6 @@ def _advance_police_stop(state: dict[str, Any], sc: dict[str, Any], action_ctx: 
         # Patrol / heat-check path: arrest protocol, minor fine, escape roll, or bribe threshold.
         _patrol = phase_before == "approach" or str(reason or "").strip().lower() == "heat_check"
         if _patrol:
-            from engine.systems.arrest import execute_arrest
 
             def _patrol_escape_chance_pct() -> int:
                 base = 40
@@ -1302,7 +1248,6 @@ def _advance_police_stop(state: dict[str, Any], sc: dict[str, Any], action_ctx: 
         if act in ("run", "flee"):
             td = _bump_trace(state, 8 if law in ("strict", "militarized") else 6)
             try:
-                from engine.world.heat import bump_heat, bump_suspicion
 
                 loc, _did = _player_loc(state)
                 bump_suspicion(state, loc=loc, delta=6, reason="police_stop_flee", ttl_days=2)
@@ -1405,7 +1350,6 @@ def _advance_police_stop(state: dict[str, Any], sc: dict[str, Any], action_ctx: 
             if wids and _lie_detected():
                 # Search resolution: concealed items can reduce what is found (v1).
                 try:
-                    from engine.systems.search_conceal import resolve_search
 
                     _sr = resolve_search(state, scene_id=str(sc.get("scene_id", "")), scene_type="police_stop", intensity=80, salt="stop_search")
                     wids = [x for x in wids if x in (_sr.get("found") or wids)]
@@ -1462,7 +1406,6 @@ def _advance_police_stop(state: dict[str, Any], sc: dict[str, Any], action_ctx: 
         if act in ("run", "flee"):
             td = _bump_trace(state, 10 if law in ("strict", "militarized") else 8)
             try:
-                from engine.world.heat import bump_heat, bump_suspicion
 
                 loc, _did = _player_loc(state)
                 bump_suspicion(state, loc=loc, delta=6, reason="police_stop_flee", ttl_days=2)
@@ -1480,7 +1423,6 @@ def _advance_police_stop(state: dict[str, Any], sc: dict[str, Any], action_ctx: 
             if not arg:
                 return _scene_return(ok=False, reason="missing_arg", phase_before=phase_before, phase_after=phase_before, ended=False, next_options=list(sc.get("next_options") or []), effects=[], messages=["Usage: SCENE CONCEAL <item_id>"])
             try:
-                from engine.systems.search_conceal import apply_conceal
 
                 r0 = apply_conceal(state, item_id=arg, method="body")
             except Exception:
@@ -1494,7 +1436,6 @@ def _advance_police_stop(state: dict[str, Any], sc: dict[str, Any], action_ctx: 
             if not arg:
                 return _scene_return(ok=False, reason="missing_arg", phase_before=phase_before, phase_after=phase_before, ended=False, next_options=list(sc.get("next_options") or []), effects=[], messages=["Usage: SCENE DUMP <item_id>"])
             try:
-                from engine.systems.search_conceal import apply_dump
 
                 r0 = apply_dump(state, item_id=arg)
             except Exception:
@@ -1533,7 +1474,6 @@ def _auto_resolve_police_stop(state: dict[str, Any], sc: dict[str, Any], *, phas
     td = _bump_trace(state, 12 if law in ("strict", "militarized") else 10)
     clear_active_scene(state)
     try:
-        from engine.world.casefile import append_casefile
 
         loc, did = _player_loc(state)
         append_casefile(
@@ -1594,7 +1534,6 @@ def start_sting_setup_scene(state: dict[str, Any], *, payload: dict[str, Any]) -
     state["active_scene"] = sc
     state.setdefault("world_notes", []).append("[Scene] start sting_setup")
     try:
-        from engine.world.casefile import append_casefile
 
         append_casefile(
             state,
@@ -1617,7 +1556,6 @@ def start_sting_setup_scene(state: dict[str, Any], *, payload: dict[str, Any]) -
 def _schedule_police_stop_from_sting(state: dict[str, Any], *, reason: str, sting_item_id: str) -> dict[str, Any]:
     """Schedule a police weapon check follow-up (scene-first system will convert it)."""
     try:
-        from engine.social.police_check import _has_illegal_weapon, schedule_weapon_check
 
         has_illegal, wids = _has_illegal_weapon(state)
         if has_illegal and wids:
@@ -1636,7 +1574,6 @@ def _auto_resolve_sting_setup(state: dict[str, Any], sc: dict[str, Any], *, phas
     follow = _schedule_police_stop_from_sting(state, reason="sting_timeout", sting_item_id=iid)
     clear_active_scene(state)
     try:
-        from engine.world.casefile import append_casefile
 
         loc, did = _player_loc(state)
         append_casefile(
@@ -1726,7 +1663,6 @@ def _advance_sting_setup(state: dict[str, Any], sc: dict[str, Any], action_ctx: 
 
 def _advance_sting_operation(state: dict[str, Any], sc: dict[str, Any], action_ctx: dict[str, Any]) -> dict[str, Any]:
     """Hard consequence scene: surrender, flee (30%), or fight (auto-fail)."""
-    from engine.systems.arrest import execute_arrest
 
     phase_before = str(sc.get("phase", "") or "")
     act = str(action_ctx.get("scene_action", "") or "").strip().lower().replace("-", "_")
@@ -1803,7 +1739,6 @@ def _auto_resolve_safehouse_raid(state: dict[str, Any], sc: dict[str, Any], *, p
 
 
 def _advance_safehouse_raid(state: dict[str, Any], sc: dict[str, Any], action_ctx: dict[str, Any]) -> dict[str, Any]:
-    from engine.systems.arrest import execute_arrest
 
     phase_before = str(sc.get("phase", "") or "")
     act = str(action_ctx.get("scene_action", "") or "").strip().lower().replace("-", "_")
@@ -1874,7 +1809,6 @@ def start_raid_response_scene(state: dict[str, Any], *, payload: dict[str, Any])
     state["active_scene"] = sc
     state.setdefault("world_notes", []).append(f"[Scene] start raid_response loc={sh_loc}")
     try:
-        from engine.world.casefile import append_casefile
 
         append_casefile(
             state,
@@ -2086,7 +2020,6 @@ def _advance_raid_response(state: dict[str, Any], sc: dict[str, Any], action_ctx
 
     clear_active_scene(state)
     try:
-        from engine.world.casefile import append_casefile
 
         loc2, did2 = _player_loc(state)
         append_casefile(
@@ -2335,13 +2268,7 @@ def _scene_take_delivery(state: dict[str, Any], sc: dict[str, Any], *, phase_bef
         except Exception:
             pass
 
-    # Delegate the actual pickup (including decoy/sting behavior) to inventory_ops in a deterministic way.
-    try:
-        from engine.player.inventory_ops import apply_inventory_ops
-    except Exception:
-        apply_inventory_ops = None  # type: ignore
-
-    # Snapshots for deterministic effects.
+    # Snapshots for deterministic effects (before pickup applies).
     inv0 = state.get("inventory", {}) if isinstance(state.get("inventory"), dict) else {}
     bag0 = list((inv0 or {}).get("bag_contents") or []) if isinstance((inv0 or {}).get("bag_contents"), list) else []
     pocket0 = list((inv0 or {}).get("pocket_contents") or []) if isinstance((inv0 or {}).get("pocket_contents"), list) else []
@@ -2349,8 +2276,7 @@ def _scene_take_delivery(state: dict[str, Any], sc: dict[str, Any], *, phase_bef
     pe0 = list(state.get("pending_events") or []) if isinstance(state.get("pending_events"), list) else []
 
     actx = {"inventory_ops": [{"op": "pickup", "item_id": target_item_id, "to": "bag", "time_cost_min": 0}]}
-    if callable(apply_inventory_ops):
-        apply_inventory_ops(state, actx)
+    apply_inventory_ops(state, actx)
 
     clear_active_scene(state)
     inv1 = state.get("inventory", {}) if isinstance(state.get("inventory"), dict) else {}

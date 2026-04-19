@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,11 +21,13 @@ def sim_year_from_state(state: dict[str, Any]) -> int:
     meta = state.get("meta", {}) or {}
     try:
         start_year = int(p.get("year", 2025) or 2025)
-    except Exception:
+    except Exception as _omni_sw_23:
+        log_swallowed_exception('engine/world/time_model.py:23', _omni_sw_23)
         start_year = 2025
     try:
         day = int(meta.get("day", 1) or 1)
-    except Exception:
+    except Exception as _omni_sw_27:
+        log_swallowed_exception('engine/world/time_model.py:27', _omni_sw_27)
         day = 1
     return int(start_year + max(0, (day - 1)) // 365)
 
@@ -33,11 +36,13 @@ def tech_epoch_for_year(year: int, tech_progress: float = 0.0) -> TechEpoch:
     """Real-world leaning translator tech availability."""
     try:
         y = int(year)
-    except Exception:
+    except Exception as _omni_sw_36:
+        log_swallowed_exception('engine/world/time_model.py:36', _omni_sw_36)
         y = 2025
     try:
         tp = float(tech_progress or 0.0)
-    except Exception:
+    except Exception as _omni_sw_40:
+        log_swallowed_exception('engine/world/time_model.py:40', _omni_sw_40)
         tp = 0.0
     # tech_progress shifts effective year slightly (player/world influence hook).
     eff = int(round(y + max(-30.0, min(30.0, tp)) * 0.5))
@@ -61,7 +66,8 @@ def cache_sim_time(state: dict[str, Any]) -> dict[str, Any]:
     world = state.setdefault("world", {})
     try:
         tech_progress = float((world.get("tech_progress", 0.0) if isinstance(world, dict) else 0.0) or 0.0)
-    except Exception:
+    except Exception as _omni_sw_64:
+        log_swallowed_exception('engine/world/time_model.py:64', _omni_sw_64)
         tech_progress = 0.0
 
     y = sim_year_from_state(state)

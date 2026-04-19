@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.npc.npc_emotions import ensure_emotion_state, touch_emotion
+from engine.world.faction_report import append_faction_ripple_impact
+
 
 def _clamp_int(v: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, int(v)))
@@ -92,8 +96,6 @@ def apply_ripple_effects(state: dict[str, Any], rp: dict[str, Any]) -> None:
         if targets:
             try:
                 # Ensure emotion_state channels exist if using Plutchik foundation.
-                from engine.npc.npc_emotions import ensure_emotion_state, touch_emotion
-
                 turn = int(state.get("meta", {}).get("turn", 0) or 0)
                 for npc in targets:
                     ensure_emotion_state(npc)
@@ -102,16 +104,16 @@ def apply_ripple_effects(state: dict[str, Any], rp: dict[str, Any]) -> None:
                             continue
                         try:
                             delta = int(d)
-                        except Exception:
+                        except Exception as _omni_sw_105:
+                            log_swallowed_exception('engine/social/ripples.py:105', _omni_sw_105)
                             continue
                         cur = _clamp_int(npc.get(emo, 0), 0, 100)
                         npc[emo] = _clamp_int(cur + delta, 0, 100)
                         # Medium severity by default; callers can override by setting rp.impact_severity
                         sev = _clamp_int(int(impact.get("severity", 35) or 35), 0, 100)
                         touch_emotion(npc, emo, severity=sev, turn=turn, kind="ripple")
-            except Exception:
-                pass
-
+            except Exception as _omni_sw_112:
+                log_swallowed_exception('engine/social/ripples.py:112', _omni_sw_112)
     # Faction impacts.
     f_imp = impact.get("factions")
     if isinstance(f_imp, dict) and f_imp:
@@ -129,7 +131,8 @@ def apply_ripple_effects(state: dict[str, Any], rp: dict[str, Any]) -> None:
                             "power": int(row0.get("power", 50) or 50),
                             "stability": int(row0.get("stability", 50) or 50),
                         }
-                    except Exception:
+                    except Exception as _omni_sw_132:
+                        log_swallowed_exception('engine/social/ripples.py:132', _omni_sw_132)
                         before[fname] = {"power": 50, "stability": 50}
                 else:
                     before[fname] = {"power": 50, "stability": 50}
@@ -143,7 +146,8 @@ def apply_ripple_effects(state: dict[str, Any], rp: dict[str, Any]) -> None:
                     if k in delta:
                         try:
                             dd = int(delta.get(k, 0))
-                        except Exception:
+                        except Exception as _omni_sw_146:
+                            log_swallowed_exception('engine/social/ripples.py:146', _omni_sw_146)
                             dd = 0
                         row[k] = _clamp_int(int(row.get(k, 50) or 50) + dd, 0, 100)
             applied: dict[str, dict[str, int]] = {}
@@ -157,7 +161,8 @@ def apply_ripple_effects(state: dict[str, Any], rp: dict[str, Any]) -> None:
                 try:
                     ap = int(row.get("power", 50) or 50)
                     ast = int(row.get("stability", 50) or 50)
-                except Exception:
+                except Exception as _omni_sw_160:
+                    log_swallowed_exception('engine/social/ripples.py:160', _omni_sw_160)
                     ap, ast = 50, 50
                 dp = ap - int(b.get("power", 50))
                 dst = ast - int(b.get("stability", 50))
@@ -169,8 +174,6 @@ def apply_ripple_effects(state: dict[str, Any], rp: dict[str, Any]) -> None:
                         applied[fname]["stability"] = dst
             if applied:
                 try:
-                    from engine.world.faction_report import append_faction_ripple_impact
-
                     append_faction_ripple_impact(state, rp, applied)
-                except Exception:
-                    pass
+                except Exception as _omni_sw_175:
+                    log_swallowed_exception('engine/social/ripples.py:175', _omni_sw_175)

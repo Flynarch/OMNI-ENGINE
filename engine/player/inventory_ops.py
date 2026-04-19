@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.social.police_check import _has_illegal_weapon, schedule_weapon_check
+from engine.systems.ammo import item_is_ammo, rounds_per_purchase
+from engine.systems.combat import get_active_weapon
+from engine.systems.illegal_trade import apply_contraband_acquire_pressure
+from engine.systems.weapon_kit import ensure_weapon_for_item
 from typing import Any
 
 
@@ -33,7 +39,8 @@ def apply_inventory_ops(state: dict[str, Any], action_ctx: dict[str, Any]) -> No
         if isinstance(sizes, dict):
             try:
                 v = int(sizes.get(name, 1) or 1)
-            except Exception:
+            except Exception as _omni_sw_36:
+                log_swallowed_exception('engine/player/inventory_ops.py:36', _omni_sw_36)
                 v = 1
             return max(1, min(6, v))
         return 1
@@ -53,7 +60,8 @@ def apply_inventory_ops(state: dict[str, Any], action_ctx: dict[str, Any]) -> No
         op = str(raw.get("op", "")).strip().lower()
         try:
             tcm = int(raw.get("time_cost_min", 1) or 1)
-        except Exception:
+        except Exception as _omni_sw_56:
+            log_swallowed_exception('engine/player/inventory_ops.py:56', _omni_sw_56)
             tcm = 1
         tcm = max(0, min(15, tcm))
 
@@ -93,25 +101,15 @@ def apply_inventory_ops(state: dict[str, Any], action_ctx: dict[str, Any]) -> No
                 applied.append(f"pickup_failed:not_found:{item_id}")
                 continue
 
-            try:
-                from engine.systems.ammo import item_is_ammo, rounds_per_purchase
-                from engine.systems.illegal_trade import apply_contraband_acquire_pressure
-            except Exception:
-                item_is_ammo = None  # type: ignore
-                rounds_per_purchase = None  # type: ignore
-                apply_contraband_acquire_pressure = None  # type: ignore
-
             elem_raw = nearby[found_index] if found_index is not None else None
             # Delivery traps: a decoy package triggers a fast sting and yields no item.
             try:
                 if isinstance(elem_raw, dict) and bool(elem_raw.get("decoy", False)):
                     try:
                         del nearby[found_index]
-                    except Exception:
-                        pass
+                    except Exception as _omni_sw_110:
+                        log_swallowed_exception('engine/player/inventory_ops.py:110', _omni_sw_110)
                     try:
-                        from engine.social.police_check import schedule_weapon_check, _has_illegal_weapon
-
                         has_illegal, wids = _has_illegal_weapon(state)
                         if has_illegal:
                             schedule_weapon_check(
@@ -124,23 +122,23 @@ def apply_inventory_ops(state: dict[str, Any], action_ctx: dict[str, Any]) -> No
                                     "decoy": True,
                                 },
                             )
-                    except Exception:
-                        pass
+                    except Exception as _omni_sw_127:
+                        log_swallowed_exception('engine/player/inventory_ops.py:127', _omni_sw_127)
                     state.setdefault("world_notes", []).append(
                         f"[Delivery] decoy pickup triggered sting delivery_id={str(elem_raw.get('delivery_id','') or '')}"
                     )
                     applied.append(f"pickup_decoy:{item_id}")
                     extra_minutes += tcm
                     continue
-            except Exception:
-                pass
-            if callable(item_is_ammo) and item_is_ammo(state, item_id):
-                add_r = rounds_per_purchase(state, item_id) if callable(rounds_per_purchase) else 50
+            except Exception as _omni_sw_135:
+                log_swallowed_exception('engine/player/inventory_ops.py:135', _omni_sw_135)
+            if item_is_ammo(state, item_id):
+                add_r = rounds_per_purchase(state, item_id)
                 if isinstance(elem_raw, dict) and elem_raw.get("rounds") is not None:
                     try:
                         add_r = max(1, min(99999, int(elem_raw.get("rounds"))))
-                    except Exception:
-                        pass
+                    except Exception as _omni_sw_142:
+                        log_swallowed_exception('engine/player/inventory_ops.py:142', _omni_sw_142)
                 inv.setdefault("item_quantities", {})
                 iq = inv["item_quantities"]
                 if not isinstance(iq, dict):
@@ -148,22 +146,19 @@ def apply_inventory_ops(state: dict[str, Any], action_ctx: dict[str, Any]) -> No
                     inv["item_quantities"] = iq
                 iq[item_id] = int(iq.get(item_id, 0) or 0) + int(add_r)
                 try:
-                    if callable(apply_contraband_acquire_pressure):
-                        apply_contraband_acquire_pressure(state, item_id, via="pickup")
-                except Exception:
-                    pass
+                    apply_contraband_acquire_pressure(state, item_id, via="pickup")
+                except Exception as _omni_sw_153:
+                    log_swallowed_exception('engine/player/inventory_ops.py:153', _omni_sw_153)
                 try:
                     del nearby[found_index]
-                except Exception:
-                    pass
+                except Exception as _omni_sw_157:
+                    log_swallowed_exception('engine/player/inventory_ops.py:157', _omni_sw_157)
                 label = found_item_label or item_id
                 applied.append(f"pickup_ammo:{item_id}:+{add_r}:{label}")
                 extra_minutes += tcm
                 # Some deliveries can trigger attention right on pickup.
                 try:
                     if isinstance(elem_raw, dict) and bool(elem_raw.get("sting_on_pickup", False)):
-                        from engine.social.police_check import schedule_weapon_check, _has_illegal_weapon
-
                         has_illegal, wids = _has_illegal_weapon(state)
                         if has_illegal:
                             schedule_weapon_check(
@@ -179,8 +174,8 @@ def apply_inventory_ops(state: dict[str, Any], action_ctx: dict[str, Any]) -> No
                         state.setdefault("world_notes", []).append(
                             f"[Delivery] pickup sting delivery_id={str(elem_raw.get('delivery_id','') or '')}"
                         )
-                except Exception:
-                    pass
+                except Exception as _omni_sw_182:
+                    log_swallowed_exception('engine/player/inventory_ops.py:182', _omni_sw_182)
                 continue
 
             # Store the stable id in inventory, not the display name, so item_sizes
@@ -209,31 +204,25 @@ def apply_inventory_ops(state: dict[str, Any], action_ctx: dict[str, Any]) -> No
                 continue
 
             try:
-                from engine.systems.weapon_kit import ensure_weapon_for_item
-
                 ensure_weapon_for_item(
                     state,
                     item,
                     display_name=found_item_label or item,
                     source="pickup",
                 )
-            except Exception:
-                pass
-
+            except Exception as _omni_sw_220:
+                log_swallowed_exception('engine/player/inventory_ops.py:220', _omni_sw_220)
             # Remove from nearby list after pickup.
             try:
                 del nearby[found_index]
-            except Exception:
-                pass
-
+            except Exception as _omni_sw_226:
+                log_swallowed_exception('engine/player/inventory_ops.py:226', _omni_sw_226)
             label = found_item_label or item_id
             applied.append(f"pickup:{item_id}->{placed_to}:{label}")
             extra_minutes += tcm
             # Some deliveries can trigger attention right on pickup.
             try:
                 if isinstance(elem_raw, dict) and bool(elem_raw.get("sting_on_pickup", False)):
-                    from engine.social.police_check import schedule_weapon_check, _has_illegal_weapon
-
                     has_illegal, wids = _has_illegal_weapon(state)
                     if has_illegal:
                         schedule_weapon_check(
@@ -249,8 +238,8 @@ def apply_inventory_ops(state: dict[str, Any], action_ctx: dict[str, Any]) -> No
                     state.setdefault("world_notes", []).append(
                         f"[Delivery] pickup sting delivery_id={str(elem_raw.get('delivery_id','') or '')}"
                     )
-            except Exception:
-                pass
+            except Exception as _omni_sw_252:
+                log_swallowed_exception('engine/player/inventory_ops.py:252', _omni_sw_252)
             continue
 
         if op in ("stow", "drop"):
@@ -318,16 +307,14 @@ def apply_inventory_ops(state: dict[str, Any], action_ctx: dict[str, Any]) -> No
                 continue
             inv["active_weapon_id"] = wid
             try:
-                from engine.systems.combat import get_active_weapon
-
                 flags = state.setdefault("flags", {})
                 aw = get_active_weapon(inv)
                 if isinstance(aw, dict) and bool(aw.get("jammed")):
                     flags["weapon_jammed"] = True
                 else:
                     flags["weapon_jammed"] = False
-            except Exception:
-                pass
+            except Exception as _omni_sw_329:
+                log_swallowed_exception('engine/player/inventory_ops.py:329', _omni_sw_329)
             applied.append(f"equip_weapon:{wid}")
             extra_minutes += tcm
             continue

@@ -3,6 +3,32 @@
   "description": "Data-driven action templates. Expanded as branches migrate from action_intent.py — see docs/action-registry-plan.md",
   "actions": [
     {
+      "id": "other.nl_smartphone_w2",
+      "priority": 16,
+      "match": {
+        "keywords_any": []
+      },
+      "ctx_patch": {}
+    },
+    {
+      "id": "economy.nl_accommodation_stay",
+      "priority": 17,
+      "handler": "apply_accommodation_nl",
+      "match": {
+        "keywords_any": []
+      },
+      "ctx_patch": {}
+    },
+    {
+      "id": "sleep.nl_duration_hours",
+      "priority": 19,
+      "handler": "apply_sleep_duration_from_nl",
+      "match": {
+        "keywords_any": []
+      },
+      "ctx_patch": {}
+    },
+    {
       "id": "sleep.nl_default_8h",
       "priority": 20,
       "match": {
@@ -275,7 +301,11 @@
       "priority": 48,
       "handler": "ensure_social_negotiation_shape",
       "match": {
-        "keywords_any": []
+        "keywords_any": [
+          "negosiasi",
+          "bohong",
+          "yakinkan"
+        ]
       },
       "ctx_patch": {
         "domain": "social",
@@ -321,7 +351,8 @@
           "mengintai",
           "mengamati",
           "mata-matai",
-          "people watching"
+          "people watching",
+          "perhatiin orang"
         ]
       },
       "ctx_patch": {
@@ -381,6 +412,24 @@
         "physically_impossible": true,
         "impossible": true,
         "uncertain": false,
+        "has_stakes": true,
+        "risk_level": "high"
+      }
+    },
+    {
+      "id": "instant.nl_hedge_uncertainty",
+      "priority": 55,
+      "match": {
+        "keywords_any": [
+          "mungkin",
+          "coba",
+          "nekat",
+          "risiko",
+          "diam-diam"
+        ]
+      },
+      "ctx_patch": {
+        "uncertain": true,
         "has_stakes": true,
         "risk_level": "high"
       }

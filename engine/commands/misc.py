@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any, Callable
 
 from rich.table import Table
 
 from display.renderer import console
 from engine.systems.crafting import craft, format_recipe_constraints, list_recipes
+from engine.world.timers import update_timers
 
 
 def handle_misc(
@@ -45,7 +47,8 @@ def handle_misc(
                 out = r.get("outputs") if isinstance(r.get("outputs"), dict) else {}
                 try:
                     tm = int(r.get("time_min", 5) or 5)
-                except Exception:
+                except Exception as _omni_sw_48:
+                    log_swallowed_exception('engine/commands/misc.py:48', _omni_sw_48)
                     tm = 5
                 t.add_row(
                     rid,
@@ -71,8 +74,6 @@ def handle_misc(
             console.print(f"[red]Craft gagal: {reason}{hints.get(reason, '')}[/red]")
             return True
         try:
-            from engine.world.timers import update_timers
-
             update_timers(
                 state,
                 {
@@ -82,23 +83,23 @@ def handle_misc(
                     "normalized_input": f"craft {sub}",
                 },
             )
-        except Exception:
-            pass
+        except Exception as _omni_sw_85:
+            log_swallowed_exception('engine/commands/misc.py:85', _omni_sw_85)
         extra = ""
         try:
             cp = int(res.get("cash_paid", 0) or 0)
             if cp > 0:
                 extra = f" (−${cp} cash)"
-        except Exception:
-            pass
+        except Exception as _omni_sw_92:
+            log_swallowed_exception('engine/commands/misc.py:92', _omni_sw_92)
         xp_note = ""
         try:
             xsk = str(res.get("xp_skill", "") or "").strip()
             xam = int(res.get("xp_amount", 0) or 0)
             if xsk and xam > 0:
                 xp_note = f" [+{xam} XP {xsk}]"
-        except Exception:
-            pass
+        except Exception as _omni_sw_100:
+            log_swallowed_exception('engine/commands/misc.py:100', _omni_sw_100)
         state.setdefault("world_notes", []).append(f"[Craft] {res.get('label', sub)} → {res.get('summary', '')}.")
         console.print(
             f"[green]Craft OK:[/green] {res.get('label', sub)} (+{int(res.get('time_min', 8) or 8)} min){extra}{xp_note}"
@@ -110,11 +111,13 @@ def handle_misc(
         eco = state.get("economy", {}) or {}
         try:
             gigs_done = int(meta.get("daily_gigs_done", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_113:
+            log_swallowed_exception('engine/commands/misc.py:113', _omni_sw_113)
             gigs_done = 0
         try:
             hacks_attempted = int(meta.get("daily_hacks_attempted", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_117:
+            log_swallowed_exception('engine/commands/misc.py:117', _omni_sw_117)
             hacks_attempted = 0
         penalty = max(0, int(hacks_attempted) * 10)
         t = Table(title="STATUS", show_header=False)

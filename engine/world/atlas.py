@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.core.player_language_levels import player_language_proficiency
+from engine.core.trace import apply_trace_travel_friction, get_trace_tier
 import hashlib
 import re
 import unicodedata
 from typing import Any
+
+from engine.world.location_presets import load_location_preset
+from engine.world.time_model import sim_year_from_state
 
 
 def _h32(*parts: Any) -> int:
@@ -683,14 +689,14 @@ def ensure_country_history_idx(state: dict[str, Any], country: str, *, sim_year:
     if sim_year is None:
         try:
             sim_year = int(meta.get("sim_year", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_686:
+            log_swallowed_exception('engine/world/atlas.py:686', _omni_sw_686)
             sim_year = 0
     if not sim_year:
         try:
-            from engine.world.time_model import sim_year_from_state
-
             sim_year = sim_year_from_state(state)
-        except Exception:
+        except Exception as _omni_sw_693:
+            log_swallowed_exception('engine/world/atlas.py:693', _omni_sw_693)
             sim_year = 2025
     y = int(sim_year)
 
@@ -809,7 +815,8 @@ def ensure_country_market(
     try:
         meta = state.get("meta", {}) or {}
         sy = int(meta.get("sim_year", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_812:
+        log_swallowed_exception('engine/world/atlas.py:812', _omni_sw_812)
         sy = 0
     hi = ensure_country_history_idx(state, country, sim_year=sy)
     war = str((hi.get("war_status") if isinstance(hi, dict) else "none") or "none").lower()
@@ -821,11 +828,13 @@ def ensure_country_market(
         g = global_market.get(cat) if isinstance(global_market.get(cat), dict) else {"price_idx": 100, "scarcity": 0}
         try:
             px = int((g or {}).get("price_idx", 100) or 100)
-        except Exception:
+        except Exception as _omni_sw_824:
+            log_swallowed_exception('engine/world/atlas.py:824', _omni_sw_824)
             px = 100
         try:
             sc = int((g or {}).get("scarcity", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_828:
+            log_swallowed_exception('engine/world/atlas.py:828', _omni_sw_828)
             sc = 0
         base[cat] = {"price_idx": px, "scarcity": sc}
 
@@ -1050,8 +1059,8 @@ def ensure_location_profile(state: dict[str, Any], loc: str) -> dict[str, Any]:
     try:
         ensure_country_profile(state, country)
         ensure_geopolitics(state)
-    except Exception:
-        pass
+    except Exception as _omni_sw_1053:
+        log_swallowed_exception('engine/world/atlas.py:1053', _omni_sw_1053)
     return profile
 
 
@@ -1086,15 +1095,13 @@ def get_city_stats_for_travel(state: dict[str, Any], loc_key: str) -> dict[str, 
                         out[k] = float(v)
                 return out
     try:
-        from engine.world.location_presets import load_location_preset
-
         preset = load_location_preset(lk)
         if isinstance(preset, dict):
             cs2 = preset.get("city_stats")
             if isinstance(cs2, dict):
                 return {str(k): float(v) for k, v in cs2.items() if isinstance(k, str) and isinstance(v, (int, float))}
-    except Exception:
-        pass
+    except Exception as _omni_sw_1096:
+        log_swallowed_exception('engine/world/atlas.py:1096', _omni_sw_1096)
     return {}
 
 
@@ -1206,14 +1213,11 @@ def apply_w2_travel_gates(state: dict[str, Any], action_ctx: dict[str, Any], ori
         if not player_has_passport(state):
             return "[Travel] Bandara/terminal menolak: tidak ada paspor."
         try:
-            from engine.core.trace import get_trace_tier
-
             tid = str(get_trace_tier(state).get("tier_id", "") or "")
             if tid in ("Wanted", "Lockdown"):
                 return "[Travel] Bandara/terminal menolak: status keamanan terlalu tinggi (wanted)."
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_1214:
+            log_swallowed_exception('engine/world/atlas.py:1214', _omni_sw_1214)
     stats_o = get_city_stats_for_travel(state, o) if o else {}
     stats_d = get_city_stats_for_travel(state, d)
     if not stats_d and kind != "local":
@@ -1225,15 +1229,14 @@ def apply_w2_travel_gates(state: dict[str, Any], action_ctx: dict[str, Any], ori
     mins = _w2_travel_minutes(o, d, kind)
 
     try:
-        from engine.core.trace import apply_trace_travel_friction, get_trace_tier
-
         new_m, _ = apply_trace_travel_friction(state, mins)
         action_ctx["travel_minutes"] = int(new_m)
         tier = get_trace_tier(state)
         mult = float(tier.get("friction_multiplier", 1.0) or 1.0)
         if mult > 1.0:
             ticket = max(10, int(round(ticket * mult)))
-    except Exception:
+    except Exception as _omni_sw_1236:
+        log_swallowed_exception('engine/world/atlas.py:1236', _omni_sw_1236)
         action_ctx["travel_minutes"] = int(mins)
 
     action_ctx["travel_ticket_charge"] = int(ticket)
@@ -1250,14 +1253,11 @@ def apply_w2_travel_gates(state: dict[str, Any], action_ctx: dict[str, Any], ori
     try:
         prof = ensure_location_profile(state, d)
         dom = str(prof.get("language", "en") or "en").lower().split("+")[0].strip()
-        from engine.core.language import player_language_proficiency
-
         pl = player_language_proficiency(state)
         best = int(pl.get(dom, 0) or 0)
         action_ctx["travel_dest_dominant_lang"] = dom
         action_ctx["travel_language_proficiency"] = best
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_1259:
+        log_swallowed_exception('engine/world/atlas.py:1259', _omni_sw_1259)
     return ""
 

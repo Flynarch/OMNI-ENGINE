@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
 
 from engine.core.balance import BALANCE, get_balance_snapshot
@@ -61,7 +62,8 @@ def execute_sleep(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
         return
     try:
         mins = int(action_ctx.get("rested_minutes", 8 * 60) or 8 * 60)
-    except Exception:
+    except Exception as _omni_sw_64:
+        log_swallowed_exception('engine/player/bio.py:64', _omni_sw_64)
         mins = 8 * 60
     mins = max(60, min(12 * 60, mins))
     hrs = mins / 60.0
@@ -78,7 +80,8 @@ def execute_sleep(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
 
     try:
         debt = float(bio.get("sleep_debt", 0.0) or 0.0)
-    except Exception:
+    except Exception as _omni_sw_81:
+        log_swallowed_exception('engine/player/bio.py:81', _omni_sw_81)
         debt = 0.0
     debt = max(0.0, debt)
 
@@ -102,12 +105,14 @@ def update_hunger(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
     prev_label = str(bio.get("hunger_label", "full") or "full").strip().lower()
     try:
         hunger = float(bio.get("hunger", 0.0) or 0.0)
-    except Exception:
+    except Exception as _omni_sw_105:
+        log_swallowed_exception('engine/player/bio.py:105', _omni_sw_105)
         hunger = 0.0
     elapsed = _elapsed_minutes_from_ctx(action_ctx)
     try:
         mult = float(action_ctx.get("hunger_rate_mult", 1.0) or 1.0)
-    except Exception:
+    except Exception as _omni_sw_110:
+        log_swallowed_exception('engine/player/bio.py:110', _omni_sw_110)
         mult = 1.0
     mult = max(0.0, min(2.0, mult))
     hunger += (max(0, elapsed) / 60.0) * 4.0 * mult
@@ -128,13 +133,15 @@ def update_mood(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
     try:
         raw_base = bio.get("mood_score", 50.0)
         base = float(50.0 if raw_base is None else raw_base)
-    except Exception:
+    except Exception as _omni_sw_131:
+        log_swallowed_exception('engine/player/bio.py:131', _omni_sw_131)
         base = 50.0
     score = max(0.0, min(100.0, base))
 
     try:
         sleep_debt = float(bio.get("sleep_debt", 0.0) or 0.0)
-    except Exception:
+    except Exception as _omni_sw_137:
+        log_swallowed_exception('engine/player/bio.py:137', _omni_sw_137)
         sleep_debt = 0.0
     score -= min(20.0, sleep_debt * 1.5)
 
@@ -144,13 +151,15 @@ def update_mood(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
     else:
         try:
             stress = float(stress_raw or 0.0)
-        except Exception:
+        except Exception as _omni_sw_147:
+            log_swallowed_exception('engine/player/bio.py:147', _omni_sw_147)
             stress = 0.0
         score -= min(15.0, max(0.0, stress))
 
     try:
         sanity_debt = float(bio.get("sanity_debt", 0) or 0.0)
-    except Exception:
+    except Exception as _omni_sw_153:
+        log_swallowed_exception('engine/player/bio.py:153', _omni_sw_153)
         sanity_debt = 0.0
     score -= min(35.0, sanity_debt * 1.25)
 
@@ -159,14 +168,16 @@ def update_mood(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
 
     try:
         cash = float(eco.get("cash", 0) or 0.0)
-    except Exception:
+    except Exception as _omni_sw_162:
+        log_swallowed_exception('engine/player/bio.py:162', _omni_sw_162)
         cash = 0.0
     if cash <= 0:
         score -= 6.0
 
     try:
         debt = float(eco.get("debt", 0) or 0.0)
-    except Exception:
+    except Exception as _omni_sw_169:
+        log_swallowed_exception('engine/player/bio.py:169', _omni_sw_169)
         debt = 0.0
     score -= min(18.0, max(0.0, debt) / 500.0)
 
@@ -180,9 +191,8 @@ def update_mood(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
 
     try:
         score += float(action_ctx.get("sleep_mood_bonus", 0) or 0)
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_183:
+        log_swallowed_exception('engine/player/bio.py:183', _omni_sw_183)
     _ = action_ctx
 
     score = max(0.0, min(100.0, round(score, 2)))
@@ -216,7 +226,8 @@ def update_bio(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
             return float(getattr(BALANCE, key, default))
         try:
             return float(v)
-        except Exception:
+        except Exception as _omni_sw_219:
+            log_swallowed_exception('engine/player/bio.py:219', _omni_sw_219)
             return float(default)
 
     def _int_snap(key: str, default: int) -> int:
@@ -225,7 +236,8 @@ def update_bio(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
             return int(getattr(BALANCE, key, default))
         try:
             return int(v)
-        except Exception:
+        except Exception as _omni_sw_228:
+            log_swallowed_exception('engine/player/bio.py:228', _omni_sw_228)
             return int(default)
 
     blood = float(bio.get("blood_volume", 5.0))
@@ -254,7 +266,8 @@ def update_bio(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
             continue
         try:
             max_inf = max(max_inf, float(inj.get("infection_pct", 0) or 0))
-        except Exception:
+        except Exception as _omni_sw_257:
+            log_swallowed_exception('engine/player/bio.py:257', _omni_sw_257)
             continue
 
     recovery_mod = 0

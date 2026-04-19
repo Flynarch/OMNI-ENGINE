@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,7 +11,8 @@ def _get_int_from_env(env: dict[str, str], key: str, default: int) -> int:
         return int(default)
     try:
         return int(float(raw))
-    except Exception:
+    except Exception as _omni_sw_13:
+        log_swallowed_exception('engine/core/balance.py:13', _omni_sw_13)
         return int(default)
 
 
@@ -20,7 +22,8 @@ def _get_float_from_env(env: dict[str, str], key: str, default: float) -> float:
         return float(default)
     try:
         return float(raw)
-    except Exception:
+    except Exception as _omni_sw_23:
+        log_swallowed_exception('engine/core/balance.py:23', _omni_sw_23)
         return float(default)
 
 

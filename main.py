@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.core.feed_prune import world_note_plain
 import difflib
 import json
 import os
@@ -13,8 +15,9 @@ from ai.client import stream_response
 from ai.intent_resolver import resolve_intent
 from ai.parser import apply_memory_hash_to_state, enforce_stop_sequence_output, parse_memory_hash, record_ai_parse_health
 from ai.turn_prompt import build_system_prompt, build_turn_package, get_narration_lang
-from display.renderer import console, render_monitor, stream_render
+from display.renderer import console, format_data_table, render_monitor, stream_render
 from engine.core.action_intent import apply_active_scene_intent_lock, normalize_action_ctx, parse_action_intent
+from engine.core.errors import record_error
 from engine.core.ffci import (
     abuse_allow_custom_intent,
     clamp_suggested_dc_ctx,
@@ -26,6 +29,93 @@ from engine.core.ffci import (
 from engine.core.pipeline import run_pipeline
 from engine.player.boot_economy import format_boot_economy_preview
 from engine.core.seeds import list_seed_names
+from engine.core.main_cli_imports import (
+    INTENT_MERGE_FIELD_KEYS,
+    VEHICLE_TYPES,
+    activate_disguise,
+    advance_scene,
+    apply_cross_system_policies,
+    apply_intent_plan_precondition_failure,
+    apply_npc_targeting,
+    apply_parser_registry_anchor_after_llm,
+    apply_pending_runtime_step,
+    apply_step_to_action_ctx,
+    bank_aml_snapshot,
+    bank_deposit,
+    bank_withdraw,
+    black_market_accessible,
+    burn_informant,
+    buy_black_market_item,
+    buy_here,
+    buy_vehicle,
+    communication_quality,
+    deactivate_disguise,
+    default_city_for_country,
+    describe_location,
+    ensure_country_profile,
+    ensure_location_profile,
+    ensure_safehouse_here,
+    ensure_weather,
+    execute_gig,
+    execute_hack,
+    generate_black_market_inventory,
+    generate_gigs,
+    get_stay_here,
+    handle_career,
+    handle_commerce,
+    handle_economy,
+    handle_faction_report,
+    handle_misc,
+    handle_mobility,
+    handle_property,
+    handle_scene_commands,
+    handle_session,
+    handle_smartphone,
+    handle_social_intel,
+    handle_underworld,
+    is_known_place,
+    learn_language,
+    list_districts,
+    list_known_cities,
+    list_known_countries,
+    list_owned_vehicles,
+    maybe_trigger_stay_raid,
+    merge_intent_into_action_ctx,
+    merge_telemetry_turn_last,
+    nightly_rate,
+    normalize_country_name,
+    normalize_stay_kind,
+    pay_informant,
+    player_language_proficiency,
+    post_turn_integration,
+    refuel_vehicle,
+    registry_hint_alignment,
+    rent_here,
+    repair_vehicle,
+    sanitize_player_command_text,
+    security_flags_for_intent_input,
+    seed_informant_roster,
+    select_best_step,
+    sell_vehicle,
+    set_active_vehicle,
+    set_pending_raid_response,
+    snapshot_turn_telemetry,
+    stash_put_ammo,
+    stash_put_from_bag,
+    stash_take_ammo,
+    stash_take_to_bag,
+    stay_checkin,
+    stay_help_aliases,
+    stay_kind_label,
+    steal_vehicle,
+    strip_llm_intent_overlay_on_registry_hint_mismatch,
+    sync_plan_runtime_start,
+    travel_within_city,
+    try_auto_stay_from_intent,
+    try_reload,
+    update_timers,
+    upgrade_security,
+)
 from engine.core.state import CURRENT, PREVIOUS, backup_state, initialize_state, load_state, save_state
 from engine.systems.shop import buy_item, get_capacity_status, list_shop_quotes, sell_item, sell_item_all, sell_item_n, quote_item
 
@@ -36,13 +126,9 @@ def _ask(prompt: str) -> str:
 
 def _record_soft_error(state: dict[str, Any], scope: str, err: Exception) -> None:
     try:
-        from engine.core.errors import record_error
-
         record_error(state, scope, err)
-    except Exception:
-        pass
-
-
+    except Exception as _omni_sw_42:
+        log_swallowed_exception('main.py:42', _omni_sw_42)
 def _load_occupation_templates() -> list[dict[str, Any]]:
     """Boot-time helper: read core occupations templates (optional)."""
     try:
@@ -60,7 +146,8 @@ def _load_occupation_templates() -> list[dict[str, Any]]:
             if isinstance(t, dict) and isinstance(t.get("id"), str):
                 out.append(t)
         return out
-    except Exception:
+    except Exception as _omni_sw_63:
+        log_swallowed_exception('main.py:63', _omni_sw_63)
         return []
 
 
@@ -130,17 +217,6 @@ def _boot_role_step(data: dict[str, Any], temps: list[dict[str, Any]]) -> None:
 
 def _bootstrap_location_input(*, seed_pack: str | None = None) -> str:
     """Location picker with manual override (deterministic normalization remains in engine)."""
-    try:
-        from engine.world.atlas import (
-            default_city_for_country,
-            is_known_place,
-            list_known_cities,
-            list_known_countries,
-            resolve_place,
-        )
-    except Exception:
-        return _ask("location: ").strip().lower()
-
     cities = list_known_cities()
     countries = list_known_countries()
     if not cities:
@@ -377,8 +453,8 @@ def _snapshot_metrics(state: dict[str, Any]) -> dict[str, Any]:
                 continue
             try:
                 heat_sum += int(v.get("heat", 0) or 0)
-            except Exception:
-                pass
+            except Exception as _omni_sw_380:
+                log_swallowed_exception('main.py:380', _omni_sw_380)
     # Weather kind (if cached on the current location slot).
     weather_kind = "-"
     try:
@@ -388,12 +464,11 @@ def _snapshot_metrics(state: dict[str, Any]) -> dict[str, Any]:
             if isinstance(w, dict) and w.get("kind"):
                 weather_kind = str(w.get("kind"))
     except Exception as e:
+        log_swallowed_exception('main.py:390', e)
         try:
-            from engine.core.errors import record_error
-
-            record_error(state, "commands.bootstrap_dispatch", e)
-        except Exception:
-            pass
+            record_error(state, "main.snapshot_metrics.weather", e)
+        except Exception as _omni_sw_395:
+            log_swallowed_exception('main.py:395', _omni_sw_395)
     # Safehouse status at current location.
     sh_status = "none"
     sh_sec = 0
@@ -406,7 +481,8 @@ def _snapshot_metrics(state: dict[str, Any]) -> dict[str, Any]:
             sh_sec = int(row.get("security_level", 0) or 0)
             sh_delin = int(row.get("delinquent_days", 0) or 0)
     except Exception as e:
-        _record_soft_error(state, "commands.dispatch_modules", e)
+        log_swallowed_exception('main.py:408', e)
+        _record_soft_error(state, "main.snapshot_metrics.safehouse", e)
     # Disguise status.
     d = player.get("disguise", {}) or {}
     dis_active = bool(d.get("active", False)) if isinstance(d, dict) else False
@@ -420,7 +496,8 @@ def _snapshot_metrics(state: dict[str, Any]) -> dict[str, Any]:
             if isinstance(row, dict):
                 try:
                     skill_xp[k] = int(row.get("xp", 0) or 0)
-                except Exception:
+                except Exception as _omni_sw_423:
+                    log_swallowed_exception('main.py:423', _omni_sw_423)
                     skill_xp[k] = 0
     return {
         "day": int((state.get("meta", {}) or {}).get("day", 1) or 1),
@@ -451,17 +528,20 @@ def _compute_diff(before: dict[str, Any], after: dict[str, Any]) -> dict[str, An
     for k in ("cash", "bank", "debt", "trace"):
         try:
             out[k] = int(after.get(k, 0) or 0) - int(before.get(k, 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_454:
+            log_swallowed_exception('main.py:454', _omni_sw_454)
             out[k] = 0
     # Turn audit: notes added this turn.
     try:
         out["notes_added_count"] = int(after.get("world_notes_len", 0) or 0) - int(before.get("world_notes_len", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_459:
+        log_swallowed_exception('main.py:459', _omni_sw_459)
         out["notes_added_count"] = 0
     # Heat delta (aggregate; not perfect but high-signal).
     try:
         out["heat_sum"] = int(after.get("heat_sum", 0) or 0) - int(before.get("heat_sum", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_464:
+        log_swallowed_exception('main.py:464', _omni_sw_464)
         out["heat_sum"] = 0
     # Skill XP deltas per domain.
     sx_before = before.get("skill_xp") if isinstance(before.get("skill_xp"), dict) else {}
@@ -471,7 +551,8 @@ def _compute_diff(before: dict[str, Any], after: dict[str, Any]) -> dict[str, An
         for k in ("hacking", "social", "combat", "stealth", "evasion"):
             try:
                 xp_d[k] = int(sx_after.get(k, 0) or 0) - int(sx_before.get(k, 0) or 0)
-            except Exception:
+            except Exception as _omni_sw_474:
+                log_swallowed_exception('main.py:474', _omni_sw_474)
                 xp_d[k] = 0
     out["xp_delta"] = xp_d
     for fk in ("att_police", "att_corporate", "att_black_market"):
@@ -497,7 +578,8 @@ def _compute_diff(before: dict[str, Any], after: dict[str, Any]) -> dict[str, An
         bt = int(before.get("time_min", 0) or 0)
         at = int(after.get("time_min", 0) or 0)
         out["time_elapsed_min"] = (aday - bday) * 1440 + (at - bt)
-    except Exception:
+    except Exception as _omni_sw_500:
+        log_swallowed_exception('main.py:500', _omni_sw_500)
         out["time_elapsed_min"] = 0
     return out
 
@@ -520,7 +602,8 @@ def _scene_blocks_command(state: dict[str, Any], up_cmd: str) -> bool:
             # Survival exception: allow only on explicitly safe scene types.
             return stype not in {"drop_pickup"}
         return True
-    except Exception:
+    except Exception as _omni_sw_523:
+        log_swallowed_exception('main.py:523', _omni_sw_523)
         return False
 
 
@@ -632,19 +715,6 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
 
     # Refactor batch: command dispatch modules (behavior-preserving extraction).
     try:
-        from engine.commands.misc import handle_misc
-        from engine.commands.underworld import handle_underworld
-        from engine.commands.economy import handle_economy
-        from engine.commands.scene import handle_scene_commands
-        from engine.commands.session import handle_session
-        from engine.commands.social_intel import handle_social_intel
-        from engine.commands.mobility import handle_mobility
-        from engine.commands.commerce import handle_commerce
-        from engine.commands.career import handle_career
-        from engine.commands.property_cmd import handle_property
-        from engine.commands.smartphone_cmd import handle_smartphone
-        from engine.commands.faction_report_cmd import handle_faction_report
-
         if handle_faction_report(state, cmd):
             return True
         if handle_property(state, cmd):
@@ -692,8 +762,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             return True
         if handle_social_intel(state, cmd, console=console, table_cls=Table):
             return True
-    except Exception:
-        pass
+    except Exception as _omni_sw_695:
+        log_swallowed_exception('main.py:710', _omni_sw_695)
 
     if up == "UI FULL":
         state.setdefault("meta", {})["monitor_mode"] = "full"
@@ -709,11 +779,13 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         eco = state.get("economy", {}) or {}
         try:
             gigs_done = int(meta.get("daily_gigs_done", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_712:
+            log_swallowed_exception('main.py:712', _omni_sw_712)
             gigs_done = 0
         try:
             hacks_attempted = int(meta.get("daily_hacks_attempted", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_716:
+            log_swallowed_exception('main.py:716', _omni_sw_716)
             hacks_attempted = 0
         penalty = max(0, int(hacks_attempted) * 10)
         t = Table(title="STATUS", show_header=False)
@@ -729,9 +801,6 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         return True
     if up in ("BLACKMARKET", "DARKNET") or up == "MARKET BLACK" or up == "MARKET BM":
         try:
-            from engine.systems.black_market import black_market_accessible, generate_black_market_inventory
-            from display.renderer import format_data_table
-
             if not black_market_accessible(state):
                 _ui_err("ACCESS DENIED", "CONNECTION REFUSED: Darknet node is offline.")
                 return True
@@ -748,7 +817,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                 rows.append([str(it.get("id", "?")), str(it.get("name", it.get("id", "-"))), "$" + str(it.get("price", "?"))])
             console.print(format_data_table("BLACK MARKET", ["item_id", "name", "price"], rows, theme="magenta"))
             console.print("[dim]Use: BUY_DARK <item_id>[/dim]")
-        except Exception:
+        except Exception as _omni_sw_751:
+            log_swallowed_exception('main.py:751', _omni_sw_751)
             _ui_err("ERROR", "BLACKMARKET error.")
         return True
     if up.startswith("BUY_DARK ") or up.startswith("BM_BUY "):
@@ -758,8 +828,6 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             _ui_err("ERROR", "Usage: BUY_DARK <item_id>.")
             return True
         try:
-            from engine.systems.black_market import buy_black_market_item
-
             r = buy_black_market_item(state, iid)
             if not bool(r.get("ok")):
                 if r.get("reason") == "not_enough_cash":
@@ -772,14 +840,12 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                     _ui_err("ERROR", f"BUY_DARK failed: {r.get('reason','error')}")
                 return True
             console.print(f"[green]BUY_DARK OK[/green] {r.get('item_id')} price={r.get('price')}")
-        except Exception:
+        except Exception as _omni_sw_775:
+            log_swallowed_exception('main.py:775', _omni_sw_775)
             _ui_err("ERROR", "BUY_DARK error.")
         return True
     if up in ("GIGS", "JOBS"):
         try:
-            from engine.systems.jobs import generate_gigs
-            from display.renderer import format_data_table
-
             gigs = generate_gigs(state)
             if not gigs:
                 console.print(format_data_table("GIGS", ["id", "title", "skill", "diff", "time_m", "payout"], [], theme="cyan"))
@@ -801,7 +867,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                 )
             console.print(format_data_table("GIGS", ["id", "title", "skill", "diff", "time_m", "payout"], rows, theme="cyan"))
             console.print("[dim]Use: WORK <gig_id>[/dim]")
-        except Exception:
+        except Exception as _omni_sw_804:
+            log_swallowed_exception('main.py:804', _omni_sw_804)
             _ui_err("ERROR", "GIGS error.")
         return True
     if up.startswith("HACK "):
@@ -811,8 +878,6 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             _ui_err("ERROR", "Usage: HACK <atm|corp_server|police_archive>.")
             return True
         try:
-            from engine.systems.targeted_hacking import execute_hack
-
             r = execute_hack(state, tgt)
             if not bool(r.get("ok")):
                 _ui_err("ERROR", f"HACK failed: {r.get('reason','error')}")
@@ -830,13 +895,14 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                         "stakes": "medium",
                     },
                 )
-            except Exception:
-                pass
+            except Exception as _omni_sw_833:
+                log_swallowed_exception('main.py:833', _omni_sw_833)
             if bool(r.get("success")):
                 console.print("[green]HACK success[/green]")
             else:
                 console.print("[yellow]HACK detected[/yellow]")
-        except Exception:
+        except Exception as _omni_sw_839:
+            log_swallowed_exception('main.py:839', _omni_sw_839)
             _ui_err("ERROR", "HACK error.")
         return True
     if up.startswith("WORK "):
@@ -846,8 +912,6 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             _ui_err("ERROR", "Usage: WORK <gig_id>.")
             return True
         try:
-            from engine.systems.jobs import execute_gig
-
             r = execute_gig(state, gid)
             if not bool(r.get("ok")):
                 if str(r.get("reason", "")) == "daily_gig_limit_reached":
@@ -871,14 +935,15 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                         "stakes": "low",
                     },
                 )
-            except Exception:
-                pass
+            except Exception as _omni_sw_874:
+                log_swallowed_exception('main.py:874', _omni_sw_874)
             title = str((g or {}).get("title", gid) or gid)
             if succ:
                 eco = state.setdefault("economy", {})
                 try:
                     cash0 = int(eco.get("cash", 0) or 0)
-                except Exception:
+                except Exception as _omni_sw_881:
+                    log_swallowed_exception('main.py:881', _omni_sw_881)
                     cash0 = 0
                 eco["cash"] = int(cash0 + payout)
                 state.setdefault("world_notes", []).append(f"[Economy] Completed gig '{title}' and earned ${payout}.")
@@ -888,7 +953,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                     tr = state.setdefault("trace", {})
                     try:
                         tp = int(tr.get("trace_pct", 0) or 0)
-                    except Exception:
+                    except Exception as _omni_sw_891:
+                        log_swallowed_exception('main.py:891', _omni_sw_891)
                         tp = 0
                     tr["trace_pct"] = max(0, min(100, tp + int(trace_delta)))
                     state.setdefault("world_notes", []).append(
@@ -897,7 +963,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                 else:
                     state.setdefault("world_notes", []).append(f"[Economy] Failed gig '{title}', wasting time with no payout.")
                 console.print(f"[yellow]WORK failed[/yellow] (time spent {tmin}m)")
-        except Exception:
+        except Exception as _omni_sw_900:
+            log_swallowed_exception('main.py:900', _omni_sw_900)
             _ui_err("ERROR", "WORK error.")
         return True
     # Single blocking gatekeeper for scenes (ONE place).
@@ -935,7 +1002,6 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
 
         # Action (approach/take/abort/wait)
         act = sub
-        from engine.systems.scenes import advance_scene
 
         action_ctx: dict[str, Any] = {
             "action_type": "instant",
@@ -951,7 +1017,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             if act in ("bribe",):
                 try:
                     action_ctx["bribe_amount"] = int(parts[2].strip())
-                except Exception:
+                except Exception as _omni_sw_954:
+                    log_swallowed_exception('main.py:954', _omni_sw_954)
                     action_ctx["bribe_amount"] = 0
         res = advance_scene(state, action_ctx)
         if not bool(res.get("ok")):
@@ -963,7 +1030,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         try:
             run_pipeline(state, action_ctx)
         except Exception as e:
-            _record_soft_error(state, "intent.npc_targeting", e)
+            log_swallowed_exception('main.py:965', e)
+            _record_soft_error(state, "main.scene.run_pipeline", e)
         if bool(res.get("ended")):
             console.print("[green]SCENE resolved[/green]")
         else:
@@ -1059,13 +1127,12 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             }
             run_pipeline(state, ctx)
             console.print("[green]Engine: mandi/selesai — jam hygiene direset (~15m).[/green]")
-        except Exception:
+        except Exception as _omni_sw_1062:
+            log_swallowed_exception('main.py:1062', _omni_sw_1062)
             console.print("[red]SHOWER error.[/red]")
         return True
     if up == "RELOAD":
         try:
-            from engine.core.reload import try_reload
-
             r = try_reload(state)
             if r.get("ok"):
                 console.print(
@@ -1082,7 +1149,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                 "stakes": "low",
             }
             run_pipeline(state, ctx)
-        except Exception:
+        except Exception as _omni_sw_1085:
+            log_swallowed_exception('main.py:1085', _omni_sw_1085)
             console.print("[red]RELOAD error.[/red]")
         return True
     if up == "ATLAS" or up.startswith("ATLAS "):
@@ -1092,7 +1160,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         gp = atlas.get("geopolitics", {}) if isinstance(atlas, dict) else {}
         try:
             t = int((gp.get("tension_idx", 0) if isinstance(gp, dict) else 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_1095:
+            log_swallowed_exception('main.py:1095', _omni_sw_1095)
             t = 0
         console.print("[bold]ATLAS[/bold]")
         console.print(f"- tension_idx={t}/100")
@@ -1105,8 +1174,6 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
 
         want = parts[1].strip().lower() if len(parts) >= 2 else ""
         try:
-            from engine.world.atlas import ensure_country_profile, ensure_location_profile
-
             if not want:
                 # Default to player's current country.
                 loc = str((state.get("player", {}) or {}).get("location", "") or "").strip()
@@ -1124,25 +1191,23 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                     if rivals:
                         console.print("- rivals: " + ", ".join(rivals[:6]) + (" ..." if len(rivals) > 6 else ""))
         except Exception as e:
-            _record_soft_error(state, "intent.auto_stay", e)
+            log_swallowed_exception('main.py:1126', e)
+            _record_soft_error(state, "main.atlas.country_profile", e)
         return True
     if up == "COUNTRIES":
         try:
-            from engine.world.atlas import list_known_countries
-
             xs = list_known_countries()
             console.print("[bold]COUNTRIES[/bold]")
             console.print(f"- total={len(xs)}")
             console.print(", ".join(xs[:60]) + (" ..." if len(xs) > 60 else ""))
-        except Exception:
+        except Exception as _omni_sw_1137:
+            log_swallowed_exception('main.py:1137', _omni_sw_1137)
             console.print("[red]COUNTRIES error.[/red]")
         return True
     if up == "CITIES" or up.startswith("CITIES "):
         parts = cmd.split(maxsplit=2)
         want = parts[1].strip() if len(parts) >= 2 else ""
         try:
-            from engine.world.atlas import default_city_for_country, list_known_cities, normalize_country_name
-
             if want:
                 c = normalize_country_name(want)
                 xs = list_known_cities(c)
@@ -1161,13 +1226,12 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                 console.print("[bold]CITIES[/bold]")
                 console.print(f"- total={len(xs)}")
                 console.print(", ".join(xs[:80]) + (" ..." if len(xs) > 80 else ""))
-        except Exception:
+        except Exception as _omni_sw_1164:
+            log_swallowed_exception('main.py:1164', _omni_sw_1164)
             console.print("[red]CITIES error.[/red]")
         return True
     if up == "LANGS":
         try:
-            from engine.core.language import communication_quality, player_language_proficiency
-
             p = state.get("player", {}) or {}
             loc = str(p.get("location", "") or "").strip().lower()
             prof = player_language_proficiency(state)
@@ -1183,7 +1247,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                 console.print(f"- local_lang={lc.local_lang} shared={lc.shared} translator={lc.translator_level} quality={lc.quality} year={lc.sim_year} epoch={lc.tech_epoch}")
             else:
                 console.print("- local_lang: (unknown)")
-        except Exception:
+        except Exception as _omni_sw_1186:
+            log_swallowed_exception('main.py:1186', _omni_sw_1186)
             console.print("[red]LANGS error.[/red]")
         return True
     if up == "LEARN_LANG" or up.startswith("LEARN_LANG "):
@@ -1194,8 +1259,6 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         code = parts[1].strip().lower()
         method = parts[2].strip().lower() if len(parts) >= 3 else "class"
         try:
-            from engine.player.language_learning import learn_language
-
             # Preview first (no mutation) so we can validate cash/items/region safely.
             res0 = learn_language(state, code, method=method, preview=True)
             if not bool(res0.get("ok", False)):
@@ -1226,14 +1289,14 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                     "stakes": "low",
                 }
                 run_pipeline(state, ctx)
-            except Exception:
+            except Exception as _omni_sw_1229:
+                log_swallowed_exception('main.py:1229', _omni_sw_1229)
                 # Fallback: no pipeline, but still move time.
-                from engine.world.timers import update_timers
-
                 update_timers(state, {"action_type": "instant", "instant_minutes": mins})
 
             console.print(f"[green]LEARN_LANG {code} ({method}) +{res.get('delta',0)} → {res.get('new_prof',0)} (cost {cost}, time {mins}m)[/green]")
-        except Exception:
+        except Exception as _omni_sw_1236:
+            log_swallowed_exception('main.py:1236', _omni_sw_1236)
             console.print("[red]LEARN_LANG error.[/red]")
         return True
     if up == "DISGUISE" or up.startswith("DISGUISE "):
@@ -1248,30 +1311,25 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         arg = parts[1].strip()
         if arg.lower() in ("off", "stop", "none"):
             try:
-                from engine.systems.disguise import deactivate_disguise
-
                 deactivate_disguise(state, reason="manual")
-            except Exception:
-                pass
+            except Exception as _omni_sw_1254:
+                log_swallowed_exception('main.py:1254', _omni_sw_1254)
             console.print("[green]DISGUISE off.[/green]")
             return True
         try:
-            from engine.systems.disguise import activate_disguise
-
             ok = activate_disguise(state, arg)
             if not ok:
                 console.print("[red]DISGUISE gagal: cash tidak cukup (butuh ~40).[/red]")
             else:
                 console.print(f"[green]DISGUISE aktif: {arg}[/green]")
-        except Exception:
+        except Exception as _omni_sw_1266:
+            log_swallowed_exception('main.py:1266', _omni_sw_1266)
             console.print("[red]DISGUISE error.[/red]")
         return True
     if up == "SAFEHOUSE" or up.startswith("SAFEHOUSE "):
         parts = cmd.split(maxsplit=5)
         sub = parts[1].strip().lower() if len(parts) >= 2 else "status"
         try:
-            from engine.systems.safehouse import ensure_safehouse_here, rent_here, buy_here, upgrade_security
-
             row = ensure_safehouse_here(state)
             if sub in ("status", "info"):
                 console.print("[bold]SAFEHOUSE[/bold]")
@@ -1308,58 +1366,56 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                     aid = item
                     try:
                         n = int(parts[4].strip())
-                    except Exception:
+                    except Exception as _omni_sw_1311:
+                        log_swallowed_exception('main.py:1311', _omni_sw_1311)
                         n = 0
                     try:
-                        from engine.systems.safehouse_stash import stash_put_ammo
-
                         r = stash_put_ammo(state, aid, rounds=n)
                         if r.get("ok"):
                             console.print(f"[green]STASH ammo put {aid} -{r.get('rounds')}[/green]")
                         else:
                             console.print(f"[red]STASH ammo put gagal: {r.get('reason','error')}[/red]")
-                    except Exception:
+                    except Exception as _omni_sw_1321:
+                        log_swallowed_exception('main.py:1321', _omni_sw_1321)
                         console.print("[red]STASH ammo put error.[/red]")
                     return True
                 if act in ("takeammo", "getammo", "ammo_take") and len(parts) >= 5:
                     aid = item
                     try:
                         n = int(parts[4].strip())
-                    except Exception:
+                    except Exception as _omni_sw_1328:
+                        log_swallowed_exception('main.py:1328', _omni_sw_1328)
                         n = 0
                     try:
-                        from engine.systems.safehouse_stash import stash_take_ammo
-
                         r = stash_take_ammo(state, aid, rounds=n)
                         if r.get("ok"):
                             console.print(f"[green]STASH ammo take {aid} +{r.get('rounds')}[/green]")
                         else:
                             console.print(f"[red]STASH ammo take gagal: {r.get('reason','error')}[/red]")
-                    except Exception:
+                    except Exception as _omni_sw_1338:
+                        log_swallowed_exception('main.py:1338', _omni_sw_1338)
                         console.print("[red]STASH ammo take error.[/red]")
                     return True
                 if act in ("put", "store"):
                     try:
-                        from engine.systems.safehouse_stash import stash_put_from_bag
-
                         r = stash_put_from_bag(state, item)
                         if r.get("ok"):
                             console.print(f"[green]STASH put {item}[/green]")
                         else:
                             console.print(f"[red]STASH put gagal: {r.get('reason','error')}[/red]")
-                    except Exception:
+                    except Exception as _omni_sw_1350:
+                        log_swallowed_exception('main.py:1350', _omni_sw_1350)
                         console.print("[red]STASH put error.[/red]")
                     return True
                 if act in ("take", "get"):
                     try:
-                        from engine.systems.safehouse_stash import stash_take_to_bag
-
                         r = stash_take_to_bag(state, item)
                         if r.get("ok"):
                             console.print(f"[green]STASH take {item}[/green]")
                         else:
                             console.print(f"[red]STASH take gagal: {r.get('reason','error')}[/red]")
-                    except Exception:
+                    except Exception as _omni_sw_1362:
+                        log_swallowed_exception('main.py:1362', _omni_sw_1362)
                         console.print("[red]STASH take error.[/red]")
                     return True
             if sub == "raid" and len(parts) >= 3:
@@ -1368,11 +1424,10 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                 if act in ("bribe", "pay", "suap") and len(parts) >= 4:
                     try:
                         amt = int(parts[3].strip())
-                    except Exception:
+                    except Exception as _omni_sw_1371:
+                        log_swallowed_exception('main.py:1371', _omni_sw_1371)
                         amt = 0
                 try:
-                    from engine.systems.safehouse_raid import set_pending_raid_response
-
                     r = set_pending_raid_response(state, action=act, bribe_amount=amt)
                     if r.get("ok"):
                         console.print(f"[green]SAFEHOUSE RAID set: {r.get('action')} bribe={r.get('bribe_amount',0)}[/green]")
@@ -1402,11 +1457,12 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                                     "stakes": "medium",
                                 },
                             )
-                        except Exception:
-                            pass
+                        except Exception as _omni_sw_1405:
+                            log_swallowed_exception('main.py:1405', _omni_sw_1405)
                     else:
                         console.print(f"[red]SAFEHOUSE RAID gagal: {r.get('reason','error')}[/red]")
-                except Exception:
+                except Exception as _omni_sw_1409:
+                    log_swallowed_exception('main.py:1409', _omni_sw_1409)
                     console.print("[red]SAFEHOUSE RAID error.[/red]")
                 return True
             if sub in ("burn", "abandon"):
@@ -1421,19 +1477,19 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                         f"[Safehouse] BURN safehouse @ {str((state.get('player',{}) or {}).get('location','-'))}"
                     )
                     console.print("[yellow]SAFEHOUSE burned: stash cleared, status set to none.[/yellow]")
-                except Exception:
+                except Exception as _omni_sw_1424:
+                    log_swallowed_exception('main.py:1424', _omni_sw_1424)
                     console.print("[red]SAFEHOUSE burn error.[/red]")
                 return True
             console.print("[yellow]Pakai: SAFEHOUSE status|rent|buy|upgrade|stash put <id>|stash take <id>|stash putammo <ammo_id> <rounds>|stash takeammo <ammo_id> <rounds>|raid comply|hide|bribe <amt>|flee|negotiate|show_permit|burn[/yellow]")
-        except Exception:
+        except Exception as _omni_sw_1428:
+            log_swallowed_exception('main.py:1428', _omni_sw_1428)
             console.print("[red]SAFEHOUSE error.[/red]")
         return True
     if up == "BANK" or up.startswith("BANK "):
         parts = cmd.split(maxsplit=2)
         sub = parts[1].strip().lower() if len(parts) >= 2 else "status"
         try:
-            from engine.player.banking import bank_aml_snapshot, bank_deposit, bank_withdraw
-
             econ = state.setdefault("economy", {})
             cash = int(econ.get("cash", 0) or 0)
             bank = int(econ.get("bank", 0) or 0)
@@ -1452,7 +1508,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                     return True
                 try:
                     amt = int(parts[2].strip())
-                except Exception:
+                except Exception as _omni_sw_1455:
+                    log_swallowed_exception('main.py:1455', _omni_sw_1455)
                     console.print("[red]BANK deposit: amount tidak valid.[/red]")
                     return True
                 res = bank_deposit(state, amt)
@@ -1471,8 +1528,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                             "cash_deposit": float(res.get("cash_deposit", 0) or 0),
                         },
                     )
-                except Exception:
-                    pass
+                except Exception as _omni_sw_1474:
+                    log_swallowed_exception('main.py:1474', _omni_sw_1474)
                 console.print(f"[green]BANK deposit OK[/green] {amt} cash→bank (AML log updated)")
                 return True
             if sub == "withdraw":
@@ -1481,7 +1538,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                     return True
                 try:
                     amt = int(parts[2].strip())
-                except Exception:
+                except Exception as _omni_sw_1484:
+                    log_swallowed_exception('main.py:1484', _omni_sw_1484)
                     console.print("[red]BANK withdraw: amount tidak valid.[/red]")
                     return True
                 res = bank_withdraw(state, amt)
@@ -1499,28 +1557,19 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                             "stakes": "low",
                         },
                     )
-                except Exception:
-                    pass
+                except Exception as _omni_sw_1502:
+                    log_swallowed_exception('main.py:1502', _omni_sw_1502)
                 console.print(f"[green]BANK withdraw OK[/green] {amt} bank→cash")
                 return True
             console.print("[yellow]Pakai: BANK status|deposit <n>|withdraw <n>[/yellow]")
-        except Exception:
+        except Exception as _omni_sw_1507:
+            log_swallowed_exception('main.py:1507', _omni_sw_1507)
             console.print("[red]BANK error.[/red]")
         return True
     if up == "STAY" or up.startswith("STAY "):
         parts = cmd.split(maxsplit=3)
         sub = parts[1].strip().lower() if len(parts) >= 2 else "status"
         try:
-            from engine.systems.accommodation import (
-                get_stay_here,
-                maybe_trigger_stay_raid,
-                nightly_rate,
-                normalize_stay_kind,
-                stay_checkin,
-                stay_help_aliases,
-                stay_kind_label,
-            )
-
             loc = str((state.get("player", {}) or {}).get("location", "") or "").strip() or "-"
             if sub in ("status", "info"):
                 row = get_stay_here(state)
@@ -1543,7 +1592,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                 n_raw = parts[2].strip() if len(parts) >= 3 else "1"
                 try:
                     nn = int(n_raw)
-                except Exception:
+                except Exception as _omni_sw_1546:
+                    log_swallowed_exception('main.py:1546', _omni_sw_1546)
                     nn = 1
                 rr = maybe_trigger_stay_raid(state)
                 if bool(rr.get("triggered")):
@@ -1568,8 +1618,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                             "stakes": "low",
                         },
                     )
-                except Exception:
-                    pass
+                except Exception as _omni_sw_1571:
+                    log_swallowed_exception('main.py:1571', _omni_sw_1571)
                 tier_name = stay_kind_label(str(res.get("kind") or nk), short=True)
                 console.print(
                     f"[green]STAY OK[/green] {tier_name} +{res.get('nights_added')}n total_nights={res.get('nights_remaining')} paid={res.get('paid')} cash={res.get('cash_after')}"
@@ -1577,13 +1627,12 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                 return True
             console.print("[yellow]Pakai: STAY status|hotel <n>|boarding <n>|suite <n>[/yellow]")
             console.print(f"[dim]{stay_help_aliases()}[/dim]")
-        except Exception:
+        except Exception as _omni_sw_1580:
+            log_swallowed_exception('main.py:1580', _omni_sw_1580)
             console.print("[red]STAY error.[/red]")
         return True
     if up == "WEATHER":
         try:
-            from engine.world.weather import ensure_weather
-
             meta = state.get("meta", {}) or {}
             day = int(meta.get("day", 1) or 1)
             loc = str((state.get("player", {}) or {}).get("location", "") or "").strip().lower()
@@ -1592,14 +1641,13 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                 return True
             w = ensure_weather(state, loc, day)
             console.print(f"[bold]WEATHER[/bold] {loc}: {w.get('kind','-')} (day {day})")
-        except Exception:
+        except Exception as _omni_sw_1595:
+            log_swallowed_exception('main.py:1595', _omni_sw_1595)
             console.print("[red]WEATHER error.[/red]")
             return True
     # DISTRICT COMMANDS
     if up == "DISTRICTS" or up == "DISTRICT":
         try:
-            from engine.world.districts import describe_location, list_districts
-            
             loc = str((state.get("player", {}) or {}).get("location", "") or "").strip()
             if not loc:
                 console.print("[yellow]DISTRICTS: No current location.[/yellow]")
@@ -1620,14 +1668,13 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                 services = d.get("services", [])
                 console.print(f"  Services: {', '.join(services) if services else 'none'}")
                 console.print(f"  Crime={d.get('crime_risk',3)}/5 Police={d.get('police_presence',3)}/5")
-        except Exception:
+        except Exception as _omni_sw_1623:
+            log_swallowed_exception('main.py:1623', _omni_sw_1623)
             console.print("[red]DISTRICTS error.[/red]")
         return True
     # VEHICLE COMMANDS
     if up == "MYCAR" or up == "MYVEHICLE" or up == "VEHICLES":
         try:
-            from engine.systems.vehicles import list_owned_vehicles, VEHICLE_TYPES
-            
             vehicles = list_owned_vehicles(state)
             console.print("[bold]VEHICLES[/bold]")
             if not vehicles:
@@ -1641,13 +1688,12 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                 cond = v.get("condition", 100)
                 cond_color = "green" if cond > 70 else ("yellow" if cond > 30 else "red")
                 console.print(f"- {v.get('name','?')} {fuel_status} cond=[{cond_color}]{cond}[/{cond_color}]{stolen}")
-        except Exception:
+        except Exception as _omni_sw_1644:
+            log_swallowed_exception('main.py:1644', _omni_sw_1644)
             console.print("[red]MYCAR error.[/red]")
         return True
     if up == "BUYVEHICLE" or up.startswith("BUYVEHICLE "):
         try:
-            from engine.systems.vehicles import buy_vehicle, VEHICLE_TYPES
-            
             parts = cmd.split(maxsplit=2)
             if len(parts) < 2:
                 console.print("[yellow]Usage: BUYVEHICLE <type>[/yellow]")
@@ -1663,13 +1709,12 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                     console.print(f"[yellow]Need: {result.get('need')} | Have: {result.get('cash')}[/yellow]")
             else:
                 console.print(f"[green]BUYVEHICLE OK[/green] {result.get('name')} for {result.get('price')} cash. Remaining: {result.get('cash_remaining')}")
-        except Exception:
+        except Exception as _omni_sw_1666:
+            log_swallowed_exception('main.py:1666', _omni_sw_1666)
             console.print("[red]BUYVEHICLE error.[/red]")
         return True
     if up == "SELLVEHICLE" or up.startswith("SELLVEHICLE "):
         try:
-            from engine.systems.vehicles import sell_vehicle
-            
             parts = cmd.split(maxsplit=2)
             if len(parts) < 2:
                 console.print("[yellow]Usage: SELLVEHICLE <type>[/yellow]")
@@ -1682,13 +1727,12 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                 console.print(f"[red]SELLVEHICLE failed: {result.get('reason','error')}[/red]")
             else:
                 console.print(f"[green]SELLVEHICLE OK[/green] Sold for {result.get('price')}. Cash: {result.get('cash')}")
-        except Exception:
+        except Exception as _omni_sw_1685:
+            log_swallowed_exception('main.py:1685', _omni_sw_1685)
             console.print("[red]SELLVEHICLE error.[/red]")
         return True
     if up == "REFUEL" or up.startswith("REFUEL "):
         try:
-            from engine.systems.vehicles import refuel_vehicle
-            
             parts = cmd.split(maxsplit=3)
             if len(parts) < 2:
                 console.print("[yellow]Usage: REFUEL <type> [amount][/yellow]")
@@ -1702,13 +1746,12 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                 console.print(f"[red]REFUEL failed: {result.get('reason','error')}[/red]")
             else:
                 console.print(f"[green]REFUEL OK[/green] +{result.get('fuel_added')} fuel. Now: {result.get('fuel_now')}. Cost: {result.get('cost')}")
-        except Exception:
+        except Exception as _omni_sw_1705:
+            log_swallowed_exception('main.py:1705', _omni_sw_1705)
             console.print("[red]REFUEL error.[/red]")
         return True
     if up == "REPAIR" or up.startswith("REPAIR "):
         try:
-            from engine.systems.vehicles import repair_vehicle
-            
             parts = cmd.split(maxsplit=3)
             if len(parts) < 2:
                 console.print("[yellow]Usage: REPAIR <type> [amount][/yellow]")
@@ -1722,13 +1765,12 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                 console.print(f"[red]REPAIR failed: {result.get('reason','error')}[/red]")
             else:
                 console.print(f"[green]REPAIR OK[/green] +{result.get('repaired')} condition. Now: {result.get('condition_now')}%. Cost: {result.get('cost')}")
-        except Exception:
+        except Exception as _omni_sw_1725:
+            log_swallowed_exception('main.py:1725', _omni_sw_1725)
             console.print("[red]REPAIR error.[/red]")
         return True
     if up == "STEALVEHICLE" or up.startswith("STEALVEHICLE "):
         try:
-            from engine.systems.vehicles import steal_vehicle
-            
             parts = cmd.split(maxsplit=2)
             if len(parts) < 2:
                 console.print("[yellow]Usage: STEALVEHICLE <type>[/yellow]")
@@ -1746,13 +1788,12 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                     console.print(f"[red]STEALVEHICLE failed: {result.get('reason','error')}[/red]")
             else:
                 console.print(f"[green]STEALVEHICLE OK[/green] Stole {result.get('name')}! Condition: {result.get('condition')}%")
-        except Exception:
+        except Exception as _omni_sw_1749:
+            log_swallowed_exception('main.py:1749', _omni_sw_1749)
             console.print("[red]STEALVEHICLE error.[/red]")
         return True
     if up == "USEVEHICLE" or up.startswith("USEVEHICLE "):
         try:
-            from engine.systems.vehicles import set_active_vehicle
-
             parts = cmd.split(maxsplit=2)
             if len(parts) < 2:
                 console.print("[yellow]Usage: USEVEHICLE <type>|OFF[/yellow]")
@@ -1767,7 +1808,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                 console.print(f"[green]Active vehicle set:[/green] {av}")
             else:
                 console.print(f"[red]USEVEHICLE failed:[/red] {r.get('reason','error')}")
-        except Exception:
+        except Exception as _omni_sw_1770:
+            log_swallowed_exception('main.py:1770', _omni_sw_1770)
             console.print("[red]USEVEHICLE error.[/red]")
         return True
     if up == "DRIVE" or up.startswith("DRIVE "):
@@ -1784,13 +1826,11 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                 # last token could be vehicle id
                 cand = toks[-1].strip().lower()
                 try:
-                    from engine.systems.vehicles import VEHICLE_TYPES
-
                     if cand in VEHICLE_TYPES:
                         vid = cand
                         dest = " ".join(toks[:-1]).strip()
-                except Exception:
-                    pass
+                except Exception as _omni_sw_1792:
+                    log_swallowed_exception('main.py:1792', _omni_sw_1792)
             ctx = {
                 "action_type": "travel",
                 "domain": "evasion",
@@ -1803,13 +1843,12 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                 ctx["vehicle_id"] = vid
             run_pipeline(state, ctx)
             console.print(f"[green]DRIVE queued.[/green] dest={dest}" + (f" vehicle={vid}" if vid else ""))
-        except Exception:
+        except Exception as _omni_sw_1806:
+            log_swallowed_exception('main.py:1806', _omni_sw_1806)
             console.print("[red]DRIVE error.[/red]")
         return True
     if up == "TRAVELTO" or up.startswith("TRAVELTO "):
         try:
-            from engine.world.districts import travel_within_city
-            
             parts = cmd.split(maxsplit=1)
             if len(parts) < 2:
                 console.print("[yellow]Usage: TRAVELTO <district_id>[/yellow]")
@@ -1829,17 +1868,17 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                         console.print(f"[yellow]Warning: Crime risk {enc.get('risk')}/5 in this area![/yellow]")
                     elif enc.get("type") == "police":
                         console.print(f"[yellow]Warning: Heavy police presence in this area![/yellow]")
-        except Exception:
+        except Exception as _omni_sw_1832:
+            log_swallowed_exception('main.py:1832', _omni_sw_1832)
             console.print("[red]TRAVELTO error.[/red]")
         return True
     if up == "WHEREAMI":
         try:
-            from engine.world.districts import describe_location
-            
             current_desc = describe_location(state)
             console.print(f"[bold]WHEREAMI[/bold]")
             console.print(current_desc)
-        except Exception:
+        except Exception as _omni_sw_1842:
+            log_swallowed_exception('main.py:1842', _omni_sw_1842)
             # Fallback to basic location
             loc = str((state.get("player", {}) or {}).get("location", "") or "-").strip()
             console.print(f"[bold]WHEREAMI[/bold] {loc}")
@@ -1912,7 +1951,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                 state.clear()
                 state.update(restored)
                 console.print("[green]UNDO: restored previous turn.[/green]")
-            except Exception:
+            except Exception as _omni_sw_1915:
+                log_swallowed_exception('main.py:1915', _omni_sw_1915)
                 console.print("[red]UNDO gagal: previous.json tidak bisa dibaca.[/red]")
         else:
             console.print("[yellow]UNDO tidak tersedia (previous.json belum ada).[/yellow]")
@@ -1944,7 +1984,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             for chunk in stream_response(build_system_prompt(state), turn_package):
                 stream_render(chunk)
             console.print()
-        except Exception:
+        except Exception as _omni_sw_1947:
+            log_swallowed_exception('main.py:1947', _omni_sw_1947)
             console.print("[red]// SIGNAL LOST //[/red]")
         return True
     if up == "INTENT_DEBUG":
@@ -2005,15 +2046,18 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                 target = k.split("|", 1)[1] if "|" in k else k
                 try:
                     heat = int(v.get("heat", 0) or 0)
-                except Exception:
+                except Exception as _omni_sw_2008:
+                    log_swallowed_exception('main.py:2008', _omni_sw_2008)
                     heat = 0
                 try:
                     noise = int(v.get("noise", 0) or 0)
-                except Exception:
+                except Exception as _omni_sw_2012:
+                    log_swallowed_exception('main.py:2012', _omni_sw_2012)
                     noise = 0
                 try:
                     signal = int(v.get("signal", 0) or 0)
-                except Exception:
+                except Exception as _omni_sw_2016:
+                    log_swallowed_exception('main.py:2016', _omni_sw_2016)
                     signal = 0
                 rec = "OK"
                 if heat >= 75 or signal >= 75:
@@ -2049,7 +2093,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             svc = str(v.get("service", "offer"))
             try:
                 exp = int(v.get("expires_day", day) or day)
-            except Exception:
+            except Exception as _omni_sw_2052:
+                log_swallowed_exception('main.py:2052', _omni_sw_2052)
                 exp = day
             ttl = max(0, exp - day)
             out.append(f"- {npc} ({role}): {svc} (ttl {ttl}d)")
@@ -2062,8 +2107,6 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         return True
     if up == "INFORMANTS" or up.startswith("INFORMANTS "):
         try:
-            from engine.social.informants import seed_informant_roster
-
             loc = str((state.get("player", {}) or {}).get("location", "") or "").strip().lower()
             did = str((state.get("player", {}) or {}).get("district", "") or "").strip().lower()
             seed_informant_roster(state, loc=loc, district=did)
@@ -2092,13 +2135,12 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                 )
             console.print(tbl)
             console.print("[dim]Commands: INFORMANT PAY <name> <amount> | INFORMANT BURN <name>[/dim]")
-        except Exception:
+        except Exception as _omni_sw_2095:
+            log_swallowed_exception('main.py:2095', _omni_sw_2095)
             console.print("[red]INFORMANTS error.[/red]")
         return True
     if up == "INFORMANT" or up.startswith("INFORMANT "):
         try:
-            from engine.social.informant_ops import pay_informant, burn_informant
-
             parts = cmd.split(maxsplit=3)
             if len(parts) < 3:
                 console.print("[yellow]Usage: INFORMANT PAY <name> <amount> | INFORMANT BURN <name>[/yellow]")
@@ -2111,7 +2153,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                     return True
                 try:
                     amt = int(parts[3].strip())
-                except Exception:
+                except Exception as _omni_sw_2114:
+                    log_swallowed_exception('main.py:2114', _omni_sw_2114)
                     amt = 0
                 r = pay_informant(state, name, amt)
                 if not r.get("ok"):
@@ -2134,7 +2177,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                     console.print(f"[green]{msg}[/green] roll={r.get('backlash_roll')} chance={r.get('backlash_chance')}")
                 return True
             console.print("[red]Unknown INFORMANT action. Use PAY/BURN.[/red]")
-        except Exception:
+        except Exception as _omni_sw_2137:
+            log_swallowed_exception('main.py:2137', _omni_sw_2137)
             console.print("[red]INFORMANT error.[/red]")
         return True
     if up == "NPC" or up.startswith("NPC "):
@@ -2189,8 +2233,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             slot = ((state.get("world", {}) or {}).get("locations", {}) or {}).get(loc)
             if isinstance(slot, dict) and isinstance(slot.get("market"), dict) and slot.get("market"):
                 mkt = slot.get("market") or mkt
-        except Exception:
-            pass
+        except Exception as _omni_sw_2192:
+            log_swallowed_exception('main.py:2192', _omni_sw_2192)
         mi = (state.get("meta", {}) or {}).get("market_index") or {}
         if not isinstance(mkt, dict) or not mkt:
             console.print("[yellow]MARKET: data market kosong.[/yellow]")
@@ -2238,7 +2282,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                     console.print("- " + ", ".join(roles_here))
                 else:
                     console.print("[yellow]SHOP roles: tidak ada role NPC di lokasi ini (preset belum ada atau belum diaplikasikan).[/yellow]")
-            except Exception:
+            except Exception as _omni_sw_2241:
+                log_swallowed_exception('main.py:2241', _omni_sw_2241)
                 console.print("[red]SHOP roles error.[/red]")
             return True
         # parse page syntax: "page 2" in arg2/arg3
@@ -2249,7 +2294,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                 try:
                     n = int(t.replace("page", "").strip() or "0")
                     return n if n >= 1 else None
-                except Exception:
+                except Exception as _omni_sw_2252:
+                    log_swallowed_exception('main.py:2252', _omni_sw_2252)
                     return None
             return None
 
@@ -2309,16 +2355,16 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                             roles_here.append(rr)
             if roles_here:
                 console.print("[dim]roles here: " + ", ".join(roles_here[:10]) + "[/dim]")
-        except Exception:
-            pass
+        except Exception as _omni_sw_2312:
+            log_swallowed_exception('main.py:2312', _omni_sw_2312)
         # Show cash + capacity snapshot (helps players understand BUY failures).
         try:
             eco = state.get("economy", {}) or {}
             cash = int((eco.get("cash", 0) if isinstance(eco, dict) else 0) or 0)
             cap = get_capacity_status(state)
             console.print(f"[dim]cash={cash} | pocket={cap.pocket_used}/{cap.pocket_cap} | bag={cap.bag_used}/{cap.bag_cap}[/dim]")
-        except Exception:
-            pass
+        except Exception as _omni_sw_2320:
+            log_swallowed_exception('main.py:2320', _omni_sw_2320)
         if only_avail:
             quotes = [q for q in quotes if q.available]
         title = f"SHOP ({role})" if role else "SHOP"
@@ -2329,14 +2375,13 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         if page > 1:
             title += f" [page {page}]"
         try:
-            from display.renderer import format_data_table
-
             rows: list[list[str]] = []
             for i, q in enumerate(quotes, start=1):
                 stock = "OK" if q.available else "SOLD OUT"
                 rows.append([str(i), str(q.item_id), str(q.name), str(q.category), str(stock), str(q.buy_price), str(q.sell_price)])
             console.print(format_data_table(title, ["#", "item_id", "name", "cat", "stock", "buy", "sell"], rows, theme="default"))
-        except Exception:
+        except Exception as _omni_sw_2339:
+            log_swallowed_exception('main.py:2339', _omni_sw_2339)
             tbl = Table(title=title)
             tbl.add_column("#", justify="right", no_wrap=True)
             tbl.add_column("item_id", no_wrap=True)
@@ -2384,7 +2429,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
             if t.startswith("x") and len(t) >= 2:
                 try:
                     qty = max(1, min(50, int(t[1:])))
-                except Exception:
+                except Exception as _omni_sw_2387:
+                    log_swallowed_exception('main.py:2387', _omni_sw_2387)
                     qty = 1
             elif t in ("bag", "pocket"):
                 prefer = t
@@ -2449,7 +2495,8 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         elif qty_mode:
             try:
                 n = int(tok[1:])
-            except Exception:
+            except Exception as _omni_sw_2452:
+                log_swallowed_exception('main.py:2452', _omni_sw_2452)
                 n = 1
             res = sell_item_n(state, iid, n=n)
         else:
@@ -2519,8 +2566,6 @@ def main() -> None:
     while True:
         render_monitor(state)
         cmd_raw = _expand_alias(_ask("> "))
-        from engine.core.security_intent import sanitize_player_command_text
-
         cmd = sanitize_player_command_text(cmd_raw)
         if not cmd:
             continue
@@ -2539,17 +2584,6 @@ def main() -> None:
             continue
 
         # 1) Intent resolution: LLM-first when FFCI enabled; meta/special stay fast-path above.
-        from engine.core.action_intent import (
-            INTENT_MERGE_FIELD_KEYS,
-            apply_parser_registry_anchor_after_llm,
-            apply_step_to_action_ctx,
-            merge_intent_into_action_ctx,
-            select_best_step,
-            strip_llm_intent_overlay_on_registry_hint_mismatch,
-        )
-        from engine.core.intent_plan_runtime import apply_pending_runtime_step, sync_plan_runtime_start
-        from engine.core.security_intent import security_flags_for_intent_input
-
         meta = state.setdefault("meta", {})
         action_ctx = parse_action_intent(cmd)
         parser_registry_id = str(action_ctx.get("registry_action_id") or "").strip()
@@ -2579,8 +2613,6 @@ def main() -> None:
             if parser_registry_id:
                 apply_parser_registry_anchor_after_llm(action_ctx, meta, parser_registry_id)
             try:
-                from engine.core.action_registry import registry_hint_alignment
-
                 lh0 = str(action_ctx.get("llm_registry_action_id_hint") or "").strip()
                 pr0 = str(action_ctx.get("registry_action_id") or "").strip()
                 snap0 = meta.get("_parser_intent_snapshot_before_llm_merge")
@@ -2597,8 +2629,8 @@ def main() -> None:
                             action_ctx.pop(_k, None)
                     strip_llm_intent_overlay_on_registry_hint_mismatch(action_ctx)
                     apply_parser_registry_anchor_after_llm(action_ctx, meta, parser_registry_id)
-            except Exception:
-                pass
+            except Exception as _omni_sw_2600:
+                log_swallowed_exception('main.py:2600', _omni_sw_2600)
             meta.pop("_parser_intent_snapshot_before_llm_merge", None)
             clamp_suggested_dc_ctx(action_ctx)
             if not ffci_shadow_only():
@@ -2641,8 +2673,6 @@ def main() -> None:
                     steps_list = plan_obj.get("steps") if isinstance(plan_obj.get("steps"), list) else []
                     n_plan = sum(1 for s in steps_list if isinstance(s, dict) and str(s.get("step_id", "") or "").strip())
                     if sid is None and n_plan > 0:
-                        from engine.core.action_intent import apply_intent_plan_precondition_failure
-
                         apply_intent_plan_precondition_failure(state, action_ctx, reason="NO_VALID_STEP")
                     if isinstance(sid, str) and sid.strip():
                         action_ctx["step_now_id"] = sid.strip()
@@ -2660,9 +2690,8 @@ def main() -> None:
                     ):
                         try:
                             sync_plan_runtime_start(state, action_ctx, source="llm")
-                        except Exception:
-                            pass
-
+                        except Exception as _omni_sw_2663:
+                            log_swallowed_exception('main.py:2663', _omni_sw_2663)
                 stakes = action_ctx.get("stakes")
                 if isinstance(stakes, str):
                     action_ctx["has_stakes"] = stakes not in ("none", "low")
@@ -2701,12 +2730,11 @@ def main() -> None:
                     f"[ActionCtxShadow] mismatch keys={','.join(mismatches)}"
                 )
         except Exception as e:
+            log_swallowed_exception('main.py:2703', e)
             _record_soft_error(state, "main.action_ctx_shadow", e)
 
         # Registry hint telemetry (parser id vs optional LLM hint after merge).
         try:
-            from engine.core.action_registry import registry_hint_alignment
-
             lh = str(action_ctx.get("llm_registry_action_id_hint") or "").strip()
             pr_final = str(action_ctx.get("registry_action_id") or "").strip()
             if lh:
@@ -2718,7 +2746,8 @@ def main() -> None:
                 meta["registry_hint_mismatch"] = True
             else:
                 meta.pop("registry_hint_mismatch", None)
-        except Exception:
+        except Exception as _omni_sw_2721:
+            log_swallowed_exception('main.py:2721', _omni_sw_2721)
             meta.pop("llm_registry_action_id_hint", None)
             meta.pop("registry_hint_alignment", None)
             meta.pop("registry_hint_mismatch", None)
@@ -2795,16 +2824,11 @@ def main() -> None:
 
         # NPC targeting enhancement (e.g. "orang itu" → npc_focus).
         try:
-            from engine.npc.npc_targeting import apply_npc_targeting
-
             apply_npc_targeting(state, action_ctx, cmd)
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_2801:
+            log_swallowed_exception('main.py:2801', _omni_sw_2801)
         # Optional: NL "menginap semalam" / "stay one night" → deterministic prepaid stay (OMNI_AUTO_STAY_INTENT=1).
         try:
-            from engine.systems.accommodation import stay_kind_label, try_auto_stay_from_intent
-
             auto_r = try_auto_stay_from_intent(state, action_ctx)
             if bool(auto_r.get("applied")):
                 action_ctx["accommodation_auto_applied"] = True
@@ -2817,32 +2841,23 @@ def main() -> None:
                     console.print(
                         f"[dim]Engine: prepaid stay applied — {tn} +{int(auto_r.get('nights') or 0)}n (OMNI_AUTO_STAY_INTENT)[/dim]"
                     )
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
+                except Exception as _omni_sw_2820:
+                    log_swallowed_exception('main.py:2820', _omni_sw_2820)
+        except Exception as _omni_sw_2822:
+            log_swallowed_exception('main.py:2822', _omni_sw_2822)
         apply_active_scene_intent_lock(state, action_ctx, cmd)
 
         try:
-            from engine.core.integration_hooks import apply_cross_system_policies
-
             apply_cross_system_policies(state, action_ctx)
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_2831:
+            log_swallowed_exception('main.py:2831', _omni_sw_2831)
         roll_pkg = run_pipeline(state, action_ctx)
         try:
-            from engine.core.telemetry_contract import merge_telemetry_turn_last, snapshot_turn_telemetry
-
             merge_telemetry_turn_last(state, snapshot_turn_telemetry(state, action_ctx, roll_pkg))
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_2839:
+            log_swallowed_exception('main.py:2839', _omni_sw_2839)
         metrics_after = _snapshot_metrics(state)
         try:
-            from engine.core.integration_hooks import post_turn_integration
-
             post_turn_integration(
                 state,
                 action_ctx,
@@ -2851,21 +2866,22 @@ def main() -> None:
                 metrics_before=metrics_before,
                 metrics_after=metrics_after,
             )
-        except Exception:
-            pass
+        except Exception as _omni_sw_2854:
+            log_swallowed_exception('main.py:2854', _omni_sw_2854)
         diff = _compute_diff(metrics_before, metrics_after)
         meta = state.setdefault("meta", {})
         meta["last_turn_diff"] = diff
         # What Changed v2: attach "notes added" slice (bounded) for transparent simulation.
         try:
             n0 = int(metrics_before.get("world_notes_len", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_2862:
+            log_swallowed_exception('main.py:2862', _omni_sw_2862)
             n0 = 0
         notes = state.get("world_notes", []) or []
         added: list[str] = []
         if isinstance(notes, list) and n0 < len(notes):
             for x in notes[n0:][-6:]:
-                s = str(x)
+                s = world_note_plain(x)
                 added.append(s if len(s) <= 160 else (s[:157] + "..."))
         commerce_notes: list[str] = []
         for s in added:
@@ -2894,14 +2910,16 @@ def main() -> None:
                 text += chunk
                 stream_render(chunk)
             console.print()
-        except Exception:
+        except Exception as _omni_sw_2897:
+            log_swallowed_exception('main.py:2897', _omni_sw_2897)
             console.print("[red]// SIGNAL LOST //[/red]")
             try:
                 for chunk in stream_response(system_prompt, package):
                     text += chunk
                     stream_render(chunk)
                 console.print()
-            except Exception:
+            except Exception as _omni_sw_2904:
+                log_swallowed_exception('main.py:2904', _omni_sw_2904)
                 console.print("[red]Stream gagal, output parsial disimpan.[/red]")
 
         if text:

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from display.renderer import format_data_table
+from engine.core.error_taxonomy import log_swallowed_exception
+
 _EDIBLE_TAGS = {"food", "ration", "snack", "meal", "drink", "water"}
 
 
@@ -47,7 +50,8 @@ def _food_restore_value(state: dict[str, Any], item_id: str) -> float:
     tags = _item_tags(row)
     try:
         calories = float(row.get("calories", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_50:
+        log_swallowed_exception('engine/commands/commerce.py:50', _omni_sw_50)
         calories = 0.0
     if calories > 0:
         return max(8.0, min(50.0, round(calories / 16.0, 2)))
@@ -83,7 +87,8 @@ def _apply_hunger_reduction(state: dict[str, Any], amount: float) -> tuple[float
     bio = state.setdefault("bio", {})
     try:
         before = float(bio.get("hunger", 0.0) or 0.0)
-    except Exception:
+    except Exception as _omni_sw_86:
+        log_swallowed_exception('engine/commands/commerce.py:86', _omni_sw_86)
         before = 0.0
     after = max(0.0, min(100.0, round(before - max(0.0, amount), 2)))
     if after <= 20.0:
@@ -213,8 +218,8 @@ def handle_commerce(
                         "stakes": "low",
                     },
                 )
-            except Exception:
-                pass
+            except Exception as _omni_sw_216:
+                log_swallowed_exception('engine/commands/commerce.py:216', _omni_sw_216)
         return True
     if up == "MARKET":
         eco = state.get("economy", {}) or {}
@@ -224,8 +229,8 @@ def handle_commerce(
             slot = ((state.get("world", {}) or {}).get("locations", {}) or {}).get(loc)
             if isinstance(slot, dict) and isinstance(slot.get("market"), dict) and slot.get("market"):
                 mkt = slot.get("market") or mkt
-        except Exception:
-            pass
+        except Exception as _omni_sw_227:
+            log_swallowed_exception('engine/commands/commerce.py:227', _omni_sw_227)
         mi = (state.get("meta", {}) or {}).get("market_index") or {}
         if not isinstance(mkt, dict) or not mkt:
             console.print("[yellow]MARKET: data market kosong.[/yellow]")
@@ -273,7 +278,8 @@ def handle_commerce(
                     console.print("- " + ", ".join(roles_here))
                 else:
                     console.print("[yellow]SHOP roles: tidak ada role NPC di lokasi ini (preset belum ada atau belum diaplikasikan).[/yellow]")
-            except Exception:
+            except Exception as _omni_sw_276:
+                log_swallowed_exception('engine/commands/commerce.py:276', _omni_sw_276)
                 console.print("[red]SHOP roles error.[/red]")
             return True
 
@@ -283,7 +289,8 @@ def handle_commerce(
                 try:
                     n = int(t.replace("page", "").strip() or "0")
                     return n if n >= 1 else None
-                except Exception:
+                except Exception as _omni_sw_286:
+                    log_swallowed_exception('engine/commands/commerce.py:286', _omni_sw_286)
                     return None
             return None
 
@@ -341,15 +348,15 @@ def handle_commerce(
                             roles_here.append(rr)
             if roles_here:
                 console.print("[dim]roles here: " + ", ".join(roles_here[:10]) + "[/dim]")
-        except Exception:
-            pass
+        except Exception as _omni_sw_344:
+            log_swallowed_exception('engine/commands/commerce.py:344', _omni_sw_344)
         try:
             eco = state.get("economy", {}) or {}
             cash = int((eco.get("cash", 0) if isinstance(eco, dict) else 0) or 0)
             cap = get_capacity_status(state)
             console.print(f"[dim]cash={cash} | pocket={cap.pocket_used}/{cap.pocket_cap} | bag={cap.bag_used}/{cap.bag_cap}[/dim]")
-        except Exception:
-            pass
+        except Exception as _omni_sw_351:
+            log_swallowed_exception('engine/commands/commerce.py:351', _omni_sw_351)
         if only_avail:
             quotes = [q for q in quotes if q.available]
         title = f"SHOP ({role})" if role else "SHOP"
@@ -360,14 +367,13 @@ def handle_commerce(
         if page > 1:
             title += f" [page {page}]"
         try:
-            from display.renderer import format_data_table
-
             rows: list[list[str]] = []
             for i, q in enumerate(quotes, start=1):
                 stock = "OK" if q.available else "SOLD OUT"
                 rows.append([str(i), str(q.item_id), str(q.name), str(q.category), str(stock), str(q.buy_price), str(q.sell_price)])
             console.print(format_data_table(title, ["#", "item_id", "name", "cat", "stock", "buy", "sell"], rows, theme="default"))
-        except Exception:
+        except Exception as _omni_sw_370:
+            log_swallowed_exception('engine/commands/commerce.py:370', _omni_sw_370)
             tbl = table_cls(title=title)
             tbl.add_column("#", justify="right", no_wrap=True)
             tbl.add_column("item_id", no_wrap=True)
@@ -413,7 +419,8 @@ def handle_commerce(
             if t.startswith("x") and len(t) >= 2:
                 try:
                     qty = max(1, min(50, int(t[1:])))
-                except Exception:
+                except Exception as _omni_sw_416:
+                    log_swallowed_exception('engine/commands/commerce.py:416', _omni_sw_416)
                     qty = 1
             elif t in ("bag", "pocket"):
                 prefer = t
@@ -473,7 +480,8 @@ def handle_commerce(
         elif qty_mode:
             try:
                 n = int(tok[1:])
-            except Exception:
+            except Exception as _omni_sw_476:
+                log_swallowed_exception('engine/commands/commerce.py:476', _omni_sw_476)
                 n = 1
             res = sell_item_n(state, iid, n=n)
         else:

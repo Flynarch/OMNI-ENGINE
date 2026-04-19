@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.world.atlas import get_city_stats_for_travel
+
 _TRACK_ORDER = ("normal", "kriminal", "politik", "bisnis", "underground", "militer", "sosial")
 
 
@@ -138,7 +141,8 @@ def _skill_level(state: dict[str, Any], key: str) -> int:
         return 1
     try:
         return max(1, int(row.get("level", 1) or 1))
-    except Exception:
+    except Exception as _omni_sw_141:
+        log_swallowed_exception('engine/systems/occupation.py:141', _omni_sw_141)
         return 1
 
 
@@ -173,8 +177,6 @@ def career_title_for_level(state: dict[str, Any], track_id: str, level_index: in
 
 def career_daily_salary_usd(state: dict[str, Any]) -> int:
     """W2-9: daily pay scales with city_stats.min/avg wage and career pay_mult."""
-    from engine.world.atlas import get_city_stats_for_travel
-
     ensure_career(state)
     c = state.get("player", {}).get("career", {})
     if not isinstance(c, dict):
@@ -190,14 +192,16 @@ def career_daily_salary_usd(state: dict[str, Any]) -> int:
         return 0
     try:
         lvl = int(tr.get("level", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_193:
+        log_swallowed_exception('engine/systems/occupation.py:193', _omni_sw_193)
         lvl = 0
     row = _level_row(path, lvl)
     if not row:
         return 0
     try:
         pm = float(row.get("pay_mult", 0.0) or 0.0)
-    except Exception:
+    except Exception as _omni_sw_200:
+        log_swallowed_exception('engine/systems/occupation.py:200', _omni_sw_200)
         pm = 0.0
     if pm <= 0.0:
         return 0
@@ -205,16 +209,19 @@ def career_daily_salary_usd(state: dict[str, Any]) -> int:
     stats = get_city_stats_for_travel(state, loc) if loc else {}
     try:
         min_m = float(stats.get("min_wage_monthly_usd", 520.0) or 520.0)
-    except Exception:
+    except Exception as _omni_sw_208:
+        log_swallowed_exception('engine/systems/occupation.py:208', _omni_sw_208)
         min_m = 520.0
     try:
         avg_m = float(stats.get("avg_salary_monthly_usd", min_m * 1.12) or min_m)
-    except Exception:
+    except Exception as _omni_sw_212:
+        log_swallowed_exception('engine/systems/occupation.py:212', _omni_sw_212)
         avg_m = min_m * 1.12
     avg_m = max(min_m, avg_m)
     try:
         col = float(stats.get("cost_of_living_index", 50.0) or 50.0)
-    except Exception:
+    except Exception as _omni_sw_217:
+        log_swallowed_exception('engine/systems/occupation.py:217', _omni_sw_217)
         col = 50.0
     min_d = max(4.0, min_m / 22.0)
     avg_d = max(min_d, avg_m / 22.0)
@@ -234,11 +241,13 @@ def accrue_career_salary_and_decay(state: dict[str, Any]) -> None:
     meta = state.get("meta", {}) or {}
     try:
         day = int(meta.get("day", 1) or 1)
-    except Exception:
+    except Exception as _omni_sw_237:
+        log_swallowed_exception('engine/systems/occupation.py:237', _omni_sw_237)
         day = 1
     try:
         last = int(c.get("last_career_econ_day", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_241:
+        log_swallowed_exception('engine/systems/occupation.py:241', _omni_sw_241)
         last = 0
     if last >= day:
         return
@@ -254,7 +263,8 @@ def accrue_career_salary_and_decay(state: dict[str, Any]) -> None:
                 continue
             try:
                 r = int(row.get("rep", 0) or 0)
-            except Exception:
+            except Exception as _omni_sw_257:
+                log_swallowed_exception('engine/systems/occupation.py:257', _omni_sw_257)
                 r = 0
             row["rep"] = max(0, r - 1)
         state.setdefault("world_notes", []).append("[Career] Career break: reputasi tiap jalur merosot perlahan.")
@@ -325,7 +335,8 @@ def set_active_career_track(state: dict[str, Any], track_id: str) -> dict[str, A
     c["active_track"] = tid
     try:
         c["cross_track_switches"] = int(c.get("cross_track_switches", 0) or 0) + 1
-    except Exception:
+    except Exception as _omni_sw_328:
+        log_swallowed_exception('engine/systems/occupation.py:328', _omni_sw_328)
         c["cross_track_switches"] = 1
     penalty = 4
     tracks = c.get("tracks", {})
@@ -337,7 +348,8 @@ def set_active_career_track(state: dict[str, Any], track_id: str) -> dict[str, A
                 continue
             try:
                 r = int(row.get("rep", 0) or 0)
-            except Exception:
+            except Exception as _omni_sw_340:
+                log_swallowed_exception('engine/systems/occupation.py:340', _omni_sw_340)
                 r = 0
             row["rep"] = max(0, r - penalty)
         state.setdefault("world_notes", []).append(
@@ -364,7 +376,8 @@ def promote_career(state: dict[str, Any], track_id: str | None = None) -> dict[s
         return {"ok": False, "reason": "no_track_row"}
     try:
         cur = int(row_t.get("level", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_367:
+        log_swallowed_exception('engine/systems/occupation.py:367', _omni_sw_367)
         cur = 0
     levels = path.get("levels", [])
     if not isinstance(levels, list):
@@ -381,19 +394,23 @@ def promote_career(state: dict[str, Any], track_id: str | None = None) -> dict[s
     sk = _norm(str(req.get("skill", "streetwise") or "streetwise"))
     try:
         ms = int(req.get("min_skill", 1) or 1)
-    except Exception:
+    except Exception as _omni_sw_384:
+        log_swallowed_exception('engine/systems/occupation.py:384', _omni_sw_384)
         ms = 1
     try:
         mr = int(req.get("min_rep", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_388:
+        log_swallowed_exception('engine/systems/occupation.py:388', _omni_sw_388)
         mr = 0
     try:
         mc = int(req.get("min_contacts", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_392:
+        log_swallowed_exception('engine/systems/occupation.py:392', _omni_sw_392)
         mc = 0
     try:
         min_cash = int(req.get("min_cash", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_396:
+        log_swallowed_exception('engine/systems/occupation.py:396', _omni_sw_396)
         min_cash = 0
     ev = str(req.get("required_event", "") or "").strip()
     sl = _skill_level(state, sk)
@@ -401,7 +418,8 @@ def promote_career(state: dict[str, Any], track_id: str | None = None) -> dict[s
         return {"ok": False, "reason": "skill", "need": ms, "have": sl, "skill": sk}
     try:
         rep = int(row_t.get("rep", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_404:
+        log_swallowed_exception('engine/systems/occupation.py:404', _omni_sw_404)
         rep = 0
     if rep < mr:
         return {"ok": False, "reason": "rep", "need": mr, "have": rep}
@@ -410,7 +428,8 @@ def promote_career(state: dict[str, Any], track_id: str | None = None) -> dict[s
     eco = state.get("economy", {}) or {}
     try:
         cash = int(eco.get("cash", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_413:
+        log_swallowed_exception('engine/systems/occupation.py:413', _omni_sw_413)
         cash = 0
     if cash < min_cash:
         return {"ok": False, "reason": "cash", "need": min_cash, "have": cash}
@@ -420,7 +439,8 @@ def promote_career(state: dict[str, Any], track_id: str | None = None) -> dict[s
     meta = state.get("meta", {}) or {}
     try:
         row_t["last_active_day"] = int(meta.get("day", 1) or 1)
-    except Exception:
+    except Exception as _omni_sw_423:
+        log_swallowed_exception('engine/systems/occupation.py:423', _omni_sw_423)
         row_t["last_active_day"] = 1
     title = str(req.get("title", "") or "")
     state.setdefault("world_notes", []).append(f"[Career] Promosi '{tid}' → {title} (level {next_idx}).")
@@ -506,7 +526,8 @@ def apply_occupation_template(state: dict[str, Any], template_id: str) -> bool:
             continue
         try:
             lv = int(lvl or 1)
-        except Exception:
+        except Exception as _omni_sw_509:
+            log_swallowed_exception('engine/systems/occupation.py:509', _omni_sw_509)
             lv = 1
         lv = max(1, min(10, lv))
         row = _ensure_skill_row(_norm(k))
@@ -523,7 +544,8 @@ def apply_occupation_template(state: dict[str, Any], template_id: str) -> bool:
             continue
         try:
             p = int(prof or 0)
-        except Exception:
+        except Exception as _omni_sw_526:
+            log_swallowed_exception('engine/systems/occupation.py:526', _omni_sw_526)
             p = 0
         p = max(0, min(100, p))
         cur = int(langs.get(code.lower(), 0) or 0)

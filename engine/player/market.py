@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
+
+from engine.world.atlas import ensure_country_market
 
 
 def _clamp(v: int, lo: int, hi: int) -> int:
@@ -70,9 +73,8 @@ def _apply_market_pressures(
                 weapons_pressure += 3
             if active_cl:
                 electronics_pressure += 6
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_73:
+        log_swallowed_exception('engine/player/market.py:73', _omni_sw_73)
     # Black market mitigates scarcity but raises price when it has leverage.
     bm_mitigate = 0
     bm_markup = 0
@@ -115,11 +117,13 @@ def _apply_local_restrictions_only(market: dict[str, dict[str, int]], *, local_r
         return
     try:
         until_ps = int(local_restrictions.get("police_sweep_until_day", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_118:
+        log_swallowed_exception('engine/player/market.py:118', _omni_sw_118)
         until_ps = 0
     try:
         until_cl = int(local_restrictions.get("corporate_lockdown_until_day", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_122:
+        log_swallowed_exception('engine/player/market.py:122', _omni_sw_122)
         until_cl = 0
     active_ps = until_ps >= day
     active_cl = until_cl >= day
@@ -154,7 +158,8 @@ def update_market(state: dict[str, Any]) -> None:
     try:
         before_price = int(round(sum(int((market[k] or {}).get("price_idx", 100) or 100) for k in market.keys()) / max(1, len(market))))
         before_scar = int(round(sum(int((market[k] or {}).get("scarcity", 0) or 0) for k in market.keys()) / max(1, len(market))))
-    except Exception:
+    except Exception as _omni_sw_157:
+        log_swallowed_exception('engine/player/market.py:157', _omni_sw_157)
         before_price = 100
         before_scar = 0
     world = state.get("world", {}) or {}
@@ -178,7 +183,8 @@ def update_market(state: dict[str, Any]) -> None:
         if isinstance(gp, dict):
             try:
                 geo_tension = int(gp.get("tension_idx", 0) or 0)
-            except Exception:
+            except Exception as _omni_sw_181:
+                log_swallowed_exception('engine/player/market.py:181', _omni_sw_181)
                 geo_tension = 0
             s = gp.get("active_sanctions", []) or []
             if isinstance(s, list):
@@ -189,13 +195,13 @@ def update_market(state: dict[str, Any]) -> None:
                         continue
                     try:
                         d0 = int(it.get("day", 0) or 0)
-                    except Exception:
+                    except Exception as _omni_sw_192:
+                        log_swallowed_exception('engine/player/market.py:192', _omni_sw_192)
                         d0 = 0
                     if day - d0 <= 7:
                         sanc_n += 1
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_196:
+        log_swallowed_exception('engine/player/market.py:196', _omni_sw_196)
     # Translate geopolitics into additional global pressures.
     # - electronics suffers most (sanctions/export controls)
     # - transport suffers (shipping/insurance)
@@ -221,8 +227,8 @@ def update_market(state: dict[str, Any]) -> None:
             market["electronics"] = e_row
             market["transport"] = t_row
             market["food"] = f_row
-    except Exception:
-        pass
+    except Exception as _omni_sw_224:
+        log_swallowed_exception('engine/player/market.py:224', _omni_sw_224)
     _apply_market_pressures(market, police_att=police_att, corp_st=corp_st, bm_pw=bm_pw, local_restrictions=None, day=day)
 
     # Country market layer (global → country): cache baseline per country.
@@ -238,7 +244,8 @@ def update_market(state: dict[str, Any]) -> None:
                     continue
                 try:
                     d0 = int(it.get("day", 0) or 0)
-                except Exception:
+                except Exception as _omni_sw_241:
+                    log_swallowed_exception('engine/player/market.py:241', _omni_sw_241)
                     d0 = 0
                 if day - d0 > 30:
                     continue
@@ -248,8 +255,6 @@ def update_market(state: dict[str, Any]) -> None:
                     sanc_level_by_country[a] = min(5, sanc_level_by_country.get(a, 0) + 1)
                 if b:
                     sanc_level_by_country[b] = min(5, sanc_level_by_country.get(b, 0) + 1)
-        from engine.world.atlas import ensure_country_market
-
         countries = (atlas2.get("countries", {}) if isinstance(atlas2, dict) else {}) or {}
         if isinstance(countries, dict):
             for c in list(countries.keys())[:80]:
@@ -262,9 +267,8 @@ def update_market(state: dict[str, Any]) -> None:
                     sanctions_level=sanc_level_by_country.get(cc, 0),
                     tension_idx=t2,
                 )
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_265:
+        log_swallowed_exception('engine/player/market.py:265', _omni_sw_265)
     # City market (country → city): city market derives from country baseline + local restrictions.
     try:
         locs = world.get("locations", {}) or {}
@@ -281,9 +285,8 @@ def update_market(state: dict[str, Any]) -> None:
                     c_row = (atlas3.get("countries", {}) or {}).get(country) if country else None
                     if isinstance(c_row, dict) and isinstance(c_row.get("market"), dict) and c_row.get("market"):
                         c_market = c_row.get("market")  # type: ignore[assignment]
-                except Exception:
-                    pass
-
+                except Exception as _omni_sw_284:
+                    log_swallowed_exception('engine/player/market.py:284', _omni_sw_284)
                 # Ensure city market exists (copy from country baseline on first use).
                 lm = slot.get("market")
                 if not isinstance(lm, dict) or not lm:
@@ -300,19 +303,23 @@ def update_market(state: dict[str, Any]) -> None:
                         base_row = c_market.get(cat) if isinstance(c_market.get(cat), dict) else {"price_idx": 100, "scarcity": 0}
                         try:
                             px = int(row.get("price_idx", 100) or 100)
-                        except Exception:
+                        except Exception as _omni_sw_303:
+                            log_swallowed_exception('engine/player/market.py:303', _omni_sw_303)
                             px = 100
                         try:
                             sc = int(row.get("scarcity", 0) or 0)
-                        except Exception:
+                        except Exception as _omni_sw_307:
+                            log_swallowed_exception('engine/player/market.py:307', _omni_sw_307)
                             sc = 0
                         try:
                             bpx = int((base_row or {}).get("price_idx", 100) or 100)
-                        except Exception:
+                        except Exception as _omni_sw_311:
+                            log_swallowed_exception('engine/player/market.py:311', _omni_sw_311)
                             bpx = 100
                         try:
                             bsc = int((base_row or {}).get("scarcity", 0) or 0)
-                        except Exception:
+                        except Exception as _omni_sw_315:
+                            log_swallowed_exception('engine/player/market.py:315', _omni_sw_315)
                             bsc = 0
                         px2 = px + int((bpx - px) * 0.3)
                         sc2 = sc + int((bsc - sc) * 0.3)
@@ -324,9 +331,8 @@ def update_market(state: dict[str, Any]) -> None:
                 restr = slot.get("restrictions", {}) if isinstance(slot.get("restrictions"), dict) else {}
                 _apply_local_restrictions_only(lm, local_restrictions=restr, day=day)
                 slot["market"] = lm
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_327:
+        log_swallowed_exception('engine/player/market.py:327', _omni_sw_327)
     # Inter-city market flow (lightweight):
     # - converge local markets toward global market slowly (prevents runaway divergence)
     # - occasional shipment shock between two cities (deterministic) to create narrative/econ ripples
@@ -360,7 +366,8 @@ def update_market(state: dict[str, Any]) -> None:
                 try:
                     p1 = int((m1.get(cat, {}) or {}).get("price_idx", 100) or 100)
                     p2 = int((m2.get(cat, {}) or {}).get("price_idx", 100) or 100)
-                except Exception:
+                except Exception as _omni_sw_363:
+                    log_swallowed_exception('engine/player/market.py:363', _omni_sw_363)
                     p1, p2 = 100, 100
                 # Under high geopolitics tension, shipment shocks are more likely to be disrupted (bigger gaps persist),
                 # so we require a smaller threshold to trigger "flow" events but reduce their effectiveness slightly.
@@ -376,11 +383,13 @@ def update_market(state: dict[str, Any]) -> None:
                         row = (slot["market"].get(cat) if isinstance(slot["market"].get(cat), dict) else {"price_idx": 100, "scarcity": 0}) or {}
                         try:
                             sc0 = int(row.get("scarcity", 0) or 0)
-                        except Exception:
+                        except Exception as _omni_sw_379:
+                            log_swallowed_exception('engine/player/market.py:379', _omni_sw_379)
                             sc0 = 0
                         try:
                             px0 = int(row.get("price_idx", 100) or 100)
-                        except Exception:
+                        except Exception as _omni_sw_383:
+                            log_swallowed_exception('engine/player/market.py:383', _omni_sw_383)
                             px0 = 100
                         row["scarcity"] = _clamp(sc0 + delta_sc, 0, 100)
                         row["price_idx"] = _clamp(px0 + delta_px, 60, 320)
@@ -389,14 +398,14 @@ def update_market(state: dict[str, Any]) -> None:
                     # Store a lightweight note for UI/news systems to surface if appropriate.
                     state.setdefault("world_notes", []).append(f"[MarketFlow] Shipment: {cat} moved {low_city}→{high_city}")
                     world["locations"] = locs2
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_392:
+        log_swallowed_exception('engine/player/market.py:392', _omni_sw_392)
     # Snapshot "after" + delta for UI.
     try:
         after_price = int(round(sum(int((market[k] or {}).get("price_idx", 100) or 100) for k in market.keys()) / max(1, len(market))))
         after_scar = int(round(sum(int((market[k] or {}).get("scarcity", 0) or 0) for k in market.keys()) / max(1, len(market))))
-    except Exception:
+    except Exception as _omni_sw_399:
+        log_swallowed_exception('engine/player/market.py:399', _omni_sw_399)
         after_price = 100
         after_scar = 0
 

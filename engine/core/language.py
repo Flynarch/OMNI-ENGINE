@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.core.player_language_levels import player_language_proficiency
 from dataclasses import dataclass
 from typing import Any
 
 from engine.world.atlas import ensure_location_profile
-from engine.world.time_model import tech_epoch_for_year
+from engine.world.time_model import sim_year_from_state, tech_epoch_for_year
 
 
 def _split_lang(s: str) -> list[str]:
@@ -89,38 +91,21 @@ def resolve_local_language(state: dict[str, Any], loc: str) -> tuple[str, list[s
     return (lang, langs or ["en"])
 
 
-def player_language_proficiency(state: dict[str, Any]) -> dict[str, int]:
-    p = state.get("player", {}) or {}
-    langs = p.get("languages", {}) if isinstance(p, dict) else {}
-    out: dict[str, int] = {}
-    if isinstance(langs, dict):
-        for k, v in langs.items():
-            try:
-                out[str(k).lower()] = max(0, min(100, int(v or 0)))
-            except Exception:
-                continue
-    # Seed from player.language if missing
-    base = str((p.get("language", "en") if isinstance(p, dict) else "en") or "en").strip().lower()
-    if base and base not in out:
-        out[base] = 70
-    return out
-
-
 def communication_quality(state: dict[str, Any], action_ctx: dict[str, Any]) -> LanguageCtx:
     meta = state.get("meta", {}) or {}
     try:
         sim_year = int(meta.get("sim_year", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_113:
+        log_swallowed_exception('engine/core/language.py:113', _omni_sw_113)
         sim_year = 0
     if sim_year <= 0:
-        from engine.world.time_model import sim_year_from_state
-
         sim_year = sim_year_from_state(state)
 
     world = state.get("world", {}) or {}
     try:
         tech_progress = float((world.get("tech_progress", 0.0) if isinstance(world, dict) else 0.0) or 0.0)
-    except Exception:
+    except Exception as _omni_sw_123:
+        log_swallowed_exception('engine/core/language.py:123', _omni_sw_123)
         tech_progress = 0.0
     epoch = tech_epoch_for_year(sim_year, tech_progress=tech_progress)
 

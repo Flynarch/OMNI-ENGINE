@@ -9,6 +9,10 @@ This module provides:
 """
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.core.factions import sync_faction_statuses_from_trace
+from engine.world.districts import get_district
+from engine.world.weather import ensure_weather
 import hashlib
 from typing import Any
 
@@ -30,13 +34,9 @@ def _set_trace_pct(state: dict[str, Any], pct: int) -> None:
     tr["trace_pct"] = p
     tr["trace_status"] = "Ghost" if p <= 25 else "Flagged" if p <= 50 else "Investigated" if p <= 75 else "Manhunt"
     try:
-        from engine.core.factions import sync_faction_statuses_from_trace
-
         sync_faction_statuses_from_trace(state)
-    except Exception:
-        pass
-
-
+    except Exception as _omni_sw_36:
+        log_swallowed_exception('engine/systems/vehicles.py:36', _omni_sw_36)
 # Vehicle definitions
 VEHICLE_TYPES = {
     "bicycle": {
@@ -232,18 +232,18 @@ def apply_vehicle_to_travel(state: dict[str, Any], action_ctx: dict[str, Any]) -
         loc = str(p.get("location", "") or "").strip().lower()
         did = str(p.get("district", "") or "").strip().lower()
         if loc and did:
-            from engine.world.districts import get_district
-
             d = get_district(state, loc, did)
             if isinstance(d, dict):
                 police_presence = int(d.get("police_presence", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_240:
+        log_swallowed_exception('engine/systems/vehicles.py:240', _omni_sw_240)
         police_presence = 0
 
     # Encounter / attention: stolen + high police_interest + district police presence bumps trace deterministically.
     try:
         pi = int(vtype.get("police_interest", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_246:
+        log_swallowed_exception('engine/systems/vehicles.py:246', _omni_sw_246)
         pi = 0
     if bool(vdata.get("stolen")) or pi >= 4 or police_presence >= 4:
         meta = state.get("meta", {}) or {}
@@ -293,7 +293,8 @@ def buy_vehicle(state: dict[str, Any], vehicle_id: str, *, price_override: int |
     if price_override is not None:
         try:
             price = max(1, int(price_override))
-        except Exception:
+        except Exception as _omni_sw_296:
+            log_swallowed_exception('engine/systems/vehicles.py:296', _omni_sw_296)
             price = int(base_prices.get(vehicle_id, 1000) or 1000)
     else:
         price = int(base_prices.get(vehicle_id, 1000) or 1000)
@@ -346,7 +347,8 @@ def sell_vehicle(state: dict[str, Any], vehicle_id: str) -> dict[str, Any]:
     }
     try:
         original = int(vdata.get("purchase_price_usd", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_349:
+        log_swallowed_exception('engine/systems/vehicles.py:349', _omni_sw_349)
         original = 0
     if original <= 0:
         original = int(base_prices.get(vehicle_id, 1000) or 1000)
@@ -550,9 +552,10 @@ def travel_with_vehicle(state: dict[str, Any], vehicle_id: str, distance_km: flo
     speed = vtype.get("speed", 80)
     travel_time_min = int((distance_km / speed) * 60)
     
-    # Apply time
-    from engine.world.timers import update_timers
-    update_timers(state, {
+    # Lazy + module ref: top-level ``import timers`` from vehicles breaks property→vehicles init order.
+    import engine.world.timers as _timers_mod
+
+    _timers_mod.update_timers(state, {
         "action_type": "travel",
         "domain": "evasion",
         "normalized_input": f"travel by {vtype.get('name', vehicle_id)}",
@@ -636,7 +639,6 @@ def chase_attempt(state: dict[str, Any], pursuer_vehicle: str | None, target_veh
         base_escape_chance = 50
     
     # Environmental modifiers
-    from engine.world.weather import ensure_weather
     loc = str(state.get("player", {}).get("location", "") or "").strip().lower()
     weather = ensure_weather(state, loc, day)
     weather_kind = str(weather.get("kind", "clear") or "clear")

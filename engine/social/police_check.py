@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
 import hashlib
+
+from engine.world.atlas import ensure_country_profile, ensure_location_profile
+from engine.world.districts import get_district
 
 
 def _has_illegal_weapon(state: dict[str, Any]) -> tuple[bool, list[str]]:
@@ -137,14 +141,12 @@ def _permit_doc_status(state: dict[str, Any], *, country: str) -> dict[str, Any]
         law = "standard"
         corruption = "medium"
         try:
-            from engine.world.atlas import ensure_country_profile
-
             prof = ensure_country_profile(state, c)
             if isinstance(prof, dict):
                 law = str(prof.get("law_level", "standard") or "standard").lower()
                 corruption = str(prof.get("corruption", "medium") or "medium").lower()
-        except Exception:
-            pass
+        except Exception as _omni_sw_146:
+            log_swallowed_exception('engine/social/police_check.py:146', _omni_sw_146)
         base = 35
         if corruption == "high":
             base += 25
@@ -206,14 +208,13 @@ def schedule_weapon_check(state: dict[str, Any], *, weapon_ids: list[str], reaso
     country = ""
     firearm_ctx: dict[str, Any] = {}
     try:
-        from engine.world.atlas import ensure_location_profile
-
         if loc:
             prof = ensure_location_profile(state, loc)
             if isinstance(prof, dict):
                 country = str(prof.get("country", "") or "").strip().lower()
         firearm_ctx = _firearm_policy_for_country(state, country=country or "unknown")
-    except Exception:
+    except Exception as _omni_sw_216:
+        log_swallowed_exception('engine/social/police_check.py:216', _omni_sw_216)
         firearm_ctx = _firearm_policy_for_country(state, country="unknown")
 
     pstat = _permit_doc_status(state, country=country or "")
@@ -253,15 +254,12 @@ def _firearm_policy_for_country(state: dict[str, Any], *, country: str) -> dict[
     c = str(country or "").strip().lower()
     law = "standard"
     try:
-        from engine.world.atlas import ensure_country_profile
-
         prof = ensure_country_profile(state, c)
         if isinstance(prof, dict):
             law = str(prof.get("law_level", "standard") or "standard").lower()
             c = str(prof.get("name", c) or c).lower()
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_262:
+        log_swallowed_exception('engine/social/police_check.py:262', _omni_sw_262)
     policy = "standard_permit"
     narrative = "Kepemilikan senjata pribadi diatur dengan izin (permit) dan pemeriksaan ketat."
     dialog: dict[str, list[str]] = {
@@ -381,7 +379,8 @@ def maybe_schedule_weapon_check(state: dict[str, Any]) -> None:
             lt = slot.get("tags", []) or []
             if isinstance(lt, list):
                 loc_tags = [str(x).lower() for x in lt if isinstance(x, str)]
-    except Exception:
+    except Exception as _omni_sw_384:
+        log_swallowed_exception('engine/social/police_check.py:384', _omni_sw_384)
         loc_tags = []
 
     # District police presence (within city) also increases street checks.
@@ -390,8 +389,6 @@ def maybe_schedule_weapon_check(state: dict[str, Any]) -> None:
         loc0 = str(p.get("location", "") or "").strip().lower()
         did0 = str(p.get("district", "") or "").strip().lower()
         if loc0 and did0:
-            from engine.world.districts import get_district
-
             d0 = get_district(state, loc0, did0)
             if isinstance(d0, dict):
                 pp = int(d0.get("police_presence", 0) or 0)
@@ -401,9 +398,8 @@ def maybe_schedule_weapon_check(state: dict[str, Any]) -> None:
                     chance_boost = 4
                     # apply after base chance computed
                     loc_tags.append(f"_district_police_boost_{chance_boost}")
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_404:
+        log_swallowed_exception('engine/social/police_check.py:404', _omni_sw_404)
     # Base chance per tick (0..100).
     chance = 0
     if "police_sweep" in loc_tags or "checkpoint_strict" in loc_tags:
@@ -428,17 +424,16 @@ def maybe_schedule_weapon_check(state: dict[str, Any]) -> None:
             chance += 10
         elif pol == "manhunt":
             chance += 20
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_431:
+        log_swallowed_exception('engine/social/police_check.py:431', _omni_sw_431)
     chance = max(0, min(65, chance))
     # Apply small district boost if present.
     try:
         for t in loc_tags:
             if isinstance(t, str) and t.startswith("_district_police_boost_"):
                 chance += int(t.rsplit("_", 1)[-1])
-    except Exception:
-        pass
+    except Exception as _omni_sw_440:
+        log_swallowed_exception('engine/social/police_check.py:440', _omni_sw_440)
     chance = max(0, min(72, chance))
     if chance <= 0:
         return
@@ -463,14 +458,13 @@ def maybe_schedule_weapon_check(state: dict[str, Any]) -> None:
     country = ""
     firearm_ctx: dict[str, str] = {}
     try:
-        from engine.world.atlas import ensure_location_profile
-
         if loc:
             prof = ensure_location_profile(state, loc)
             if isinstance(prof, dict):
                 country = str(prof.get("country", "") or "").strip().lower()
         firearm_ctx = _firearm_policy_for_country(state, country=country or "unknown")
-    except Exception:
+    except Exception as _omni_sw_473:
+        log_swallowed_exception('engine/social/police_check.py:473', _omni_sw_473)
         firearm_ctx = _firearm_policy_for_country(state, country="unknown")
 
     permit_doc = _permit_doc_status(state, country=country or "")

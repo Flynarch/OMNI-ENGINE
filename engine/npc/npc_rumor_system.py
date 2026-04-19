@@ -8,6 +8,8 @@ This module connects social diffusion to NPC behavior:
 """
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.social.social_diffusion import propagate_rumor, queue_rumor_about_player
 import hashlib
 from typing import Any
 
@@ -23,7 +25,8 @@ def _npc_suspicion(npc: dict[str, Any]) -> int:
         return 0
     try:
         return max(0, min(100, int(bs.get("suspicion", 0) or 0)))
-    except Exception:
+    except Exception as _omni_sw_26:
+        log_swallowed_exception('engine/npc/npc_rumor_system.py:26', _omni_sw_26)
         return 0
 
 
@@ -97,7 +100,8 @@ def propagate_reputation(state: dict[str, Any], *, max_spreads_per_turn: int = 8
             b["belief_summary"] = bs
         try:
             cur = int(bs.get("suspicion", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_100:
+            log_swallowed_exception('engine/npc/npc_rumor_system.py:100', _omni_sw_100)
             cur = 0
         bs["suspicion"] = max(0, min(100, cur + int(delta)))
         b["rumor_influence_turn"] = turn
@@ -163,8 +167,6 @@ def detect_gossip_worthy_action(action_ctx: dict[str, Any], roll_pkg: dict[str, 
 def trigger_rumor_from_action(state: dict[str, Any], action_ctx: dict[str, Any], roll_pkg: dict[str, Any]) -> None:
     """Trigger social diffusion based on player action."""
     try:
-        from engine.social.social_diffusion import queue_rumor_about_player
-        
         category, summary = detect_gossip_worthy_action(action_ctx, roll_pkg)
         
         if not category or not summary:
@@ -182,7 +184,8 @@ def trigger_rumor_from_action(state: dict[str, Any], action_ctx: dict[str, Any],
             # Failed suspicious action = noticed
             queue_rumor_about_player(state, f"{summary} (terdeteksi)", category)
             
-    except Exception:
+    except Exception as _omni_sw_185:
+        log_swallowed_exception('engine/npc/npc_rumor_system.py:185', _omni_sw_185)
         pass  # Social diffusion is optional enhancement
 
 
@@ -202,8 +205,6 @@ def apply_social_diffusion_hops(state: dict[str, Any]) -> None:
         
         if ev.get("event_type") == "social_diffusion_hop" and not ev.get("triggered"):
             try:
-                from engine.social.social_diffusion import propagate_rumor
-                
                 payload = ev.get("payload", {})
                 if not isinstance(payload, dict):
                     continue
@@ -224,9 +225,8 @@ def apply_social_diffusion_hops(state: dict[str, Any]) -> None:
                     
                     to_remove.append(i)
                     
-            except Exception:
-                pass
-    
+            except Exception as _omni_sw_227:
+                log_swallowed_exception('engine/npc/npc_rumor_system.py:227', _omni_sw_227)
     # Remove processed events
     for i in sorted(to_remove, reverse=True):
         if 0 <= i < len(pending):

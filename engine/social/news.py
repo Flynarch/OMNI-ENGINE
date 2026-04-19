@@ -23,5 +23,5 @@ def push_news(state: dict[str, Any], *, text: str, source: str = "broadcast", da
         if isinstance(it, dict) and int(it.get("day", -1)) == d and str(it.get("text", "")) == t:
             return
     feed.append({"day": d, "text": t, "source": src})
-    world["news_feed"] = feed[-50:]
+    world["news_feed"] = feed[-100:]
 

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
+
+from engine.systems.ammo import item_is_ammo
+from engine.systems.safehouse import ensure_safehouse_here
 
 
 def _here_key(state: dict[str, Any]) -> str:
@@ -8,8 +12,6 @@ def _here_key(state: dict[str, Any]) -> str:
 
 
 def _ensure_safehouse_row(state: dict[str, Any]) -> dict[str, Any]:
-    from engine.systems.safehouse import ensure_safehouse_here
-
     return ensure_safehouse_here(state)
 
 
@@ -48,7 +50,8 @@ def get_stash_ammo_here(state: dict[str, Any]) -> dict[str, int]:
             continue
         try:
             out[kid] = max(0, int(v or 0))
-        except Exception:
+        except Exception as _omni_sw_51:
+            log_swallowed_exception('engine/systems/safehouse_stash.py:51', _omni_sw_51)
             out[kid] = 0
     row["stash_ammo"] = out
     return out
@@ -75,13 +78,10 @@ def stash_put_ammo(state: dict[str, Any], ammo_item_id: str, *, rounds: int) -> 
 
     # Only allow ammo-tagged items.
     try:
-        from engine.systems.ammo import item_is_ammo
-
         if not item_is_ammo(state, aid):
             return {"ok": False, "reason": "not_ammo_item"}
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_82:
+        log_swallowed_exception('engine/systems/safehouse_stash.py:82', _omni_sw_82)
     iq[aid] = have - n
     sm = get_stash_ammo_here(state)
     sm[aid] = int(sm.get(aid, 0) or 0) + n
@@ -151,8 +151,8 @@ def stash_put_from_bag(state: dict[str, Any], item_id: str) -> dict[str, Any]:
         stash.append({"item_id": iid, "kind": "weapon", "weapon": dict(wentry), "from": "bag"})
         try:
             del wmap[iid]
-        except Exception:
-            pass
+        except Exception as _omni_sw_154:
+            log_swallowed_exception('engine/systems/safehouse_stash.py:154', _omni_sw_154)
         inv["weapons"] = wmap
         if str(inv.get("active_weapon_id", "") or "") == iid:
             inv["active_weapon_id"] = ""

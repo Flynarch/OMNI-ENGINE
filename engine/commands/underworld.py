@@ -3,6 +3,14 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from display.renderer import console, format_data_table
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.systems.black_market import (
+    black_market_accessible,
+    buy_black_market_item,
+    generate_black_market_inventory,
+)
+from engine.systems import targeted_hacking
+from engine.systems.jobs import execute_gig, generate_gigs
 
 
 def handle_underworld(
@@ -15,8 +23,6 @@ def handle_underworld(
     up = cmd.upper()
     if up in ("BLACKMARKET", "DARKNET") or up == "MARKET BLACK" or up == "MARKET BM":
         try:
-            from engine.systems.black_market import black_market_accessible, generate_black_market_inventory
-
             if not black_market_accessible(state):
                 ui_err("ACCESS DENIED", "CONNECTION REFUSED: Darknet node is offline.")
                 return True
@@ -33,7 +39,8 @@ def handle_underworld(
                 rows.append([str(it.get("id", "?")), str(it.get("name", it.get("id", "-"))), "$" + str(it.get("price", "?"))])
             console.print(format_data_table("BLACK MARKET", ["item_id", "name", "price"], rows, theme="magenta"))
             console.print("[dim]Use: BUY_DARK <item_id>[/dim]")
-        except Exception:
+        except Exception as _omni_sw_36:
+            log_swallowed_exception('engine/commands/underworld.py:36', _omni_sw_36)
             ui_err("ERROR", "BLACKMARKET error.")
         return True
     if up.startswith("BUY_DARK ") or up.startswith("BM_BUY "):
@@ -43,8 +50,6 @@ def handle_underworld(
             ui_err("ERROR", "Usage: BUY_DARK <item_id>.")
             return True
         try:
-            from engine.systems.black_market import buy_black_market_item
-
             r = buy_black_market_item(state, iid)
             if not bool(r.get("ok")):
                 if r.get("reason") == "not_enough_cash":
@@ -59,13 +64,12 @@ def handle_underworld(
                     ui_err("ERROR", f"BUY_DARK failed: {r.get('reason','error')}")
                 return True
             console.print(f"[green]BUY_DARK OK[/green] {r.get('item_id')} price={r.get('price')}")
-        except Exception:
+        except Exception as _omni_sw_62:
+            log_swallowed_exception('engine/commands/underworld.py:62', _omni_sw_62)
             ui_err("ERROR", "BUY_DARK error.")
         return True
     if up in ("GIGS", "JOBS"):
         try:
-            from engine.systems.jobs import generate_gigs
-
             gigs = generate_gigs(state)
             if not gigs:
                 console.print(format_data_table("GIGS", ["id", "title", "skill", "diff", "time_m", "payout"], [], theme="cyan"))
@@ -87,7 +91,8 @@ def handle_underworld(
                 )
             console.print(format_data_table("GIGS", ["id", "title", "skill", "diff", "time_m", "payout"], rows, theme="cyan"))
             console.print("[dim]Use: WORK <gig_id>[/dim]")
-        except Exception:
+        except Exception as _omni_sw_90:
+            log_swallowed_exception('engine/commands/underworld.py:90', _omni_sw_90)
             ui_err("ERROR", "GIGS error.")
         return True
     if up.startswith("HACK "):
@@ -97,9 +102,7 @@ def handle_underworld(
             ui_err("ERROR", "Usage: HACK <atm|corp_server|police_archive>.")
             return True
         try:
-            from engine.systems.targeted_hacking import execute_hack
-
-            r = execute_hack(state, tgt)
+            r = targeted_hacking.execute_hack(state, tgt)
             if not bool(r.get("ok")):
                 ui_err("ERROR", f"HACK failed: {r.get('reason','error')}")
                 return True
@@ -115,13 +118,14 @@ def handle_underworld(
                         "stakes": "medium",
                     },
                 )
-            except Exception:
-                pass
+            except Exception as _omni_sw_118:
+                log_swallowed_exception('engine/commands/underworld.py:118', _omni_sw_118)
             if bool(r.get("success")):
                 console.print("[green]HACK success[/green]")
             else:
                 console.print("[yellow]HACK detected[/yellow]")
-        except Exception:
+        except Exception as _omni_sw_124:
+            log_swallowed_exception('engine/commands/underworld.py:124', _omni_sw_124)
             ui_err("ERROR", "HACK error.")
         return True
     if up.startswith("WORK "):
@@ -131,8 +135,6 @@ def handle_underworld(
             ui_err("ERROR", "Usage: WORK <gig_id>.")
             return True
         try:
-            from engine.systems.jobs import execute_gig
-
             r = execute_gig(state, gid)
             if not bool(r.get("ok")):
                 if str(r.get("reason", "")) == "daily_gig_limit_reached":
@@ -158,14 +160,15 @@ def handle_underworld(
                         "stakes": "low",
                     },
                 )
-            except Exception:
-                pass
+            except Exception as _omni_sw_161:
+                log_swallowed_exception('engine/commands/underworld.py:161', _omni_sw_161)
             title = str((g or {}).get("title", gid) or gid)
             if succ:
                 eco = state.setdefault("economy", {})
                 try:
                     cash0 = int(eco.get("cash", 0) or 0)
-                except Exception:
+                except Exception as _omni_sw_168:
+                    log_swallowed_exception('engine/commands/underworld.py:168', _omni_sw_168)
                     cash0 = 0
                 eco["cash"] = int(cash0 + payout)
                 state.setdefault("world_notes", []).append(f"[Economy] Completed gig '{title}' and earned ${payout}.")
@@ -175,7 +178,8 @@ def handle_underworld(
                     tr = state.setdefault("trace", {})
                     try:
                         tp = int(tr.get("trace_pct", 0) or 0)
-                    except Exception:
+                    except Exception as _omni_sw_178:
+                        log_swallowed_exception('engine/commands/underworld.py:178', _omni_sw_178)
                         tp = 0
                     tr["trace_pct"] = max(0, min(100, tp + int(trace_delta)))
                     state.setdefault("world_notes", []).append(
@@ -184,7 +188,8 @@ def handle_underworld(
                 else:
                     state.setdefault("world_notes", []).append(f"[Economy] Failed gig '{title}', wasting time with no payout.")
                 console.print(f"[yellow]WORK failed[/yellow] (time spent {tmin}m)")
-        except Exception:
+        except Exception as _omni_sw_187:
+            log_swallowed_exception('engine/commands/underworld.py:187', _omni_sw_187)
             ui_err("ERROR", "WORK error.")
         return True
     return False

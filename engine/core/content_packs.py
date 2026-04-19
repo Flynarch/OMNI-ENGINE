@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 import json
 import os
 from pathlib import Path
@@ -18,6 +19,7 @@ def _read_json(path: Path) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception as e:
+        log_swallowed_exception('engine/core/content_packs.py:20', e)
         raise PackError(f"Invalid JSON: {path}") from e
 
 
@@ -219,7 +221,8 @@ def apply_pack_effects(state: dict[str, Any]) -> None:
             if iid not in sizes:
                 try:
                     sizes[iid] = int(it.get("size", 1) or 1)
-                except Exception:
+                except Exception as _omni_sw_222:
+                    log_swallowed_exception('engine/core/content_packs.py:222', _omni_sw_222)
                     sizes[iid] = 1
 
     # Store a compact index for future use (market/services).

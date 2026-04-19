@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
 
 
 def _clamp_int(v: object, lo: int, hi: int, default: int = 0) -> int:
     try:
         x = int(v)
-    except Exception:
+    except Exception as _omni_sw_9:
+        log_swallowed_exception('engine/player/banking.py:9', _omni_sw_9)
         x = default
     return max(lo, min(hi, x))
 

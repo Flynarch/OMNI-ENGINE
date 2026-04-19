@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from engine.core.rng import det_roll_1_100
+from engine.social.reputation_lanes import bump_lane
 
 
 def _seed_key(state: dict[str, Any]) -> str:
@@ -18,7 +20,8 @@ def _day(state: dict[str, Any]) -> int:
     meta = state.get("meta", {}) or {}
     try:
         return int(meta.get("day", 1) or 1)
-    except Exception:
+    except Exception as _omni_sw_21:
+        log_swallowed_exception('engine/systems/jobs.py:21', _omni_sw_21)
         return 1
 
 
@@ -26,7 +29,8 @@ def _turn(state: dict[str, Any]) -> int:
     meta = state.get("meta", {}) or {}
     try:
         return int(meta.get("turn", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_29:
+        log_swallowed_exception('engine/systems/jobs.py:29', _omni_sw_29)
         return 0
 
 
@@ -105,7 +109,8 @@ def _skill_level(state: dict[str, Any], key: str) -> int:
         return 1
     try:
         return max(1, int(row.get("level", 1) or 1))
-    except Exception:
+    except Exception as _omni_sw_108:
+        log_swallowed_exception('engine/systems/jobs.py:108', _omni_sw_108)
         return 1
 
 
@@ -116,7 +121,8 @@ def execute_gig(state: dict[str, Any], gig_id: str) -> dict[str, Any]:
         state["meta"] = meta
     try:
         done_today = int(meta.get("daily_gigs_done", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_119:
+        log_swallowed_exception('engine/systems/jobs.py:119', _omni_sw_119)
         done_today = 0
     if done_today >= 2:
         state.setdefault("world_notes", []).append(
@@ -143,7 +149,8 @@ def execute_gig(state: dict[str, Any], gig_id: str) -> dict[str, Any]:
     bio = state.get("bio", {}) or {}
     try:
         hunger = float(bio.get("hunger", 0.0) or 0.0)
-    except Exception:
+    except Exception as _omni_sw_146:
+        log_swallowed_exception('engine/systems/jobs.py:146', _omni_sw_146)
         hunger = 0.0
     hunger_penalty = 0
     if hunger >= 86.0:
@@ -172,8 +179,6 @@ def execute_gig(state: dict[str, Any], gig_id: str) -> dict[str, Any]:
     meta["daily_gigs_done"] = int(done_today + 1)
     if success:
         try:
-            from engine.social.reputation_lanes import bump_lane
-
             if req in ("hacking", "security"):
                 bump_lane(state, "underground", 2)
             if req in ("streetwise", "stealth"):
@@ -182,8 +187,8 @@ def execute_gig(state: dict[str, Any], gig_id: str) -> dict[str, Any]:
             if req in ("management",):
                 bump_lane(state, "corporate", 2)
                 bump_lane(state, "political", 1)
-        except Exception:
-            pass
+        except Exception as _omni_sw_185:
+            log_swallowed_exception('engine/systems/jobs.py:185', _omni_sw_185)
     return {
         "ok": True,
         "gig": dict(target),

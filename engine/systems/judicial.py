@@ -1,6 +1,7 @@
 """W2-12: judicial / incarceration state — sentence timer, seized inventory snapshot, daily release."""
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 import hashlib
 from typing import Any
 
@@ -51,7 +52,8 @@ def apply_arrest_sentence(
     meta = state.setdefault("meta", {})
     try:
         d = int(meta.get("day", 1) or 1)
-    except Exception:
+    except Exception as _omni_sw_54:
+        log_swallowed_exception('engine/systems/judicial.py:54', _omni_sw_54)
         d = 1
     j = ensure_judicial(state)
     sd = max(1, min(30, int(sentence_days)))
@@ -83,7 +85,8 @@ def tick_judicial_daily(state: dict[str, Any], *, day: int) -> None:
         return
     try:
         rd = int(j.get("release_day", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_86:
+        log_swallowed_exception('engine/systems/judicial.py:86', _omni_sw_86)
         rd = 0
     if rd and int(day) >= rd:
         j["phase"] = "free"
@@ -102,7 +105,8 @@ def tick_judicial_daily(state: dict[str, Any], *, day: int) -> None:
             cap = 12
             try:
                 cap = int(inv.get("bag_capacity", 12) or 12)
-            except Exception:
+            except Exception as _omni_sw_105:
+                log_swallowed_exception('engine/systems/judicial.py:105', _omni_sw_105)
                 cap = 12
             for it in snap:
                 if len(bag) >= cap:

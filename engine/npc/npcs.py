@@ -1,9 +1,22 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.core.modifiers import apply_social_decay
+from engine.core.trace import apply_npc_snitch_report_trace
 import hashlib
 from typing import Any
 
-from engine.npc.memory import SOCIAL_THRESHOLDS, get_npc_social_modifiers, is_trigger_condition_met, update_belief_summary
+from engine.npc.memory import (
+    SOCIAL_THRESHOLDS,
+    get_npc_social_modifiers,
+    is_trigger_condition_met,
+    update_belief_summary,
+    verify_narrative_consistency,
+)
+from engine.npc.npc_emotions import decay_npc_emotions
+from engine.npc.npc_rumor_system import propagate_reputation
+from engine.npc.relationship import get_relationship
+from engine.world.heat import bump_heat, bump_suspicion
 
 
 def _label(score: int) -> str:
@@ -38,19 +51,22 @@ def _ensure_life_fields(n: dict[str, Any], *, default_hp: int = 100) -> None:
     n.setdefault("alive", True)
     try:
         alive = bool(n.get("alive", True))
-    except Exception:
+    except Exception as _omni_sw_41:
+        log_swallowed_exception('engine/npc/npcs.py:41', _omni_sw_41)
         alive = True
         n["alive"] = True
     if alive:
         try:
             mhp = int(n.get("max_hp", default_hp) or default_hp)
-        except Exception:
+        except Exception as _omni_sw_47:
+            log_swallowed_exception('engine/npc/npcs.py:47', _omni_sw_47)
             mhp = default_hp
         mhp = max(1, min(500, mhp))
         n["max_hp"] = mhp
         try:
             hp = int(n.get("hp", mhp) or mhp)
-        except Exception:
+        except Exception as _omni_sw_53:
+            log_swallowed_exception('engine/npc/npcs.py:53', _omni_sw_53)
             hp = mhp
         n["hp"] = max(0, min(mhp, hp))
     else:
@@ -81,7 +97,8 @@ def _belief_summary_suspicion(npc: dict[str, Any] | None) -> int:
         return 0
     try:
         return max(0, min(100, int(bs.get("suspicion", 0) or 0)))
-    except Exception:
+    except Exception as _omni_sw_84:
+        log_swallowed_exception('engine/npc/npcs.py:84', _omni_sw_84)
         return 0
 
 
@@ -106,8 +123,6 @@ def _remove_social_pending(state: dict[str, Any], npc_id: str, trigger_type: str
 
 def execute_npc_snitch_report(state: dict[str, Any], npc_id: str) -> int:
     """Apply trace spike, log snitch, emit REPORT_FILED, clear reporting pending + active flag."""
-    from engine.core.trace import apply_npc_snitch_report_trace
-
     delta = apply_npc_snitch_report_trace(state, str(npc_id))
     state.setdefault("world_notes", []).append(f"[Snitch] NPC {npc_id} has reported your activities to authorities.")
     state.setdefault("world_events", []).append(
@@ -233,11 +248,13 @@ def add_belief_snippet(
     # Apply small deterministic drift to disposition_score and Plutchik trust.
     try:
         ds = int(npc.get("disposition_score", 50) or 50)
-    except Exception:
+    except Exception as _omni_sw_236:
+        log_swallowed_exception('engine/npc/npcs.py:236', _omni_sw_236)
         ds = 50
     try:
         tr = int(npc.get("trust", 50) or 50)
-    except Exception:
+    except Exception as _omni_sw_240:
+        log_swallowed_exception('engine/npc/npcs.py:240', _omni_sw_240)
         tr = 50
     # Suspicion high hurts disposition/trust; respect helps.
     ds += int((rep - 50) / 25) - int((sus - 30) / 20)
@@ -264,12 +281,14 @@ def check_social_triggers(state: dict[str, Any], npc_id: str) -> list[str]:
     respect = int(sm.get("respect", 0) or 0)
     try:
         trust = int(npc.get("trust", 50) or 50)
-    except Exception:
+    except Exception as _omni_sw_267:
+        log_swallowed_exception('engine/npc/npcs.py:267', _omni_sw_267)
         trust = 50
     trust = max(0, min(100, trust))
     try:
         fear = int(npc.get("fear", 10) or 10)
-    except Exception:
+    except Exception as _omni_sw_272:
+        log_swallowed_exception('engine/npc/npcs.py:272', _omni_sw_272)
         fear = 10
     fear = max(0, min(100, fear))
     bs = npc.get("belief_summary") if isinstance(npc.get("belief_summary"), dict) else {}
@@ -277,15 +296,14 @@ def check_social_triggers(state: dict[str, Any], npc_id: str) -> list[str]:
         bs = {}
     try:
         suspicion = int(bs.get("suspicion", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_280:
+        log_swallowed_exception('engine/npc/npcs.py:280', _omni_sw_280)
         suspicion = 0
     suspicion = max(0, min(100, suspicion))
 
     fired: list[str] = []
     # Relationship-specific trigger: nemesis applies recurring pressure.
     try:
-        from engine.npc.relationship import get_relationship
-
         rel = get_relationship(state, str(npc_id))
         if str(rel.get("type", "") or "").lower() == "nemesis" and active.get("NEMESIS_PRESSURE") is not True:
             active["NEMESIS_PRESSURE"] = True
@@ -308,8 +326,8 @@ def check_social_triggers(state: dict[str, Any], npc_id: str) -> list[str]:
                 }
             )
             state.setdefault("world_notes", []).append(f"[Trigger] {npc_id}: NEMESIS_PRESSURE scheduled in {delay}t")
-    except Exception:
-        pass
+    except Exception as _omni_sw_311:
+        log_swallowed_exception('engine/npc/npcs.py:311', _omni_sw_311)
     for key, req in SOCIAL_THRESHOLDS.items():
         if not isinstance(req, dict):
             continue
@@ -390,7 +408,8 @@ def process_pending_events(state: dict[str, Any]) -> dict[str, int]:
 
         try:
             ttt = int(ev.get("turns_to_trigger", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_393:
+            log_swallowed_exception('engine/npc/npcs.py:393', _omni_sw_393)
             ttt = 0
         ttt = max(0, min(50, ttt))
 
@@ -405,8 +424,6 @@ def process_pending_events(state: dict[str, Any]) -> dict[str, int]:
                 continue
             executed += 1
             try:
-                from engine.world.heat import bump_heat, bump_suspicion
-
                 pl = state.get("player", {}) or {}
                 loc0 = str(pl.get("location", "") or "").strip().lower()
                 did0 = str(pl.get("district", "") or "").strip().lower()
@@ -416,8 +433,8 @@ def process_pending_events(state: dict[str, Any]) -> dict[str, int]:
                 ds = max(3, min(10, st // 12))
                 bump_heat(state, loc=loc0, district=did0, delta=int(dh), reason=f"nemesis:{src}", ttl_days=4)
                 bump_suspicion(state, loc=loc0, district=did0, delta=int(ds), reason=f"nemesis:{src}", ttl_days=2)
-            except Exception:
-                pass
+            except Exception as _omni_sw_419:
+                log_swallowed_exception('engine/npc/npcs.py:419', _omni_sw_419)
             state.setdefault("world_notes", []).append(f"[Nemesis] {src} escalates pressure around you.")
             state.setdefault("world_events", []).append(
                 {
@@ -540,8 +557,8 @@ def process_pending_events(state: dict[str, Any]) -> dict[str, int]:
                     tr = state.setdefault("trace", {})
                     if isinstance(tr, dict):
                         tr["trace_pct"] = max(0, min(100, int(tr.get("trace_pct", 0) or 0) + 6))
-                except Exception:
-                    pass
+                except Exception as _omni_sw_543:
+                    log_swallowed_exception('engine/npc/npcs.py:543', _omni_sw_543)
                 state.setdefault("active_ripples", []).append(
                     {
                         "kind": "threat",
@@ -567,7 +584,8 @@ def process_pending_events(state: dict[str, Any]) -> dict[str, int]:
                     bs = {}
                 try:
                     bs["suspicion"] = max(0, min(100, int(bs.get("suspicion", 0) or 0) + 10))
-                except Exception:
+                except Exception as _omni_sw_570:
+                    log_swallowed_exception('engine/npc/npcs.py:570', _omni_sw_570)
                     bs["suspicion"] = 50
                 npc["belief_summary"] = bs
                 state.setdefault("active_ripples", []).append(
@@ -683,8 +701,8 @@ def apply_beliefs_from_ripple(state: dict[str, Any], rp: dict[str, Any]) -> None
                 npc["alive"] = False
                 npc["hp"] = 0
                 continue
-        except Exception:
-            pass
+        except Exception as _omni_sw_686:
+            log_swallowed_exception('engine/npc/npcs.py:686', _omni_sw_686)
         # Bias: faction-aligned NPCs interpret info differently.
         bias = 0.0
         aff = str(npc.get("affiliation", "") or "").strip().lower()
@@ -726,10 +744,8 @@ def apply_beliefs_from_ripple(state: dict[str, Any], rp: dict[str, Any]) -> None
                             "surface_attempts": 0,
                         }
                     )
-            except Exception:
-                pass
-
-
+            except Exception as _omni_sw_729:
+                log_swallowed_exception('engine/npc/npcs.py:729', _omni_sw_729)
 def _ensure_psych_fields(n: dict) -> None:
     """Add NPC psychology fields (safe defaults if missing)."""
     _ensure_life_fields(n)
@@ -825,20 +841,18 @@ def update_npcs(state: dict, action_ctx: dict) -> None:
                                 )
                                 try:
                                     update_belief_summary(state, str(targs[0]), raw_interaction_text=str(action_ctx.get("normalized_input", "") or "social talk"))
-                                except Exception:
-                                    pass
+                                except Exception as _omni_sw_828:
+                                    log_swallowed_exception('engine/npc/npcs.py:828', _omni_sw_828)
                                 state.setdefault("world_notes", []).append(f"[Gossip] {targs[0]} shares: {txt[:90]}")
                                 action_ctx["npc_gossip"] = txt[:140]
                                 meta["last_gossip_turn"] = turn
-    except Exception:
-        pass
+    except Exception as _omni_sw_833:
+        log_swallowed_exception('engine/npc/npcs.py:833', _omni_sw_833)
     ensure_ambient_npcs(state, action_ctx)
     try:
-        from engine.npc.npc_emotions import decay_npc_emotions
-
         decay_npc_emotions(state)
-    except Exception:
-        pass
+    except Exception as _omni_sw_840:
+        log_swallowed_exception('engine/npc/npcs.py:840', _omni_sw_840)
     day = int(state.get("meta", {}).get("day", 1))
     time_min = int(state.get("meta", {}).get("time_min", 0))
     world_notes = state.setdefault("world_notes", [])
@@ -863,25 +877,19 @@ def update_npcs(state: dict, action_ctx: dict) -> None:
 
         # Anchor-driven persistence: decay social state toward belief anchors each turn.
         try:
-            from engine.core.modifiers import apply_social_decay
-            from engine.npc.memory import verify_narrative_consistency
-
             apply_social_decay(state, str(name))
             verify_narrative_consistency(state, str(name))
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_871:
+            log_swallowed_exception('engine/npc/npcs.py:871', _omni_sw_871)
         # Social triggers (one-shot): convert social coefficients into world_events.
         try:
             check_social_triggers(state, str(name))
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_877:
+            log_swallowed_exception('engine/npc/npcs.py:877', _omni_sw_877)
         try:
             check_npc_reporting(state, str(name))
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_882:
+            log_swallowed_exception('engine/npc/npcs.py:882', _omni_sw_882)
         # Autonomous agenda tick: NPCs act while player does other things.
         agenda = n.get("agenda")
         if agenda and time_min % 120 == 0:
@@ -898,12 +906,9 @@ def update_npcs(state: dict, action_ctx: dict) -> None:
 
     try:
         process_pending_events(state)
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_901:
+        log_swallowed_exception('engine/npc/npcs.py:901', _omni_sw_901)
     try:
-        from engine.npc.npc_rumor_system import propagate_reputation
-
         propagate_reputation(state)
-    except Exception:
-        pass
+    except Exception as _omni_sw_908:
+        log_swallowed_exception('engine/npc/npcs.py:908', _omni_sw_908)

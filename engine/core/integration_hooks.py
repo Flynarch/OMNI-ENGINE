@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 import os
 from typing import Any, Dict, List
 
 from engine.core import error_taxonomy as EC
+from engine.core.intent_plan_runtime import advance_plan_runtime_after_roll
 from engine.core.mutation_gateway import append_world_note
 from engine.core.tuning_pack import tuning_int
 
@@ -276,8 +278,6 @@ def post_turn_integration(
     cap_idx["last_domain"] = str(action_ctx.get("domain", "") or "")
 
     try:
-        from engine.core.intent_plan_runtime import advance_plan_runtime_after_roll
-
         advance_plan_runtime_after_roll(state, action_ctx, roll_pkg if isinstance(roll_pkg, dict) else {})
-    except Exception:
-        pass
+    except Exception as _omni_sw_282:
+        log_swallowed_exception('engine/core/integration_hooks.py:282', _omni_sw_282)

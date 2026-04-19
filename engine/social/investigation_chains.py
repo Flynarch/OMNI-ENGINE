@@ -3,6 +3,10 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.world.casefile import append_casefile
+from engine.world.heat import bump_heat, bump_suspicion
+
 
 def _norm(x: Any) -> str:
     return str(x or "").strip().lower()
@@ -44,14 +48,13 @@ def handle_informant_tip(state: dict[str, Any], payload: dict[str, Any]) -> dict
     did = _norm(payload.get("district", "")) or _norm((state.get("player", {}) or {}).get("district", ""))
     try:
         sus = int(payload.get("suspicion", 55) or 55)
-    except Exception:
+    except Exception as _omni_sw_47:
+        log_swallowed_exception('engine/social/investigation_chains.py:47', _omni_sw_47)
         sus = 55
     sus = _clamp(sus, 0, 100)
 
     # Casefile audit (tip received).
     try:
-        from engine.world.casefile import append_casefile
-
         append_casefile(
             state,
             {
@@ -65,19 +68,15 @@ def handle_informant_tip(state: dict[str, Any], payload: dict[str, Any]) -> dict
                 "meta": {"reporter": reporter, "affiliation": aff, "suspicion": int(sus)},
             },
         )
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_68:
+        log_swallowed_exception('engine/social/investigation_chains.py:68', _omni_sw_68)
     # Pressure bumps (local).
     try:
-        from engine.world.heat import bump_heat, bump_suspicion
-
         if loc:
             bump_suspicion(state, loc=loc, delta=max(1, int((sus - 45) / 12)), reason="informant_tip", ttl_days=2)
             bump_heat(state, loc=loc, delta=1, reason="informant_tip", ttl_days=6)
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_78:
+        log_swallowed_exception('engine/social/investigation_chains.py:78', _omni_sw_78)
     # Always schedule an npc_report so existing pipeline (trace bump + ripple) triggers.
     pe = state.setdefault("pending_events", [])
     if isinstance(pe, list):

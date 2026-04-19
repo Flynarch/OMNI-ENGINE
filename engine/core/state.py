@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 import json
 import shutil
 from pathlib import Path
 from typing import Any
 
-from engine.player.boot_economy import apply_boot_economy
+from engine.core.balance import freeze_balance_into_state
+from engine.core.character_stats import ensure_player_character_stats
+from engine.core.content_packs import apply_pack_effects, freeze_packs_into_state
+from engine.core.feed_prune import prune_world_notes_and_news_feed
 from engine.core.seeds import apply_seed_pack, list_seed_names
+from engine.player.boot_economy import apply_boot_economy
+from engine.systems.occupation import apply_occupation_template, ensure_career, pick_occupation_template_id
+from engine.systems.property import ensure_player_assets
+from engine.systems.smartphone import ensure_smartphone
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "data"
@@ -212,13 +220,13 @@ def _ensure_required_state_fields(state: dict[str, Any]) -> dict[str, Any]:
             base = str(p.get("language", "en") or "en").strip().lower()
             if base and base not in langs:
                 langs[base] = 70
-    except Exception:
-        pass
+    except Exception as _omni_sw_215:
+        log_swallowed_exception('engine/core/state.py:215', _omni_sw_215)
     # Backfill world tech progress (future hook).
     try:
         state.setdefault("world", {}).setdefault("tech_progress", 0.0)
-    except Exception:
-        pass
+    except Exception as _omni_sw_220:
+        log_swallowed_exception('engine/core/state.py:220', _omni_sw_220)
     return state
 
 
@@ -242,130 +250,126 @@ def _migrate_state(state: dict[str, Any]) -> dict[str, Any]:
                 # Backfill: NPC memories (v2 memory bridge)
                 if "memories" not in n or not isinstance(n.get("memories"), list):
                     n["memories"] = []
-    except Exception:
-        pass
+    except Exception as _omni_sw_245:
+        log_swallowed_exception('engine/core/state.py:245', _omni_sw_245)
     # Backfill: world.npc_economy, meta.market_index, player.narration_style, flags.ironman_mode
     try:
         state.setdefault("world", {}).setdefault("npc_economy", {"offers": {}, "last_refresh_day": 0})
-    except Exception:
-        pass
+    except Exception as _omni_sw_250:
+        log_swallowed_exception('engine/core/state.py:250', _omni_sw_250)
     try:
         state.setdefault("meta", {}).setdefault("market_index", {})
-    except Exception:
-        pass
+    except Exception as _omni_sw_254:
+        log_swallowed_exception('engine/core/state.py:254', _omni_sw_254)
     try:
         state.setdefault("player", {}).setdefault("narration_style", "cinematic")
-    except Exception:
-        pass
+    except Exception as _omni_sw_258:
+        log_swallowed_exception('engine/core/state.py:258', _omni_sw_258)
     try:
         state.setdefault("flags", {}).setdefault("ironman_mode", False)
-    except Exception:
-        pass
+    except Exception as _omni_sw_262:
+        log_swallowed_exception('engine/core/state.py:262', _omni_sw_262)
     # Backfill: active scene system (v6.9+)
     try:
         state.setdefault("active_scene", None)
-    except Exception:
-        pass
+    except Exception as _omni_sw_267:
+        log_swallowed_exception('engine/core/state.py:267', _omni_sw_267)
     try:
         state.setdefault("scene_queue", [])
-    except Exception:
-        pass
+    except Exception as _omni_sw_271:
+        log_swallowed_exception('engine/core/state.py:271', _omni_sw_271)
     try:
         state.setdefault("flags", {}).setdefault("scenes_enabled", True)
-    except Exception:
-        pass
+    except Exception as _omni_sw_275:
+        log_swallowed_exception('engine/core/state.py:275', _omni_sw_275)
     try:
         state.setdefault("quests", {"active": [], "completed": [], "failed": [], "last_id": 0})
-    except Exception:
-        pass
+    except Exception as _omni_sw_279:
+        log_swallowed_exception('engine/core/state.py:279', _omni_sw_279)
     try:
         state.setdefault("world_events", [])
-    except Exception:
-        pass
+    except Exception as _omni_sw_283:
+        log_swallowed_exception('engine/core/state.py:283', _omni_sw_283)
     try:
         state.setdefault("inventory", {}).setdefault("item_quantities", {})
-    except Exception:
-        pass
+    except Exception as _omni_sw_287:
+        log_swallowed_exception('engine/core/state.py:287', _omni_sw_287)
     try:
         state.setdefault("inventory", {}).setdefault("vehicles", {})
         state.setdefault("inventory", {}).setdefault("active_vehicle_id", "")
-    except Exception:
-        pass
+    except Exception as _omni_sw_292:
+        log_swallowed_exception('engine/core/state.py:292', _omni_sw_292)
     # Stable world seed for deterministic per-location baselines (not overwritten by travel seed packs).
     try:
         meta = state.setdefault("meta", {})
         if isinstance(meta, dict) and not str(meta.get("world_seed", "") or "").strip():
             meta["world_seed"] = str(meta.get("seed_pack", "") or "")
-    except Exception:
-        pass
+    except Exception as _omni_sw_299:
+        log_swallowed_exception('engine/core/state.py:299', _omni_sw_299)
     try:
         state.setdefault("world", {}).setdefault("atlas", {"countries": {}, "version": 1})
-    except Exception:
-        pass
+    except Exception as _omni_sw_303:
+        log_swallowed_exception('engine/core/state.py:303', _omni_sw_303)
     try:
         state.setdefault("world", {}).setdefault("safehouses", {})
-    except Exception:
-        pass
+    except Exception as _omni_sw_307:
+        log_swallowed_exception('engine/core/state.py:307', _omni_sw_307)
     try:
         state.setdefault("world", {}).setdefault("heat_map", {})
-    except Exception:
-        pass
+    except Exception as _omni_sw_311:
+        log_swallowed_exception('engine/core/state.py:311', _omni_sw_311)
     try:
         state.setdefault("world", {}).setdefault("suspicion", {})
-    except Exception:
-        pass
+    except Exception as _omni_sw_315:
+        log_swallowed_exception('engine/core/state.py:315', _omni_sw_315)
     try:
         state.setdefault("player", {}).setdefault("disguise", {"active": False, "persona": "", "until_day": 0, "until_time": 0, "risk": 0})
-    except Exception:
-        pass
+    except Exception as _omni_sw_319:
+        log_swallowed_exception('engine/core/state.py:319', _omni_sw_319)
     try:
         state.setdefault("player", {}).setdefault("has_passport", False)
-    except Exception:
-        pass
+    except Exception as _omni_sw_323:
+        log_swallowed_exception('engine/core/state.py:323', _omni_sw_323)
     try:
-        from engine.systems.occupation import ensure_career
-
         ensure_career(state)
-    except Exception:
-        pass
+    except Exception as _omni_sw_329:
+        log_swallowed_exception('engine/core/state.py:329', _omni_sw_329)
     try:
-        from engine.systems.property import ensure_player_assets
-
         ensure_player_assets(state)
-    except Exception:
-        pass
+    except Exception as _omni_sw_335:
+        log_swallowed_exception('engine/core/state.py:335', _omni_sw_335)
     try:
-        from engine.systems.smartphone import ensure_smartphone
-
         ensure_smartphone(state)
-    except Exception:
-        pass
+    except Exception as _omni_sw_341:
+        log_swallowed_exception('engine/core/state.py:341', _omni_sw_341)
     try:
         state.setdefault("world", {}).setdefault("accommodation", {})
-    except Exception:
-        pass
+    except Exception as _omni_sw_345:
+        log_swallowed_exception('engine/core/state.py:345', _omni_sw_345)
     try:
         bio = state.setdefault("bio", {})
         if isinstance(bio, dict):
             bio.setdefault("hours_since_shower", 0.0)
             bio.setdefault("blood_recovery_modifier_pct", 0)
             bio.setdefault("blood_recovery_blocked", False)
-    except Exception:
-        pass
+    except Exception as _omni_sw_353:
+        log_swallowed_exception('engine/core/state.py:353', _omni_sw_353)
     try:
         state.setdefault("meta", {}).setdefault("balance", {})
-    except Exception:
-        pass
+    except Exception as _omni_sw_357:
+        log_swallowed_exception('engine/core/state.py:357', _omni_sw_357)
     try:
-        from engine.core.character_stats import ensure_player_character_stats
-
         ensure_player_character_stats(state)
-    except Exception:
-        pass
+    except Exception as _omni_sw_363:
+        log_swallowed_exception('engine/core/state.py:363', _omni_sw_363)
     return state
 
 
 def save_state(state: dict[str, Any], path: Path = CURRENT) -> None:
+    try:
+        prune_world_notes_and_news_feed(state)
+    except Exception as _omni_sw_372:
+        log_swallowed_exception("engine/core/state.py:372", _omni_sw_372)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -381,72 +385,61 @@ def load_state(path: Path = CURRENT) -> dict[str, Any]:
         if path.exists():
             st = _migrate_state(_read(path))
             try:
-                from engine.core.balance import freeze_balance_into_state
-
                 freeze_balance_into_state(st)
-            except Exception:
-                pass
+            except Exception as _omni_sw_387:
+                log_swallowed_exception('engine/core/state.py:387', _omni_sw_387)
             # Freeze content packs + apply their effects (sizes/index).
             try:
-                from engine.core.content_packs import apply_pack_effects, freeze_packs_into_state
-
                 freeze_packs_into_state(st)
                 apply_pack_effects(st)
-            except Exception:
-                pass
+            except Exception as _omni_sw_395:
+                log_swallowed_exception('engine/core/state.py:395', _omni_sw_395)
             try:
-                from engine.systems.occupation import ensure_career
-
                 ensure_career(st)
-            except Exception:
-                pass
+            except Exception as _omni_sw_401:
+                log_swallowed_exception('engine/core/state.py:401', _omni_sw_401)
             try:
-                from engine.systems.property import ensure_player_assets
-
                 ensure_player_assets(st)
-            except Exception:
-                pass
+            except Exception as _omni_sw_407:
+                log_swallowed_exception('engine/core/state.py:407', _omni_sw_407)
             try:
-                from engine.systems.smartphone import ensure_smartphone
-
                 ensure_smartphone(st)
-            except Exception:
-                pass
+            except Exception as _omni_sw_413:
+                log_swallowed_exception('engine/core/state.py:413', _omni_sw_413)
+            try:
+                prune_world_notes_and_news_feed(st)
+            except Exception as _omni_sw_419:
+                log_swallowed_exception("engine/core/state.py:419", _omni_sw_419)
             return st
-    except Exception:
+    except Exception as _omni_sw_416:
+        log_swallowed_exception('engine/core/state.py:416', _omni_sw_416)
         if PREVIOUS.exists():
             st = _migrate_state(_read(PREVIOUS))
             try:
-                from engine.core.balance import freeze_balance_into_state
-
                 freeze_balance_into_state(st)
-            except Exception:
-                pass
+            except Exception as _omni_sw_423:
+                log_swallowed_exception('engine/core/state.py:423', _omni_sw_423)
             try:
-                from engine.core.content_packs import apply_pack_effects, freeze_packs_into_state
-
                 freeze_packs_into_state(st)
                 apply_pack_effects(st)
-            except Exception:
-                pass
+            except Exception as _omni_sw_430:
+                log_swallowed_exception('engine/core/state.py:430', _omni_sw_430)
             try:
-                from engine.systems.occupation import ensure_career
-
                 ensure_career(st)
-            except Exception:
-                pass
+            except Exception as _omni_sw_436:
+                log_swallowed_exception('engine/core/state.py:436', _omni_sw_436)
             try:
-                from engine.systems.property import ensure_player_assets
-
                 ensure_player_assets(st)
-            except Exception:
-                pass
+            except Exception as _omni_sw_442:
+                log_swallowed_exception('engine/core/state.py:442', _omni_sw_442)
             try:
-                from engine.systems.smartphone import ensure_smartphone
-
                 ensure_smartphone(st)
-            except Exception:
-                pass
+            except Exception as _omni_sw_448:
+                log_swallowed_exception('engine/core/state.py:448', _omni_sw_448)
+            try:
+                prune_world_notes_and_news_feed(st)
+            except Exception as _omni_sw_454:
+                log_swallowed_exception("engine/core/state.py:454", _omni_sw_454)
             return st
         raise
     return initialize_state({})
@@ -457,7 +450,8 @@ def initialize_state(character_data: dict[str, Any], seed_pack: str | None = Non
     if TEMPLATE.exists():
         try:
             base = _read(TEMPLATE)
-        except Exception:
+        except Exception as _omni_sw_460:
+            log_swallowed_exception('engine/core/state.py:460', _omni_sw_460)
             base = {}
     else:
         base = {}
@@ -483,27 +477,21 @@ def initialize_state(character_data: dict[str, Any], seed_pack: str | None = Non
         meta = state.setdefault("meta", {})
         if isinstance(meta, dict) and not str(meta.get("world_seed", "") or "").strip():
             meta["world_seed"] = str(sp or meta.get("seed_pack", "") or "")
-    except Exception:
-        pass
+    except Exception as _omni_sw_486:
+        log_swallowed_exception('engine/core/state.py:486', _omni_sw_486)
     # Freeze balance knobs (determinism for this save).
     try:
-        from engine.core.balance import freeze_balance_into_state
-
         freeze_balance_into_state(state)
-    except Exception:
-        pass
+    except Exception as _omni_sw_493:
+        log_swallowed_exception('engine/core/state.py:493', _omni_sw_493)
     # Freeze content packs (determinism for this save) + apply their effects.
     try:
-        from engine.core.content_packs import apply_pack_effects, freeze_packs_into_state
-
         freeze_packs_into_state(state)
         apply_pack_effects(state)
-    except Exception:
-        pass
+    except Exception as _omni_sw_501:
+        log_swallowed_exception('engine/core/state.py:501', _omni_sw_501)
     # Occupation template (deterministic, content-driven). Apply once at boot.
     try:
-        from engine.systems.occupation import apply_occupation_template, pick_occupation_template_id
-
         p = state.get("player", {}) or {}
         if isinstance(p, dict) and not bool(p.get("occupation_template_applied", False)):
             # Prefer explicit template id if provided.
@@ -512,25 +500,19 @@ def initialize_state(character_data: dict[str, Any], seed_pack: str | None = Non
                 tid = pick_occupation_template_id(state, str(p.get("occupation", "") or ""), str(p.get("background", "") or "")) or ""
             if tid:
                 apply_occupation_template(state, tid)
-    except Exception:
-        pass
+    except Exception as _omni_sw_515:
+        log_swallowed_exception('engine/core/state.py:515', _omni_sw_515)
     try:
-        from engine.systems.occupation import ensure_career
-
         ensure_career(state)
-    except Exception:
-        pass
+    except Exception as _omni_sw_521:
+        log_swallowed_exception('engine/core/state.py:521', _omni_sw_521)
     try:
-        from engine.systems.property import ensure_player_assets
-
         ensure_player_assets(state)
-    except Exception:
-        pass
+    except Exception as _omni_sw_527:
+        log_swallowed_exception('engine/core/state.py:527', _omni_sw_527)
     try:
-        from engine.systems.smartphone import ensure_smartphone
-
         ensure_smartphone(state)
-    except Exception:
-        pass
+    except Exception as _omni_sw_533:
+        log_swallowed_exception('engine/core/state.py:533', _omni_sw_533)
     return state
 

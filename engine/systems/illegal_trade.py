@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.core.factions import sync_faction_statuses_from_trace
+from engine.world.districts import get_district
+
 
 def _item_tags(state: dict[str, Any], item_id: str) -> list[str]:
     idx = (state.get("world", {}) or {}).get("content_index", {}) or {}
@@ -56,8 +60,6 @@ def apply_contraband_acquire_pressure(state: dict[str, Any], item_id: str, *, vi
         loc = str(p.get("location", "") or "").strip().lower()
         did = str(p.get("district", "") or "").strip().lower()
         if loc and did:
-            from engine.world.districts import get_district
-
             d = get_district(state, loc, did)
             if isinstance(d, dict):
                 pp = int(d.get("police_presence", 0) or 0)
@@ -65,9 +67,8 @@ def apply_contraband_acquire_pressure(state: dict[str, Any], item_id: str, *, vi
                     delta += 6
                 elif pp == 3:
                     delta += 3
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_68:
+        log_swallowed_exception('engine/systems/illegal_trade.py:68', _omni_sw_68)
     statuses = (world.get("faction_statuses", {}) or {}) if isinstance(world, dict) else {}
     pol = str(statuses.get("police", "idle") or "idle").lower()
     if pol == "aware":
@@ -96,12 +97,9 @@ def apply_contraband_acquire_pressure(state: dict[str, Any], item_id: str, *, vi
     tr["trace_status"] = st
 
     try:
-        from engine.core.factions import sync_faction_statuses_from_trace
-
         sync_faction_statuses_from_trace(state)
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_102:
+        log_swallowed_exception('engine/systems/illegal_trade.py:102', _omni_sw_102)
     state.setdefault("world_notes", []).append(
         f"[Heat] Contraband acquire via={via} item={item_id} trace_delta=+{delta} (now {pct}%)"
     )

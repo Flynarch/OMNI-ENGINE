@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
 
 from engine.core.balance import get_balance_snapshot
@@ -72,8 +73,8 @@ def apply_npc_combat_followup(state: dict[str, Any], action_ctx: dict[str, Any],
                         confidence=0.88,
                         bias=-0.1,
                     )
-                except Exception:
-                    pass
+                except Exception as _omni_sw_75:
+                    log_swallowed_exception('engine/npc/npc_combat_ai.py:75', _omni_sw_75)
             elif player_crit and mor < 48:
                 enqueue_ripple(
                     state,

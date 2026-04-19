@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 import json
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ def _read_json(path: Path) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception as e:
+        log_swallowed_exception('engine/world/location_presets.py:19', e)
         raise LocationPresetError(f"Invalid JSON: {path}") from e
 
 
@@ -90,7 +92,8 @@ def load_location_preset(loc_key: str) -> dict[str, Any] | None:
             entry["is_contact"] = bool(n.get("is_contact"))
         try:
             entry["disposition_score"] = int(n.get("disposition_score", 50) or 50)
-        except Exception:
+        except Exception as _omni_sw_93:
+            log_swallowed_exception('engine/world/location_presets.py:93', _omni_sw_93)
             entry["disposition_score"] = 50
         if "disposition_label" in n:
             entry["disposition_label"] = str(n.get("disposition_label", "Neutral") or "Neutral")

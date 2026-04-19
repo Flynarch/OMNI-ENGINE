@@ -5,6 +5,13 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.player.skills import grant_skill_xp_flat
+from engine.systems.accommodation import get_stay_here
+from engine.systems.safehouse import ensure_safehouse_here
+from engine.systems.safehouse_stash import list_stash_here
+from engine.systems.shop import get_capacity_status
+
 ROOT = Path(__file__).resolve().parents[2]
 RECIPES_PATH = ROOT / "data" / "packs" / "core" / "recipes.json"
 
@@ -12,7 +19,8 @@ RECIPES_PATH = ROOT / "data" / "packs" / "core" / "recipes.json"
 def _qi(x: Any) -> int:
     try:
         return max(0, int(x))
-    except Exception:
+    except Exception as _omni_sw_15:
+        log_swallowed_exception('engine/systems/crafting.py:15', _omni_sw_15)
         return 0
 
 
@@ -28,7 +36,8 @@ def _skill_level(state: dict[str, Any], skill_id: str) -> int:
         return 0
     try:
         return max(0, int(row.get("level", 0) or 0))
-    except Exception:
+    except Exception as _omni_sw_31:
+        log_swallowed_exception('engine/systems/crafting.py:31', _omni_sw_31)
         return 0
 
 
@@ -95,10 +104,9 @@ def _single_workstation_ok(state: dict[str, Any], token: str) -> bool:
 def _has_active_stay_here(state: dict[str, Any]) -> bool:
     """Prepaid hotel/kos/suite at current location with nights remaining (see accommodation.py)."""
     try:
-        from engine.systems.accommodation import get_stay_here
-
         row = get_stay_here(state)
-    except Exception:
+    except Exception as _omni_sw_101:
+        log_swallowed_exception('engine/systems/crafting.py:101', _omni_sw_101)
         row = None
     if not isinstance(row, dict):
         return False
@@ -212,10 +220,9 @@ def _stash_item_counts(state: dict[str, Any]) -> dict[str, int]:
     if not _has_active_safehouse_here(state):
         return {}
     try:
-        from engine.systems.safehouse_stash import list_stash_here
-
         stash = list_stash_here(state)
-    except Exception:
+    except Exception as _omni_sw_218:
+        log_swallowed_exception('engine/systems/crafting.py:218', _omni_sw_218)
         return {}
     counts: dict[str, int] = {}
     for entry in stash:
@@ -303,13 +310,12 @@ def _remove_ingredients_extended(
 
 def _append_outputs(inv: dict[str, Any], outputs: dict[str, int]) -> bool:
     """Place crafted items into bag, then pocket. Returns False if capacity exceeded."""
-    from engine.systems.shop import get_capacity_status
-
     for raw_id, raw_n in outputs.items():
         iid = str(raw_id or "").strip().lower()
         try:
             n = int(raw_n)
-        except Exception:
+        except Exception as _omni_sw_312:
+            log_swallowed_exception('engine/systems/crafting.py:312', _omni_sw_312)
             n = 0
         n = max(0, n)
         if not iid or n <= 0:
@@ -333,7 +339,8 @@ def _item_size_lookup(inv: dict[str, Any], item_id: str) -> int:
     sizes = inv.get("item_sizes") if isinstance(inv.get("item_sizes"), dict) else {}
     try:
         return max(1, min(6, int(sizes.get(item_id, 1) or 1)))
-    except Exception:
+    except Exception as _omni_sw_336:
+        log_swallowed_exception('engine/systems/crafting.py:336', _omni_sw_336)
         return 1
 
 
@@ -362,7 +369,8 @@ def can_craft(state: dict[str, Any], recipe_id: str) -> tuple[bool, str]:
             return False, "not_enough_cash"
         try:
             cash = int(eco.get("cash", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_365:
+            log_swallowed_exception('engine/systems/crafting.py:365', _omni_sw_365)
             cash = 0
         if cash < cost:
             return False, "not_enough_cash"
@@ -376,8 +384,6 @@ def can_craft(state: dict[str, Any], recipe_id: str) -> tuple[bool, str]:
     trial = deepcopy(inv)
     stash_trial: list[Any] | None = None
     if _has_active_safehouse_here(state):
-        from engine.systems.safehouse import ensure_safehouse_here
-
         r = ensure_safehouse_here(state)
         raw = r.get("stash")
         stash_trial = deepcopy(raw) if isinstance(raw, list) else []
@@ -404,11 +410,10 @@ def _apply_craft_progress(state: dict[str, Any], recipe: dict[str, Any]) -> dict
         cc[rid] = int(cc.get(rid, 0) or 0) + 1
     try:
         meta["crafts_total"] = int(meta.get("crafts_total", 0) or 0) + 1
-    except Exception:
+    except Exception as _omni_sw_407:
+        log_swallowed_exception('engine/systems/crafting.py:407', _omni_sw_407)
         meta["crafts_total"] = 1
     try:
-        from engine.player.skills import grant_skill_xp_flat
-
         req = _parse_requires_skill(recipe)
         if req is not None:
             sk, _need = req
@@ -416,7 +421,8 @@ def _apply_craft_progress(state: dict[str, Any], recipe: dict[str, Any]) -> dict
             return {"xp_skill": sk, "xp_amount": 2}
         grant_skill_xp_flat(state, "operations", amount=1)
         return {"xp_skill": "operations", "xp_amount": 1}
-    except Exception:
+    except Exception as _omni_sw_419:
+        log_swallowed_exception('engine/systems/crafting.py:419', _omni_sw_419)
         return {}
 
 
@@ -438,8 +444,6 @@ def craft(state: dict[str, Any], recipe_id: str) -> dict[str, Any]:
     stash_list: list[Any] | None = None
     stash_snap: list[Any] | None = None
     if _has_active_safehouse_here(state):
-        from engine.systems.safehouse import ensure_safehouse_here
-
         row = ensure_safehouse_here(state)
         if not isinstance(row.get("stash"), list):
             row["stash"] = []
@@ -453,7 +457,8 @@ def craft(state: dict[str, Any], recipe_id: str) -> dict[str, Any]:
             return {"ok": False, "reason": "not_enough_cash"}
         try:
             cash0 = int(eco.get("cash", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_456:
+            log_swallowed_exception('engine/systems/crafting.py:456', _omni_sw_456)
             cash0 = 0
         if cash0 < cost:
             return {"ok": False, "reason": "not_enough_cash"}
@@ -477,7 +482,8 @@ def craft(state: dict[str, Any], recipe_id: str) -> dict[str, Any]:
         return {"ok": False, "reason": "no_space"}
     try:
         tmin = int(recipe.get("time_min", 5) or 5)
-    except Exception:
+    except Exception as _omni_sw_480:
+        log_swallowed_exception('engine/systems/crafting.py:480', _omni_sw_480)
         tmin = 5
     tmin = max(1, min(120, tmin))
     label = str(recipe.get("label", recipe.get("id", "")) or recipe_id)

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.core.factions import sync_faction_statuses_from_trace
+from engine.systems.disguise import ensure_disguise
 from typing import Any
 
 
@@ -21,7 +24,8 @@ def get_trace_tier(state: dict[str, Any]) -> dict[str, Any]:
     else:
         try:
             pct = int(tr.get("trace_pct", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_24:
+            log_swallowed_exception('engine/core/trace.py:24', _omni_sw_24)
             pct = 0
     pct = max(0, min(100, pct))
     if pct > 75:
@@ -38,7 +42,8 @@ def apply_trace_travel_friction(state: dict[str, Any], base_minutes: int) -> tup
     tier = get_trace_tier(state)
     try:
         mult = float(tier.get("friction_multiplier", 1.0) or 1.0)
-    except Exception:
+    except Exception as _omni_sw_41:
+        log_swallowed_exception('engine/core/trace.py:41', _omni_sw_41)
         mult = 1.0
     b = max(1, int(base_minutes))
     if mult <= 1.0:
@@ -62,8 +67,6 @@ def apply_npc_snitch_report_trace(state: dict[str, Any], npc_id: str) -> int:
     Returns the delta applied (after clamp).
     """
     _ = npc_id  # reserved for future per-NPC modifiers / news attribution
-    from engine.systems.disguise import ensure_disguise
-
     tr = state.setdefault("trace", {})
     if not isinstance(tr, dict):
         tr = {}
@@ -76,11 +79,9 @@ def apply_npc_snitch_report_trace(state: dict[str, Any], npc_id: str) -> int:
     tr["trace_pct"] = pct
     tr["trace_status"] = "Ghost" if pct <= 25 else "Flagged" if pct <= 50 else "Investigated" if pct <= 75 else "Manhunt"
     try:
-        from engine.core.factions import sync_faction_statuses_from_trace
-
         sync_faction_statuses_from_trace(state)
-    except Exception:
-        pass
+    except Exception as _omni_sw_82:
+        log_swallowed_exception('engine/core/trace.py:82', _omni_sw_82)
     return int(delta)
 
 
@@ -99,8 +100,6 @@ def update_trace(state: dict, action_ctx: dict) -> None:
 
     # Mirror trace tiers into faction attention tiers.
     try:
-        from engine.core.factions import sync_faction_statuses_from_trace
-
         sync_faction_statuses_from_trace(state)
-    except Exception:
-        pass
+    except Exception as _omni_sw_105:
+        log_swallowed_exception('engine/core/trace.py:105', _omni_sw_105)

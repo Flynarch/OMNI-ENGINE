@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 import hashlib
 from typing import Any
 
@@ -148,14 +149,16 @@ def maybe_queue_informant_tip(
     # Cooldown: don't tip every hop.
     try:
         last_tip = int(prof.get("last_tip_turn", -999) or -999)
-    except Exception:
+    except Exception as _omni_sw_151:
+        log_swallowed_exception('engine/social/informants.py:151', _omni_sw_151)
         last_tip = -999
     if turn - last_tip < 3:
         return {"queued": False, "reason": "cooldown"}
 
     try:
         reliability = int(prof.get("reliability", 50) or 50)
-    except Exception:
+    except Exception as _omni_sw_158:
+        log_swallowed_exception('engine/social/informants.py:158', _omni_sw_158)
         reliability = 50
     reliability = _clamp(reliability, 0, 100)
 
@@ -164,7 +167,8 @@ def maybe_queue_informant_tip(
     try:
         if isinstance(mem.get(to_npc), dict):
             trust = int((mem.get(to_npc) or {}).get("trust_in_player", 50) or 50)
-    except Exception:
+    except Exception as _omni_sw_167:
+        log_swallowed_exception('engine/social/informants.py:167', _omni_sw_167)
         trust = 50
     trust = _clamp(trust, 0, 100)
 

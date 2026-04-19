@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.systems.scene_roll import scene_rng
 from typing import Any
 
 
@@ -89,8 +91,8 @@ def apply_dump(state: dict[str, Any], *, item_id: str) -> dict[str, Any]:
     try:
         cm = _conceal_map(state)
         cm.pop(iid, None)
-    except Exception:
-        pass
+    except Exception as _omni_sw_92:
+        log_swallowed_exception('engine/systems/search_conceal.py:92', _omni_sw_92)
     return {"ok": True, "item_id": iid, "removed": int(removed)}
 
 
@@ -103,8 +105,6 @@ def resolve_search(
     salt: str,
 ) -> dict[str, Any]:
     """Deterministically decide which carried items are found vs missed."""
-    from engine.systems.scenes import scene_rng
-
     intensity = max(0, min(100, int(intensity or 0)))
     carried = _inv_carried_ids(state)
     cm = _conceal_map(state)

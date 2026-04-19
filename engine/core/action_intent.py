@@ -3,6 +3,18 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from engine.core.action_registry import (
+    get_registry_action_by_id,
+    inquiry_phrases_match,
+    iter_registry_matches_by_prefix,
+    match_registry_action,
+    match_registry_action_prefixed,
+    sanitize_registry_action_id_hint,
+)
+from engine.core.action_registry_handlers import apply_registry_handler
+from engine.core.errors import record_error
+from engine.systems.combat import get_active_weapon
+
 # Amati keramaian / cari orang di sekitar (bukan combat, bukan evasion).
 _SOCIAL_SCAN_PHRASES = (
     "mencari orang",
@@ -53,8 +65,6 @@ def _is_social_inquiry(t: str) -> bool:
     if not tnorm:
         return False
     try:
-        from engine.core.action_registry import inquiry_phrases_match
-
         return inquiry_phrases_match(tnorm)
     except Exception:
         return "?" in tnorm
@@ -204,10 +214,6 @@ def _registry_try_intimacy_private_nl(ctx: dict[str, Any], t: str, player_input:
     """Consensual private intimacy; guard ``_is_intimacy_private``; ``ctx_patch`` + handler di registry."""
     if not _is_intimacy_private(t):
         return False
-    try:
-        from engine.core.action_registry import get_registry_action_by_id
-    except Exception:
-        return False
     m = get_registry_action_by_id("social.nl_intimacy_private")
     if not m:
         return False
@@ -276,7 +282,6 @@ def _invoke_registry_handler_from_match(m: dict[str, Any], ctx: dict[str, Any], 
     if not hn:
         return
     try:
-        from engine.core.action_registry_handlers import apply_registry_handler
 
         apply_registry_handler(hn, ctx, t, raw)
     except Exception:
@@ -286,10 +291,6 @@ def _invoke_registry_handler_from_match(m: dict[str, Any], ctx: dict[str, Any], 
 def _registry_try_sleep(ctx: dict[str, Any], t: str, player_input: str) -> bool:
     """Apply sleep intent from action registry when it is not a prepaid-stay booking."""
     if _parse_accommodation_intent(t) is not None:
-        return False
-    try:
-        from engine.core.action_registry import match_registry_action
-    except Exception:
         return False
     m = match_registry_action(player_input)
     if not m or not str(m.get("id", "") or "").startswith("sleep."):
@@ -315,10 +316,6 @@ _NL_ATTEMPT_MARKERS = (
 
 def _registry_try_combat(ctx: dict[str, Any], t: str, player_input: str) -> bool:
     """Apply combat intent from action registry (ranged/melee); legacy elif remains fallback."""
-    try:
-        from engine.core.action_registry import match_registry_action
-    except Exception:
-        return False
     m = match_registry_action(player_input)
     if not m or not str(m.get("id", "") or "").startswith("combat."):
         return False
@@ -420,10 +417,6 @@ def _apply_travel_heuristics(ctx: dict[str, Any], t: str, player_input: str) -> 
 
 def _registry_try_travel(ctx: dict[str, Any], t: str, player_input: str) -> bool:
     """Registry-first travel NL; `_TRAVEL_LEGACY_KEYWORDS` remains fallback."""
-    try:
-        from engine.core.action_registry import match_registry_action
-    except Exception:
-        return False
     m = match_registry_action(player_input)
     if not m or not str(m.get("id", "") or "").startswith("travel."):
         return False
@@ -448,10 +441,6 @@ _STEALTH_LEGACY_KEYWORDS = ("mengendap", "stealth", "diam-diam")
 
 def _registry_try_skill_domain(ctx: dict[str, Any], t: str, player_input: str) -> bool:
     """Registry-first domain hints (hacking / medical / driving / stealth); legacy elif remains."""
-    try:
-        from engine.core.action_registry import match_registry_action
-    except Exception:
-        return False
     m = match_registry_action(player_input)
     if not m:
         return False
@@ -471,10 +460,6 @@ _SOCIAL_NL_PREFIX = "social."
 
 def _registry_try_social_nl(ctx: dict[str, Any], t: str, player_input: str) -> bool:
     """Registry-first social dialogue / crowd scan (subset of legacy `_is_*` heuristics)."""
-    try:
-        from engine.core.action_registry import match_registry_action_prefixed
-    except Exception:
-        return False
     m = match_registry_action_prefixed(player_input, _SOCIAL_NL_PREFIX)
     if not m:
         return False
@@ -496,10 +481,6 @@ def _registry_try_social_negotiation_nl(ctx: dict[str, Any], t: str, player_inpu
     """Deception / negotiation phrasing; ``ctx_patch`` + handler live in ``social.nl_negotiation`` (code-resolved id)."""
     if not any(k in t for k in _NEGOTIATION_NL_KEYWORDS):
         return False
-    try:
-        from engine.core.action_registry import get_registry_action_by_id
-    except Exception:
-        return False
     m = get_registry_action_by_id("social.nl_negotiation")
     if not m:
         return False
@@ -514,10 +495,6 @@ def _registry_try_social_negotiation_nl(ctx: dict[str, Any], t: str, player_inpu
 def _registry_try_social_conflict_nl(ctx: dict[str, Any], t: str, player_input: str) -> bool:
     """Conflict toward people (AND of cues); ``ctx_patch`` is ``social.nl_conflict`` in registry (code-resolved id)."""
     if not (any(k in t for k in _SOCIAL_CONFLICT_WORDS) and any(w in t for w in _PEOPLE_WORDS)):
-        return False
-    try:
-        from engine.core.action_registry import get_registry_action_by_id
-    except Exception:
         return False
     m = get_registry_action_by_id("social.nl_conflict")
     if not m:
@@ -548,10 +525,6 @@ def _registry_try_rest_short_nl(ctx: dict[str, Any], t: str, player_input: str) 
     """Istirahat singkat 60m: frasa ID di registry ``rest.nl_*``, plus ``rest …`` (inggris)."""
     t2 = str(t or "").strip().lower()
     m: dict[str, Any] | None = None
-    try:
-        from engine.core.action_registry import get_registry_action_by_id, match_registry_action_prefixed
-    except Exception:
-        return False
     m = match_registry_action_prefixed(str(player_input or ""), "rest.")
     if not m or not str(m.get("id", "") or "").strip().startswith("rest."):
         m = None
@@ -571,10 +544,6 @@ def _registry_try_rest_short_nl(ctx: dict[str, Any], t: str, player_input: str) 
 
 def _registry_try_social_inquiry_nl(ctx: dict[str, Any], t: str, player_input: str) -> bool:
     """Subset of `_is_social_inquiry` phrases via registry (`?` + question cues in JSON)."""
-    try:
-        from engine.core.action_registry import match_registry_action_prefixed
-    except Exception:
-        return False
     m = match_registry_action_prefixed(player_input, _SOCIAL_INQUIRY_PREFIX)
     if not m:
         return False
@@ -604,10 +573,6 @@ def _apply_trivial_realism_flags(ctx: dict[str, Any]) -> None:
 
 def _registry_try_instant_physically_impossible(ctx: dict[str, Any], t: str, player_input: str) -> bool:
     """Realism gate — mustahil fisik; ``instant.nl_physically_impossible``."""
-    try:
-        from engine.core.action_registry import match_registry_action_prefixed
-    except Exception:
-        return False
     m = match_registry_action_prefixed(str(player_input or ""), _INSTANT_NL_PREFIX)
     if not m or str(m.get("id", "") or "").strip() != "instant.nl_physically_impossible":
         return False
@@ -621,10 +586,6 @@ def _registry_try_instant_physically_impossible(ctx: dict[str, Any], t: str, pla
 
 def _registry_try_instant_clear_jam(ctx: dict[str, Any], t: str, player_input: str) -> bool:
     """Weapon jam clear (W2-ish); ``instant.nl_clear_jam`` in registry."""
-    try:
-        from engine.core.action_registry import match_registry_action_prefixed
-    except Exception:
-        return False
     m = match_registry_action_prefixed(str(player_input or ""), _INSTANT_NL_PREFIX)
     if not m or str(m.get("id", "") or "").strip() != "instant.nl_clear_jam":
         return False
@@ -638,11 +599,6 @@ def _registry_try_instant_clear_jam(ctx: dict[str, Any], t: str, player_input: s
 
 def _registry_apply_all_instant_stop_nl(ctx: dict[str, Any], t: str, player_input: str) -> None:
     """Terapkan semua entri ``instant.nl_stop_*`` yang cocok (bukan hanya yang pertama)."""
-    try:
-        from engine.core.action_registry import iter_registry_matches_by_prefix
-        from engine.core.action_registry_handlers import apply_registry_handler
-    except Exception:
-        return
     for m in iter_registry_matches_by_prefix(str(player_input or ""), "instant.nl_stop_"):
         patch = m.get("ctx_patch") if isinstance(m.get("ctx_patch"), dict) else {}
         for k, v in patch.items():
@@ -655,10 +611,6 @@ def _registry_apply_all_instant_stop_nl(ctx: dict[str, Any], t: str, player_inpu
 def _registry_try_instant_trivial(ctx: dict[str, Any], t: str, player_input: str) -> bool:
     """Trivial realism via `instant.*` registry (add-only synonyms in JSON)."""
     if ctx.get("registry_action_id"):
-        return False
-    try:
-        from engine.core.action_registry import match_registry_action_prefixed
-    except Exception:
         return False
     m = match_registry_action_prefixed(player_input, _INSTANT_NL_PREFIX)
     if not m or not str(m.get("id", "") or "").strip().startswith(_INSTANT_NL_PREFIX):
@@ -675,6 +627,7 @@ def _apply_smartphone_ctx_defaults(ctx: dict[str, Any]) -> None:
     ctx["action_type"] = "instant"
     ctx["domain"] = "other"
     ctx["intent_note"] = "smartphone"
+    ctx["registry_action_id"] = "other.nl_smartphone_w2"
     ctx["has_stakes"] = False
     ctx["uncertain"] = False
     ctx["trivial"] = True
@@ -821,6 +774,7 @@ def parse_action_intent(player_input: str) -> dict[str, Any]:
         ctx["action_type"] = "instant"
         ctx["accommodation_intent"] = _acc
         ctx["instant_minutes"] = 15
+        ctx["registry_action_id"] = "economy.nl_accommodation_stay"
     elif _registry_try_travel(ctx, t, player_input):
         pass
     elif any(k in t for k in _TRAVEL_LEGACY_KEYWORDS):
@@ -837,6 +791,11 @@ def parse_action_intent(player_input: str) -> dict[str, Any]:
         ctx["risk_level"] = "low"
         ctx["has_stakes"] = False
         ctx["uncertain"] = False
+        tl = str(player_input or "").strip().lower()
+        explicit_hours = bool(re.search(r"\b\d{1,2}\s*(?:jam|hours?|h)\b", tl)) or bool(
+            re.search(r"\b(?:tidur|sleep)\s+\d{1,2}\b", tl)
+        )
+        ctx["registry_action_id"] = "sleep.nl_duration_hours" if explicit_hours else "sleep.nl_default_8h"
     elif _registry_try_rest_short_nl(ctx, t, player_input):
         pass
     elif _registry_try_social_inquiry_nl(ctx, t, player_input):
@@ -1064,7 +1023,6 @@ def merge_intent_into_action_ctx(action_ctx: dict[str, Any], intent: dict[str, A
         if key in src and src[key] is not None:
             action_ctx[key] = src[key]
     try:
-        from engine.core.action_registry import sanitize_registry_action_id_hint
 
         rh = sanitize_registry_action_id_hint(src.get("registry_action_id_hint"))
         if rh:
@@ -1165,7 +1123,6 @@ def evaluate_precondition(state: dict[str, Any], action_ctx: dict[str, Any], con
     """
     if not isinstance(cond, dict):
         try:
-            from engine.core.errors import record_error
 
             record_error(state, "intent.precondition", Exception("Invalid precondition shape (not dict)"))
         except Exception:
@@ -1281,10 +1238,6 @@ def evaluate_precondition(state: dict[str, Any], action_ctx: dict[str, Any], con
             return _cmp(op, cur_ok, True)
 
         if kind == "has_ammo":
-            try:
-                from engine.systems.combat import get_active_weapon
-            except Exception:
-                return False
             inv = state.get("inventory", {}) or {}
             if not isinstance(inv, dict):
                 return False
@@ -1349,7 +1302,6 @@ def evaluate_precondition(state: dict[str, Any], action_ctx: dict[str, Any], con
 
         # Unknown kind
         try:
-            from engine.core.errors import record_error
 
             record_error(state, "intent.precondition", Exception(f"Unknown precondition kind: {kind}"))
         except Exception:
@@ -1357,7 +1309,6 @@ def evaluate_precondition(state: dict[str, Any], action_ctx: dict[str, Any], con
         return False
     except Exception as e:
         try:
-            from engine.core.errors import record_error
 
             record_error(state, "intent.precondition", e)
         except Exception:
@@ -1447,7 +1398,6 @@ def select_best_step(action_ctx: dict[str, Any], state: dict[str, Any]) -> str |
             return sid
     # None valid: log clearly for debugging.
     try:
-        from engine.core.errors import record_error
 
         plan = action_ctx.get("intent_plan") if isinstance(action_ctx.get("intent_plan"), dict) else {}
         pid = str(plan.get("plan_id", "") or "").strip()

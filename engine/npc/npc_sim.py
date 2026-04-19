@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 import hashlib
 from typing import Any
 
@@ -23,7 +24,8 @@ def _sec(npc: dict[str, Any]) -> dict[str, int]:
     def gi(k: str, default: int) -> int:
         try:
             return int(npc.get(k, default) or default)
-        except Exception:
+        except Exception as _omni_sw_26:
+            log_swallowed_exception('engine/npc/npc_sim.py:26', _omni_sw_26)
             return default
 
     joy = gi("joy", gi("affection", 0))
@@ -44,11 +46,13 @@ def _belief_summary(npc: dict[str, Any]) -> tuple[int, int]:
         return (0, 50)
     try:
         sus = int(bs.get("suspicion", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_47:
+        log_swallowed_exception('engine/npc/npc_sim.py:47', _omni_sw_47)
         sus = 0
     try:
         rep = int(bs.get("respect", 50) or 50)
-    except Exception:
+    except Exception as _omni_sw_51:
+        log_swallowed_exception('engine/npc/npc_sim.py:51', _omni_sw_51)
         rep = 50
     return (_clamp_int(sus, 0, 100), _clamp_int(rep, 0, 100))
 
@@ -85,7 +89,8 @@ def _graph_bump_player_edge(state: dict[str, Any], npc_name: str, *, delta: int,
     edge = _graph_get_edge(world, a, b) or {"type": "neutral", "strength": 50, "since_day": day, "last_interaction_day": day}
     try:
         strength = int(edge.get("strength", 50) or 50)
-    except Exception:
+    except Exception as _omni_sw_88:
+        log_swallowed_exception('engine/npc/npc_sim.py:88', _omni_sw_88)
         strength = 50
     strength = _clamp_int(strength + int(delta), 0, 100)
     edge["strength"] = strength
@@ -106,7 +111,8 @@ def _graph_set_player_edge(state: dict[str, Any], npc_name: str, *, rel_type: st
     if strength is not None:
         try:
             s = int(strength)
-        except Exception:
+        except Exception as _omni_sw_109:
+            log_swallowed_exception('engine/npc/npc_sim.py:109', _omni_sw_109)
             s = 50
         edge["strength"] = _clamp_int(s, 0, 100)
     edge["last_interaction_day"] = day
@@ -264,7 +270,8 @@ def tick_npc_sim(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                 continue
             try:
                 ct = int(it.get("created_turn", turn_now) or turn_now)
-            except Exception:
+            except Exception as _omni_sw_267:
+                log_swallowed_exception('engine/npc/npc_sim.py:267', _omni_sw_267)
                 ct = turn_now
             if ct >= (turn_now - max_age):
                 keep.append(it)
@@ -310,7 +317,8 @@ def tick_npc_sim(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
         love, alarm, contempt = sec["love"], sec["alarm"], sec["contempt"]
         try:
             loyalty = int(npc.get("loyalty", 50) or 50)
-        except Exception:
+        except Exception as _omni_sw_313:
+            log_swallowed_exception('engine/npc/npc_sim.py:313', _omni_sw_313)
             loyalty = 50
 
         # Always respect hard caps.
@@ -527,11 +535,13 @@ def tick_npc_sim(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
         love, alarm, contempt = sec["love"], sec["alarm"], sec["contempt"]
         try:
             opp = int(npc.get("opportunism", 30) or 0)
-        except Exception:
+        except Exception as _omni_sw_530:
+            log_swallowed_exception('engine/npc/npc_sim.py:530', _omni_sw_530)
             opp = 30
         try:
             loyalty = int(npc.get("loyalty", 50) or 0)
-        except Exception:
+        except Exception as _omni_sw_534:
+            log_swallowed_exception('engine/npc/npc_sim.py:534', _omni_sw_534)
             loyalty = 50
 
         # Candidate actions with utility.

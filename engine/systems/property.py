@@ -6,8 +6,14 @@ economy hooks — never trust action_ctx for income (anti custom-intent exploit)
 
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.npc.relationship import get_top_relationships
+from engine.systems.occupation import ensure_career
+from engine.systems.vehicles import VEHICLE_TYPES, buy_vehicle
 import hashlib
 from typing import Any
+
+from engine.world.atlas import get_city_stats_for_travel
 
 _ASSET_KINDS_RESIDENTIAL = frozenset({"apartment", "house"})
 _ASSET_KINDS = frozenset({"apartment", "house", "small_business"})
@@ -18,8 +24,6 @@ def _norm_city(s: str) -> str:
 
 
 def get_city_property_stats(state: dict[str, Any], city: str) -> dict[str, float]:
-    from engine.world.atlas import get_city_stats_for_travel
-
     return get_city_stats_for_travel(state, _norm_city(city))
 
 
@@ -27,7 +31,8 @@ def quote_apartment_buy_usd(state: dict[str, Any], city: str) -> int:
     st = get_city_property_stats(state, city)
     try:
         return max(1000, int(float(st.get("avg_apartment_price_usd", 45000) or 45000)))
-    except Exception:
+    except Exception as _omni_sw_30:
+        log_swallowed_exception('engine/systems/property.py:30', _omni_sw_30)
         return 45000
 
 
@@ -35,7 +40,8 @@ def quote_house_buy_usd(state: dict[str, Any], city: str) -> int:
     st = get_city_property_stats(state, city)
     try:
         return max(2000, int(float(st.get("avg_house_price_usd", 120000) or 120000)))
-    except Exception:
+    except Exception as _omni_sw_38:
+        log_swallowed_exception('engine/systems/property.py:38', _omni_sw_38)
         return 120000
 
 
@@ -43,22 +49,22 @@ def quote_rent_daily_usd(state: dict[str, Any], city: str) -> int:
     st = get_city_property_stats(state, city)
     try:
         rm = float(st.get("avg_rent_monthly_usd", 800) or 800)
-    except Exception:
+    except Exception as _omni_sw_46:
+        log_swallowed_exception('engine/systems/property.py:46', _omni_sw_46)
         rm = 800.0
     return max(3, int(rm / 30.0))
 
 
 def quote_vehicle_price_usd(state: dict[str, Any], city: str, vehicle_id: str) -> int:
     """Scale catalog vehicle price by city's avg_car_price_usd vs global baseline (car_standard=2000)."""
-    from engine.systems.vehicles import VEHICLE_TYPES
-
     vid = str(vehicle_id or "").strip().lower()
     if vid not in VEHICLE_TYPES or vid == "taxi":
         return 0
     st = get_city_property_stats(state, city)
     try:
         avg_car = float(st.get("avg_car_price_usd", 12000) or 12000)
-    except Exception:
+    except Exception as _omni_sw_61:
+        log_swallowed_exception('engine/systems/property.py:61', _omni_sw_61)
         avg_car = 12000.0
     base_ref = 2000.0
     base_prices: dict[str, float] = {
@@ -136,11 +142,13 @@ def _new_asset_id(kind: str, city: str, state: dict[str, Any]) -> str:
 def _daily_maintenance_owned(purchase_price: int, col: float) -> int:
     try:
         pp = int(purchase_price)
-    except Exception:
+    except Exception as _omni_sw_139:
+        log_swallowed_exception('engine/systems/property.py:139', _omni_sw_139)
         pp = 0
     try:
         c = float(col or 50.0)
-    except Exception:
+    except Exception as _omni_sw_143:
+        log_swallowed_exception('engine/systems/property.py:143', _omni_sw_143)
         c = 50.0
     return max(5, min(900, int(pp * 0.0001 + c * 0.32)))
 
@@ -157,7 +165,8 @@ def buy_apartment(state: dict[str, Any], city: str, *, rental: bool = False) -> 
     stats = get_city_property_stats(state, c)
     try:
         col = float(stats.get("cost_of_living_index", 50) or 50)
-    except Exception:
+    except Exception as _omni_sw_160:
+        log_swallowed_exception('engine/systems/property.py:160', _omni_sw_160)
         col = 50.0
     if rental:
         # First month + small deposit (simplified as upfront + daily rent tracked).
@@ -228,7 +237,8 @@ def buy_house(state: dict[str, Any], city: str) -> dict[str, Any]:
     stats = get_city_property_stats(state, c)
     try:
         col = float(stats.get("cost_of_living_index", 50) or 50)
-    except Exception:
+    except Exception as _omni_sw_231:
+        log_swallowed_exception('engine/systems/property.py:231', _omni_sw_231)
         col = 50.0
     maint = _daily_maintenance_owned(price, col)
     aid = _new_asset_id("house", c, state)
@@ -262,11 +272,13 @@ def buy_small_business(state: dict[str, Any], city: str) -> dict[str, Any]:
     st = get_city_property_stats(state, c)
     try:
         monthly_rev = float(st.get("avg_small_business_revenue_monthly_usd", 8000) or 8000)
-    except Exception:
+    except Exception as _omni_sw_265:
+        log_swallowed_exception('engine/systems/property.py:265', _omni_sw_265)
         monthly_rev = 8000.0
     try:
         col = float(st.get("cost_of_living_index", 50) or 50)
-    except Exception:
+    except Exception as _omni_sw_269:
+        log_swallowed_exception('engine/systems/property.py:269', _omni_sw_269)
         col = 50.0
     # Stake ~ 2 months gross benchmark (deterministic).
     price = max(3000, int(monthly_rev * 2.0 + col * 120.0))
@@ -315,7 +327,8 @@ def sell_asset(state: dict[str, Any], asset_id: str) -> dict[str, Any]:
         return {"ok": True, "asset_id": aid, "refund": 0}
     try:
         pp = int(a.get("purchase_price_usd", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_318:
+        log_swallowed_exception('engine/systems/property.py:318', _omni_sw_318)
         pp = 0
     refund = max(0, int(pp * 0.62))
     eco = state.setdefault("economy", {})
@@ -327,8 +340,6 @@ def sell_asset(state: dict[str, Any], asset_id: str) -> dict[str, Any]:
 
 def _bisnis_career_multiplier(state: dict[str, Any]) -> float:
     try:
-        from engine.systems.occupation import ensure_career
-
         ensure_career(state)
         c = (state.get("player", {}) or {}).get("career", {}) or {}
         if not isinstance(c, dict):
@@ -338,21 +349,21 @@ def _bisnis_career_multiplier(state: dict[str, Any]) -> float:
             return 1.0
         lvl = int(row.get("level", 0) or 0)
         return 1.0 + 0.045 * max(0, min(lvl, 6))
-    except Exception:
+    except Exception as _omni_sw_341:
+        log_swallowed_exception('engine/systems/property.py:341', _omni_sw_341)
         return 1.0
 
 
 def _business_partner_multiplier(state: dict[str, Any]) -> float:
     try:
-        from engine.npc.relationship import get_top_relationships
-
         n = sum(
             1
             for _nm, rel in get_top_relationships(state, limit=24)
             if str((rel or {}).get("type", "") or "").lower() == "business_partner"
         )
         return 1.0 + 0.028 * max(0, min(n, 8))
-    except Exception:
+    except Exception as _omni_sw_355:
+        log_swallowed_exception('engine/systems/property.py:355', _omni_sw_355)
         return 1.0
 
 
@@ -361,19 +372,22 @@ def _business_daily_gross_for_asset(state: dict[str, Any], asset: dict[str, Any]
     st = get_city_property_stats(state, c)
     try:
         monthly = float(st.get("avg_small_business_revenue_monthly_usd", 5000) or 5000)
-    except Exception:
+    except Exception as _omni_sw_364:
+        log_swallowed_exception('engine/systems/property.py:364', _omni_sw_364)
         monthly = 5000.0
     daily = monthly / 22.0
     daily *= _bisnis_career_multiplier(state)
     daily *= _business_partner_multiplier(state)
     try:
         sud = int(asset.get("sabotage_until_day", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_371:
+        log_swallowed_exception('engine/systems/property.py:371', _omni_sw_371)
         sud = 0
     if sud >= day:
         try:
             fac = float(asset.get("sabotage_income_factor", 0.5) or 0.5)
-        except Exception:
+        except Exception as _omni_sw_376:
+            log_swallowed_exception('engine/systems/property.py:376', _omni_sw_376)
             fac = 0.5
         daily *= max(0.08, min(1.0, fac))
     return int(max(0, daily))
@@ -385,7 +399,8 @@ def clear_expired_sabotage(state: dict[str, Any], day: int) -> None:
             continue
         try:
             sud = int(raw.get("sabotage_until_day", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_388:
+            log_swallowed_exception('engine/systems/property.py:388', _omni_sw_388)
             sud = 0
         if day > sud:
             raw["sabotage_until_day"] = 0
@@ -406,7 +421,8 @@ def sabotage_assets_in_city(
     meta = state.get("meta", {}) or {}
     try:
         day = int(meta.get("day", 1) or 1)
-    except Exception:
+    except Exception as _omni_sw_409:
+        log_swallowed_exception('engine/systems/property.py:409', _omni_sw_409)
         day = 1
     until = day + max(1, int(extra_days))
     n = 0
@@ -429,7 +445,8 @@ def process_property_daily_economy(state: dict[str, Any]) -> None:
     meta = state.get("meta", {}) or {}
     try:
         day = int(meta.get("day", 1) or 1)
-    except Exception:
+    except Exception as _omni_sw_432:
+        log_swallowed_exception('engine/systems/property.py:432', _omni_sw_432)
         day = 1
     clear_expired_sabotage(state, day)
     eco = state.setdefault("economy", {})
@@ -443,7 +460,8 @@ def process_property_daily_economy(state: dict[str, Any]) -> None:
         if bool(raw.get("rental")) and kind == "apartment":
             try:
                 rd = int(raw.get("rent_daily_usd", 0) or 0)
-            except Exception:
+            except Exception as _omni_sw_446:
+                log_swallowed_exception('engine/systems/property.py:446', _omni_sw_446)
                 rd = 0
             rd = max(0, rd)
             mult = float(raw.get("sabotage_maintenance_mult", 1.0) or 1.0)
@@ -451,7 +469,8 @@ def process_property_daily_economy(state: dict[str, Any]) -> None:
         elif kind in _ASSET_KINDS and not bool(raw.get("rental")):
             try:
                 base_m = int(raw.get("maintenance_daily_usd", 0) or 0)
-            except Exception:
+            except Exception as _omni_sw_454:
+                log_swallowed_exception('engine/systems/property.py:454', _omni_sw_454)
                 base_m = 0
             mult = float(raw.get("sabotage_maintenance_mult", 1.0) or 1.0)
             cost = int(max(0, base_m) * max(1.0, mult))
@@ -498,8 +517,6 @@ def fmt_property_engine_brief(state: dict[str, Any]) -> str:
 
 
 def buy_vehicle_city_priced(state: dict[str, Any], vehicle_id: str) -> dict[str, Any]:
-    from engine.systems.vehicles import buy_vehicle
-
     loc = str((state.get("player", {}) or {}).get("location", "") or "").strip().lower()
     if not loc:
         return {"ok": False, "reason": "no_location"}

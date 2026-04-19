@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-from typing import Any
 import hashlib
+from typing import Any
+
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.world.atlas import ensure_location_profile
+from engine.world.districts import get_district
 
 
 def _here_key(state: dict[str, Any]) -> str:
@@ -69,7 +73,8 @@ def _stash_hot_items(state: dict[str, Any], *, loc: str) -> list[str]:
     for aid, n in list(stash_ammo.items())[:200]:
         try:
             nn = int(n or 0)
-        except Exception:
+        except Exception as _omni_sw_72:
+            log_swallowed_exception('engine/systems/safehouse_raid.py:72', _omni_sw_72)
             nn = 0
         if nn <= 0:
             continue
@@ -160,7 +165,8 @@ def maybe_schedule_safehouse_raid(state: dict[str, Any]) -> None:
     day = int(meta.get("day", 1) or 1)
     try:
         cd = int(row.get("raid_cooldown_until_day", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_163:
+        log_swallowed_exception('engine/systems/safehouse_raid.py:163', _omni_sw_163)
         cd = 0
     if cd and day <= cd:
         return
@@ -180,16 +186,13 @@ def maybe_schedule_safehouse_raid(state: dict[str, Any]) -> None:
     law = "standard"
     corruption = "medium"
     try:
-        from engine.world.atlas import ensure_location_profile
-
         prof = ensure_location_profile(state, loc)
         if isinstance(prof, dict):
             country = str(prof.get("country", "") or "").strip().lower()
             law = str(prof.get("law_level", law) or law).lower()
             corruption = str(prof.get("corruption", corruption) or corruption).lower()
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_190:
+        log_swallowed_exception('engine/systems/safehouse_raid.py:190', _omni_sw_190)
     sec = int(row.get("security_level", 1) or 1)
     delin = int(row.get("delinquent_days", 0) or 0)
     has_permit = _has_weapon_permit(state)
@@ -215,15 +218,12 @@ def maybe_schedule_safehouse_raid(state: dict[str, Any]) -> None:
         p = state.get("player", {}) or {}
         did0 = str(p.get("district", "") or "").strip().lower()
         if did0:
-            from engine.world.districts import get_district
-
             d0 = get_district(state, loc, did0)
             if isinstance(d0, dict):
                 pp = int(d0.get("police_presence", 0) or 0)
                 chance += 3 if pp == 3 else 6 if pp >= 4 else 0
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_224:
+        log_swallowed_exception('engine/systems/safehouse_raid.py:224', _omni_sw_224)
     # Law & delinquency.
     if law in ("strict", "militarized"):
         chance += 6

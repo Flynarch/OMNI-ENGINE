@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
 
 
@@ -31,7 +32,8 @@ def sync_faction_statuses_from_trace(state: dict[str, Any]) -> None:
     trace = state.get("trace", {}) or {}
     try:
         pct = int(trace.get("trace_pct", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_34:
+        log_swallowed_exception('engine/core/factions.py:34', _omni_sw_34)
         pct = 0
     attention = _trace_to_attention(pct)
     statuses = state["world"]["faction_statuses"]

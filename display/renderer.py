@@ -10,7 +10,18 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from engine.core.character_stats import ensure_player_character_stats
+from engine.core.feed_prune import world_note_plain
+from engine.core.trace import get_trace_tier
+from engine.npc.relationship import get_top_relationships
+from engine.social.suspicion_ui import get_heat_brief, get_suspicion_brief
 from engine.systems.combat import get_active_weapon
+from engine.systems.occupation import career_daily_salary_usd, career_title_for_level, ensure_career
+from engine.systems.property import ensure_player_assets, list_asset_entries
+from engine.systems.smartphone import ensure_smartphone
+from engine.world.atlas import ensure_location_profile, fmt_profile_short
+from engine.world.districts import district_heat_snapshot, district_neighbor_ids, get_current_district, get_district
+from engine.world.faction_report import build_faction_macro_report
 
 console = Console()
 
@@ -296,8 +307,6 @@ def _compact_hook_text(state: dict[str, Any], *, max_len: int = 72) -> str:
 def _fmt_character_stats_line(state: dict[str, Any]) -> str:
     """W2-6 HUD: one-line seven core stats (abbrev)."""
     try:
-        from engine.core.character_stats import ensure_player_character_stats
-
         cs = ensure_player_character_stats(state)
     except Exception:
         return "C50 A50 S50 I50 P50 L50 W50"
@@ -388,8 +397,6 @@ def _build_compact_monitor_vm(state: dict[str, Any]) -> dict[str, Any]:
     rep_emoji = "🏆" if rep_top_val >= 80 else "⭐" if rep_top_val >= 65 else "•"
     rel_summary = "-"
     try:
-        from engine.npc.relationship import get_top_relationships
-
         top_rels = get_top_relationships(state, limit=3)
         chunks: list[str] = []
         for nm, rel in top_rels:
@@ -407,8 +414,6 @@ def _build_compact_monitor_vm(state: dict[str, Any]) -> dict[str, Any]:
         energy_label = "Rested"
         energy_emoji = "💪"
     try:
-        from engine.core.trace import get_trace_tier
-
         _tier = get_trace_tier(state)
         trace_pct = int(_tier.get("trace_pct", 0) or 0)
         tier_lbl = str(_tier.get("tier_id", "Ghost") or "Ghost")
@@ -417,8 +422,6 @@ def _build_compact_monitor_vm(state: dict[str, Any]) -> dict[str, Any]:
         tier_lbl = str(tr.get("trace_status", "Ghost") or "Ghost")
     career_hud = ""
     try:
-        from engine.systems.occupation import career_daily_salary_usd, career_title_for_level, ensure_career
-
         ensure_career(state)
         c = (state.get("player", {}) or {}).get("career", {}) or {}
         if isinstance(c, dict):
@@ -439,8 +442,6 @@ def _build_compact_monitor_vm(state: dict[str, Any]) -> dict[str, Any]:
         career_hud = ""
     property_hud = ""
     try:
-        from engine.systems.property import ensure_player_assets, list_asset_entries
-
         ensure_player_assets(state)
         ent = list_asset_entries(state)
         if ent:
@@ -457,8 +458,6 @@ def _build_compact_monitor_vm(state: dict[str, Any]) -> dict[str, Any]:
         property_hud = ""
     smartphone_hud = ""
     try:
-        from engine.systems.smartphone import ensure_smartphone
-
         sp = ensure_smartphone(state)
         on = bool(sp.get("phone_on", True))
         num = str(sp.get("number", "") or "").strip()
@@ -501,8 +500,6 @@ def _build_full_monitor_vm(state: dict[str, Any]) -> dict[str, Any]:
     turn = int(meta.get("turn", 0) or 0)
     seed = meta.get("seed_pack") or "-"
     try:
-        from engine.core.trace import get_trace_tier
-
         _tier = get_trace_tier(state)
         trace_pct = int(_tier.get("trace_pct", 0) or 0)
         tier_lbl = str(_tier.get("tier_id", "Ghost") or "Ghost")
@@ -666,8 +663,6 @@ def _render_monitor_full(state: dict[str, Any]) -> None:
     bp = bio.get("bp_state", "Stable")
     bp_style = {"Stable": "green", "Low": "yellow", "Critical": "red", "Flatline": "bright_red"}.get(bp, "white")
     try:
-        from engine.core.trace import get_trace_tier
-
         _tier_f = get_trace_tier(state)
         trace_pct_ui = int(_tier_f.get("trace_pct", 0) or 0)
         tier_lbl_f = str(_tier_f.get("tier_id", "Ghost") or "Ghost")
@@ -714,8 +709,6 @@ def _render_monitor_full(state: dict[str, Any]) -> None:
             left.append(f"SimYear: {sy}\n", style="dim")
     # Location profile summary (culture/econ background).
     try:
-        from engine.world.atlas import ensure_location_profile, fmt_profile_short
-
         loc_s = str(player.get("location", "") or "").strip()
         if loc_s:
             prof = ensure_location_profile(state, loc_s)
@@ -751,8 +744,6 @@ def _render_monitor_full(state: dict[str, Any]) -> None:
     left.append(f"[CONDITION] Gigs: {gigs_done}/2 | Hack Penalty: -{penalty}%\n", style=cond_style)
     # Local investigation pressure (Heat/Suspicion) — label + a few reasons only.
     try:
-        from engine.social.suspicion_ui import get_heat_brief, get_suspicion_brief
-
         hb = get_heat_brief(state)
         sb = get_suspicion_brief(state)
         if isinstance(hb, dict):
@@ -1187,7 +1178,7 @@ def _render_monitor_full(state: dict[str, Any]) -> None:
         right_prefix.append("WorldNotes:\n", style="bold")
         tail = notes[-2:]
         for n in tail:
-            s = str(n)
+            s = world_note_plain(n)
             if len(s) > 140:
                 s = s[:137] + "..."
             right_prefix.append(f"- {s}\n", style="dim")
@@ -1387,8 +1378,6 @@ def render_monitor(state: dict[str, Any]) -> None:
 def render_district_map_lite(state: dict[str, Any]) -> None:
     """W2-4: current district, ring neighbors, heat markers (Rich)."""
     try:
-        from engine.world.districts import district_heat_snapshot, district_neighbor_ids, get_district, get_current_district
-
         p = state.get("player", {}) or {}
         city = str(p.get("location", "") or "").strip().lower()
         did = str(p.get("district", "") or "").strip().lower()
@@ -1426,8 +1415,6 @@ def render_district_map_lite(state: dict[str, Any]) -> None:
 
 def render_faction_report(state: dict[str, Any], *, full: bool = False) -> None:
     """W2-1: deterministic macro faction summary (compact or full)."""
-    from engine.world.faction_report import build_faction_macro_report
-
     pkg = build_faction_macro_report(state, full=full)
     title = "FACTION REPORT (full)" if full else "FACTION REPORT"
     rows: list[list[str]] = []

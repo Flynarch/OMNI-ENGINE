@@ -4,6 +4,11 @@ import hashlib
 import random
 from typing import Any
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.core.factions import sync_faction_statuses_from_trace
+from engine.social.news import push_news
+from engine.social.ripple_queue import enqueue_ripple
+
 
 def _hash_to_seed(text: str) -> int:
     h = hashlib.md5(text.encode("utf-8", errors="ignore")).hexdigest()
@@ -134,15 +139,18 @@ def decay_hacking_heat(state: dict[str, Any]) -> None:
             continue
         try:
             heat = int(row.get("heat", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_137:
+            log_swallowed_exception('engine/systems/hacking.py:137', _omni_sw_137)
             heat = 0
         try:
             signal = int(row.get("signal", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_141:
+            log_swallowed_exception('engine/systems/hacking.py:141', _omni_sw_141)
             signal = 0
         try:
             noise = int(row.get("noise", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_145:
+            log_swallowed_exception('engine/systems/hacking.py:145', _omni_sw_145)
             noise = 0
         # Cooldown curve: decays faster when low, slower when very high.
         dec = 18 if heat <= 40 else 12 if heat <= 75 else 8
@@ -201,7 +209,8 @@ def _roll_to_grade(roll_pkg: dict[str, Any], *, bonus_margin: int = 0) -> str:
         try:
             roll = int(roll_pkg.get("roll", 0) or 0)
             thr = int(roll_pkg.get("net_threshold", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_204:
+            log_swallowed_exception('engine/systems/hacking.py:204', _omni_sw_204)
             return "failure"
         margin = 10 + max(0, int(bonus_margin))
         if roll > thr and roll <= (thr + margin):
@@ -232,15 +241,11 @@ def _is_cover_tracks(normalized: str) -> bool:
 
 def _push_news(state: dict[str, Any], *, text: str, source: str) -> None:
     """Append a bounded headline into world.news_feed."""
-    from engine.social.news import push_news
-
     push_news(state, text=text, source=source)
 
 
 def _enqueue_ripple(state: dict[str, Any], rp: dict[str, Any]) -> None:
     """Add a ripple to active_ripples with shared dedup semantics."""
-    from engine.social.ripple_queue import enqueue_ripple
-
     enqueue_ripple(state, rp)
 
 
@@ -323,7 +328,8 @@ def apply_hacking_after_roll(
     row = hh.setdefault(hk, {"heat": 0})
     try:
         heat = int((row or {}).get("heat", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_326:
+        log_swallowed_exception('engine/systems/hacking.py:326', _omni_sw_326)
         heat = 0
 
     # Skill/gear can widen "partial success" band a bit.
@@ -334,7 +340,8 @@ def apply_hacking_after_roll(
             hack_skill = int(sk.get("current", sk.get("base", 10)) or 0)
         else:
             hack_skill = int(sk or 0)
-    except Exception:
+    except Exception as _omni_sw_337:
+        log_swallowed_exception('engine/systems/hacking.py:337', _omni_sw_337)
         hack_skill = 0
     bonus_margin = min(12, max(0, hack_skill // 10) + (3 if exploit_tool else 0))
     grade = _roll_to_grade(roll_pkg, bonus_margin=bonus_margin)
@@ -353,11 +360,13 @@ def apply_hacking_after_roll(
     # Use noise component if present, otherwise fallback to heat.
     try:
         noise_level = int((row or {}).get("noise", heat) or heat)
-    except Exception:
+    except Exception as _omni_sw_356:
+        log_swallowed_exception('engine/systems/hacking.py:356', _omni_sw_356)
         noise_level = heat
     try:
         signal_level = int((row or {}).get("signal", heat // 2) or (heat // 2))
-    except Exception:
+    except Exception as _omni_sw_360:
+        log_swallowed_exception('engine/systems/hacking.py:360', _omni_sw_360)
         signal_level = heat // 2
 
     heat_trace_boost = 1.0 + min(0.60, noise_level / 180.0)  # up to +60%
@@ -425,9 +434,8 @@ def apply_hacking_after_roll(
                         state.setdefault("world_notes", []).append(
                             f"[Cyber] alert level={ca['level']} @ {loc}" + (f" district={did}" if did else "")
                         )
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_428:
+        log_swallowed_exception('engine/systems/hacking.py:428', _omni_sw_428)
     # Cover tracks mode: convert the hacking action into trace/heat cleanup.
     # Does not change sim clock or scheduling; just changes the effect of this hacking turn.
     if cover_tracks:
@@ -482,8 +490,8 @@ def apply_hacking_after_roll(
                 },
             )
             _push_news(state, text=txt.replace("[Hack] ", ""), source=prop)
-        except Exception:
-            pass
+        except Exception as _omni_sw_485:
+            log_swallowed_exception('engine/systems/hacking.py:485', _omni_sw_485)
         return
 
     # Conflict model v1:
@@ -569,17 +577,15 @@ def apply_hacking_after_roll(
         for f in ("corporate", "police", "black_market"):
             try:
                 factions[f][k] = max(0, min(100, int(factions[f].get(k, 50))))
-            except Exception:
+            except Exception as _omni_sw_572:
+                log_swallowed_exception('engine/systems/hacking.py:572', _omni_sw_572)
                 factions[f][k] = 50
 
     # Sync faction attention from trace pressure.
     try:
-        from engine.core.factions import sync_faction_statuses_from_trace
-
         sync_faction_statuses_from_trace(state)
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_580:
+        log_swallowed_exception('engine/systems/hacking.py:580', _omni_sw_580)
     # Structured ripple: information + small aftershock (avoid double-counting the main hack deltas above).
     try:
         meta = state.get("meta", {}) or {}
@@ -631,6 +637,5 @@ def apply_hacking_after_roll(
             },
         )
         _push_news(state, text=txt.replace("[Hack] ", ""), source=propagation)
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_634:
+        log_swallowed_exception('engine/systems/hacking.py:634', _omni_sw_634)

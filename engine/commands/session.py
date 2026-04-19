@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any, Callable
 import json
 import os
@@ -29,7 +30,8 @@ def handle_session(
                 state.clear()
                 state.update(restored)
                 console.print("[green]UNDO: restored previous turn.[/green]")
-            except Exception:
+            except Exception as _omni_sw_32:
+                log_swallowed_exception('engine/commands/session.py:32', _omni_sw_32)
                 console.print("[red]UNDO gagal: previous.json tidak bisa dibaca.[/red]")
         else:
             console.print("[yellow]UNDO tidak tersedia (previous.json belum ada).[/yellow]")
@@ -61,7 +63,8 @@ def handle_session(
             for chunk in stream_response(build_system_prompt(state), turn_package):
                 stream_render(chunk)
             console.print()
-        except Exception:
+        except Exception as _omni_sw_64:
+            log_swallowed_exception('engine/commands/session.py:64', _omni_sw_64)
             console.print("[red]// SIGNAL LOST //[/red]")
         return True
     if up == "LANG" or up.startswith("LANG "):

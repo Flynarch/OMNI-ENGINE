@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 import json
 from pathlib import Path
 from typing import Any
@@ -41,7 +42,8 @@ def apply_seed_pack(state: dict[str, Any], pack_name: str | None) -> bool:
         return False
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as _omni_sw_44:
+        log_swallowed_exception('engine/core/seeds.py:44', _omni_sw_44)
         return False
     if not isinstance(raw, dict):
         return False

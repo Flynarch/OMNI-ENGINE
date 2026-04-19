@@ -2,20 +2,29 @@ from __future__ import annotations
 
 from typing import Any
 
+from engine.core.domain_plugins import run_post_roll_plugin, run_pre_roll_plugin
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.core.errors import record_error
 from engine.core.ffci import apply_custom_intent_consequences
 from engine.core.modifiers import compute_roll_package, stop_sequence_check
 from engine.core.trace import update_trace
 from engine.npc.npc_emotions import apply_npc_emotion_after_roll
+from engine.npc.npc_rumor_system import trigger_rumor_from_action
 from engine.npc.npcs import update_npcs
 from engine.player.bio import update_bio
 from engine.player.economy import update_economy
 from engine.player.inventory import update_inventory
 from engine.player.inventory_ops import apply_inventory_ops
-from engine.player.skills import update_skills
+from engine.player.skills import apply_skill_xp_after_roll, update_skills
+from engine.social.police_check import maybe_schedule_weapon_check
+from engine.social.social_diffusion import apply_social_decays
 from engine.systems.combat import apply_combat_gates, resolve_combat_after_roll
 from engine.systems.hacking import apply_hacking_after_roll
 from engine.systems.intimacy import apply_intimacy_aftermath
+from engine.systems.smartphone import apply_smartphone_pipeline
+from engine.world.districts import _h32, get_current_district, get_district
 from engine.world.timers import update_timers
+from engine.world.weather import travel_minutes_modifier
 from engine.world.world import world_tick
 
 
@@ -26,8 +35,6 @@ def _is_travelto_ctx(action_ctx: dict[str, Any]) -> bool:
 
 
 def _roll_travelto(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[str, Any]:
-    from engine.world.districts import get_current_district, get_district
-
     player = state.get("player", {}) or {}
     city = str(player.get("location", "") or "").strip().lower()
     target = str(action_ctx.get("travel_target_district", "") or "").strip().lower()
@@ -48,13 +55,12 @@ def _roll_travelto(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[st
 
     try:
         dist_diff = abs(int(current.get("travel_time_from_center", 0) or 0) - int(to.get("travel_time_from_center", 0) or 0))
-    except Exception:
+    except Exception as _omni_sw_51:
+        log_swallowed_exception('engine/core/pipeline.py:51', _omni_sw_51)
         dist_diff = 0
     travel_minutes = max(5, dist_diff * 2)
 
     try:
-        from engine.world.weather import travel_minutes_modifier
-
         meta = state.get("meta", {}) or {}
         day = int(meta.get("day", 1) or 1)
         weather_slot = (state.get("world", {}).get("locations", {}) or {}).get(city) or {}
@@ -62,9 +68,8 @@ def _roll_travelto(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[st
         weather_kind = str(weather.get("kind", "clear") or "clear")
         travel_minutes += int(travel_minutes_modifier(weather_kind) or 0)
         _ = day
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_65:
+        log_swallowed_exception('engine/core/pipeline.py:65', _omni_sw_65)
     return {
         "ok": True,
         "from": cur_id,
@@ -99,8 +104,6 @@ def _post_travelto(state: dict[str, Any], action_ctx: dict[str, Any], travel_pkg
 
     encounter = None
     try:
-        from engine.world.districts import get_district, get_current_district, _h32
-
         current = get_current_district(state) or {}
         target_row = get_district(state, city, target) or {}
         crime_risk = int(travel_pkg.get("crime_risk", 3) or 3)
@@ -115,9 +118,8 @@ def _post_travelto(state: dict[str, Any], action_ctx: dict[str, Any], travel_pkg
                 lvl = int(ca.get("level", 0) or 0)
                 if lvl >= 60 and tech_level in ("high", "cutting_edge"):
                     police_presence = min(5, police_presence + 1)
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_118:
+            log_swallowed_exception('engine/core/pipeline.py:118', _omni_sw_118)
         meta = state.get("meta", {}) or {}
         seed = str(meta.get("seed_pack", "") or "")
         turn = int(meta.get("turn", 0) or 0)
@@ -131,20 +133,19 @@ def _post_travelto(state: dict[str, Any], action_ctx: dict[str, Any], travel_pkg
         elif roll > 95 - police_presence * 3:
             encounter = {"type": "police", "presence": police_presence}
             try:
-                from engine.social.police_check import maybe_schedule_weapon_check
-
                 maybe_schedule_weapon_check(state)
-            except Exception:
-                pass
+            except Exception as _omni_sw_137:
+                log_swallowed_exception('engine/core/pipeline.py:137', _omni_sw_137)
             try:
                 slot = ((state.get("world", {}) or {}).get("locations", {}) or {}).get(city) or {}
                 ca = slot.get("cyber_alert") if isinstance(slot, dict) else None
                 if isinstance(ca, dict) and int(ca.get("level", 0) or 0) >= 60 and tech_level in ("high", "cutting_edge"):
                     state.setdefault("world_notes", []).append("[Cyber] checkpoint: device checks intensified in this district.")
-            except Exception:
-                pass
+            except Exception as _omni_sw_144:
+                log_swallowed_exception('engine/core/pipeline.py:144', _omni_sw_144)
         _ = current
-    except Exception:
+    except Exception as _omni_sw_147:
+        log_swallowed_exception('engine/core/pipeline.py:147', _omni_sw_147)
         encounter = None
 
     # Unify subsystem updates through centralized flow (no manual command-level update_* calls).
@@ -190,17 +191,13 @@ def run_pipeline(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[str,
 def _pipeline_pre_roll(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
     """Pre-roll mutation stages. Keep ordering stable for deterministic behavior."""
     try:
-        from engine.core.domain_plugins import run_pre_roll_plugin
-
         run_pre_roll_plugin(state, action_ctx)
-    except Exception:
-        pass
+    except Exception as _omni_sw_196:
+        log_swallowed_exception('engine/core/pipeline.py:196', _omni_sw_196)
     try:
-        from engine.systems.smartphone import apply_smartphone_pipeline
-
         apply_smartphone_pipeline(state, action_ctx)
-    except Exception:
-        pass
+    except Exception as _omni_sw_202:
+        log_swallowed_exception('engine/core/pipeline.py:202', _omni_sw_202)
     world_tick(state, action_ctx)
     apply_inventory_ops(state, action_ctx)
     update_timers(state, action_ctx)
@@ -220,42 +217,30 @@ def _pipeline_roll(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[st
 def _pipeline_post_roll(state: dict[str, Any], action_ctx: dict[str, Any], roll_pkg: dict[str, Any]) -> None:
     # Skill progression happens after roll resolution (deterministic).
     try:
-        from engine.player.skills import apply_skill_xp_after_roll
-
         apply_skill_xp_after_roll(state, action_ctx, roll_pkg)
     except Exception as e:
+        log_swallowed_exception('engine/core/pipeline.py:226', e)
         try:
-            from engine.core.errors import record_error
-
             record_error(state, "pipeline.post_roll.skill_xp", e)
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_231:
+            log_swallowed_exception('engine/core/pipeline.py:231', _omni_sw_231)
     apply_hacking_after_roll(state, action_ctx, roll_pkg)
     apply_npc_emotion_after_roll(state, action_ctx, roll_pkg)
     apply_intimacy_aftermath(state, action_ctx, roll_pkg)
     # Social diffusion: gossip about player spreads through NPC network.
     try:
-        from engine.npc.npc_rumor_system import trigger_rumor_from_action
-
         trigger_rumor_from_action(state, action_ctx, roll_pkg)
-        from engine.social.social_diffusion import apply_social_decays
-
         apply_social_decays(state)
     except Exception as e:
+        log_swallowed_exception('engine/core/pipeline.py:245', e)
         try:
-            from engine.core.errors import record_error
-
             record_error(state, "pipeline.post_roll.social_diffusion", e)
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_250:
+            log_swallowed_exception('engine/core/pipeline.py:250', _omni_sw_250)
     resolve_combat_after_roll(state, action_ctx, roll_pkg)
     apply_custom_intent_consequences(state, action_ctx, roll_pkg)
     try:
-        from engine.core.domain_plugins import run_post_roll_plugin
-
         run_post_roll_plugin(state, action_ctx, roll_pkg)
-    except Exception:
-        pass
+    except Exception as _omni_sw_259:
+        log_swallowed_exception('engine/core/pipeline.py:259', _omni_sw_259)
     stop_sequence_check(state, action_ctx)

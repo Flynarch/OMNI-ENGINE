@@ -2,33 +2,45 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from display.renderer import render_district_map_lite
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.systems.judicial import block_travel_if_incarcerated, ensure_judicial, fmt_judicial_brief
+from engine.systems.vehicles import (
+    VEHICLE_TYPES,
+    buy_vehicle,
+    list_owned_vehicles,
+    refuel_vehicle,
+    repair_vehicle,
+    sell_vehicle,
+    set_active_vehicle,
+    steal_vehicle,
+)
+from engine.world.atlas import ensure_location_profile, fmt_profile_short
+from engine.world.districts import describe_location, list_districts
+
 
 def handle_mobility(state: dict[str, Any], cmd: str, *, console: Any, run_pipeline: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]) -> bool:
     up = cmd.upper()
     if up == "MAP":
         try:
-            from display.renderer import render_district_map_lite
-
             render_district_map_lite(state)
-        except Exception:
+        except Exception as _omni_sw_13:
+            log_swallowed_exception('engine/commands/mobility.py:13', _omni_sw_13)
             console.print("[red]MAP error.[/red]")
         return True
     if up == "JUDICIAL" or up == "JUDICIAL STATUS":
         try:
-            from engine.systems.judicial import ensure_judicial, fmt_judicial_brief
-
             ensure_judicial(state)
             console.print(f"[bold]{fmt_judicial_brief(state)}[/bold]")
             j = state.get("judicial", {}) or {}
             if isinstance(j, dict) and str(j.get("phase", "free") or "") != "free":
                 console.print(f"[dim]release_day={j.get('release_day','-')} seized_items={len(j.get('seized_bag_snapshot') or []) if isinstance(j.get('seized_bag_snapshot'), list) else 0}[/dim]")
-        except Exception:
+        except Exception as _omni_sw_25:
+            log_swallowed_exception('engine/commands/mobility.py:25', _omni_sw_25)
             console.print("[red]JUDICIAL error.[/red]")
         return True
     if up == "DISTRICTS" or up == "DISTRICT":
         try:
-            from engine.world.districts import describe_location, list_districts
-
             loc = str((state.get("player", {}) or {}).get("location", "") or "").strip()
             if not loc:
                 console.print("[yellow]DISTRICTS: No current location.[/yellow]")
@@ -47,13 +59,12 @@ def handle_mobility(state: dict[str, Any], cmd: str, *, console: Any, run_pipeli
                 services = d.get("services", [])
                 console.print(f"  Services: {', '.join(services) if services else 'none'}")
                 console.print(f"  Crime={d.get('crime_risk',3)}/5 Police={d.get('police_presence',3)}/5")
-        except Exception:
+        except Exception as _omni_sw_50:
+            log_swallowed_exception('engine/commands/mobility.py:50', _omni_sw_50)
             console.print("[red]DISTRICTS error.[/red]")
         return True
     if up == "MYCAR" or up == "MYVEHICLE" or up == "VEHICLES":
         try:
-            from engine.systems.vehicles import list_owned_vehicles
-
             vehicles = list_owned_vehicles(state)
             console.print("[bold]VEHICLES[/bold]")
             if not vehicles:
@@ -67,13 +78,12 @@ def handle_mobility(state: dict[str, Any], cmd: str, *, console: Any, run_pipeli
                 cond = v.get("condition", 100)
                 cond_color = "green" if cond > 70 else ("yellow" if cond > 30 else "red")
                 console.print(f"- {v.get('name','?')} {fuel_status} cond=[{cond_color}]{cond}[/{cond_color}]{stolen}")
-        except Exception:
+        except Exception as _omni_sw_70:
+            log_swallowed_exception('engine/commands/mobility.py:70', _omni_sw_70)
             console.print("[red]MYCAR error.[/red]")
         return True
     if up == "BUYVEHICLE" or up.startswith("BUYVEHICLE "):
         try:
-            from engine.systems.vehicles import buy_vehicle
-
             parts = cmd.split(maxsplit=2)
             if len(parts) < 2:
                 console.print("[yellow]Usage: BUYVEHICLE <type>[/yellow]")
@@ -88,13 +98,12 @@ def handle_mobility(state: dict[str, Any], cmd: str, *, console: Any, run_pipeli
                     console.print(f"[yellow]Need: {result.get('need')} | Have: {result.get('cash')}[/yellow]")
             else:
                 console.print(f"[green]BUYVEHICLE OK[/green] {result.get('name')} for {result.get('price')} cash. Remaining: {result.get('cash_remaining')}")
-        except Exception:
+        except Exception as _omni_sw_91:
+            log_swallowed_exception('engine/commands/mobility.py:91', _omni_sw_91)
             console.print("[red]BUYVEHICLE error.[/red]")
         return True
     if up == "SELLVEHICLE" or up.startswith("SELLVEHICLE "):
         try:
-            from engine.systems.vehicles import sell_vehicle
-
             parts = cmd.split(maxsplit=2)
             if len(parts) < 2:
                 console.print("[yellow]Usage: SELLVEHICLE <type>[/yellow]")
@@ -105,13 +114,12 @@ def handle_mobility(state: dict[str, Any], cmd: str, *, console: Any, run_pipeli
                 console.print(f"[red]SELLVEHICLE failed: {result.get('reason','error')}[/red]")
             else:
                 console.print(f"[green]SELLVEHICLE OK[/green] Sold for {result.get('price')}. Cash: {result.get('cash')}")
-        except Exception:
+        except Exception as _omni_sw_108:
+            log_swallowed_exception('engine/commands/mobility.py:108', _omni_sw_108)
             console.print("[red]SELLVEHICLE error.[/red]")
         return True
     if up == "REFUEL" or up.startswith("REFUEL "):
         try:
-            from engine.systems.vehicles import refuel_vehicle
-
             parts = cmd.split(maxsplit=3)
             if len(parts) < 2:
                 console.print("[yellow]Usage: REFUEL <type> [amount][/yellow]")
@@ -123,13 +131,12 @@ def handle_mobility(state: dict[str, Any], cmd: str, *, console: Any, run_pipeli
                 console.print(f"[red]REFUEL failed: {result.get('reason','error')}[/red]")
             else:
                 console.print(f"[green]REFUEL OK[/green] +{result.get('fuel_added')} fuel. Now: {result.get('fuel_now')}. Cost: {result.get('cost')}")
-        except Exception:
+        except Exception as _omni_sw_126:
+            log_swallowed_exception('engine/commands/mobility.py:126', _omni_sw_126)
             console.print("[red]REFUEL error.[/red]")
         return True
     if up == "REPAIR" or up.startswith("REPAIR "):
         try:
-            from engine.systems.vehicles import repair_vehicle
-
             parts = cmd.split(maxsplit=3)
             if len(parts) < 2:
                 console.print("[yellow]Usage: REPAIR <type> [amount][/yellow]")
@@ -141,13 +148,12 @@ def handle_mobility(state: dict[str, Any], cmd: str, *, console: Any, run_pipeli
                 console.print(f"[red]REPAIR failed: {result.get('reason','error')}[/red]")
             else:
                 console.print(f"[green]REPAIR OK[/green] +{result.get('repaired')} condition. Now: {result.get('condition_now')}%. Cost: {result.get('cost')}")
-        except Exception:
+        except Exception as _omni_sw_144:
+            log_swallowed_exception('engine/commands/mobility.py:144', _omni_sw_144)
             console.print("[red]REPAIR error.[/red]")
         return True
     if up == "STEALVEHICLE" or up.startswith("STEALVEHICLE "):
         try:
-            from engine.systems.vehicles import steal_vehicle
-
             parts = cmd.split(maxsplit=2)
             if len(parts) < 2:
                 console.print("[yellow]Usage: STEALVEHICLE <type>[/yellow]")
@@ -163,13 +169,12 @@ def handle_mobility(state: dict[str, Any], cmd: str, *, console: Any, run_pipeli
                     console.print(f"[red]STEALVEHICLE failed: {result.get('reason','error')}[/red]")
             else:
                 console.print(f"[green]STEALVEHICLE OK[/green] Stole {result.get('name')}! Condition: {result.get('condition')}%")
-        except Exception:
+        except Exception as _omni_sw_166:
+            log_swallowed_exception('engine/commands/mobility.py:166', _omni_sw_166)
             console.print("[red]STEALVEHICLE error.[/red]")
         return True
     if up == "USEVEHICLE" or up.startswith("USEVEHICLE "):
         try:
-            from engine.systems.vehicles import set_active_vehicle
-
             parts = cmd.split(maxsplit=2)
             if len(parts) < 2:
                 console.print("[yellow]Usage: USEVEHICLE <type>|OFF[/yellow]")
@@ -184,13 +189,12 @@ def handle_mobility(state: dict[str, Any], cmd: str, *, console: Any, run_pipeli
                 console.print(f"[green]Active vehicle set:[/green] {av}")
             else:
                 console.print(f"[red]USEVEHICLE failed:[/red] {r.get('reason','error')}")
-        except Exception:
+        except Exception as _omni_sw_187:
+            log_swallowed_exception('engine/commands/mobility.py:187', _omni_sw_187)
             console.print("[red]USEVEHICLE error.[/red]")
         return True
     if up == "DRIVE" or up.startswith("DRIVE "):
         try:
-            from engine.systems.judicial import block_travel_if_incarcerated
-
             bt = block_travel_if_incarcerated(state)
             if bt:
                 console.print(f"[yellow]{bt}[/yellow]")
@@ -206,13 +210,11 @@ def handle_mobility(state: dict[str, Any], cmd: str, *, console: Any, run_pipeli
             if len(toks) >= 2:
                 cand = toks[-1].strip().lower()
                 try:
-                    from engine.systems.vehicles import VEHICLE_TYPES
-
                     if cand in VEHICLE_TYPES:
                         vid = cand
                         dest = " ".join(toks[:-1]).strip()
-                except Exception:
-                    pass
+                except Exception as _omni_sw_214:
+                    log_swallowed_exception('engine/commands/mobility.py:214', _omni_sw_214)
             ctx: dict[str, Any] = {
                 "action_type": "travel",
                 "domain": "evasion",
@@ -225,13 +227,12 @@ def handle_mobility(state: dict[str, Any], cmd: str, *, console: Any, run_pipeli
                 ctx["vehicle_id"] = vid
             run_pipeline(state, ctx)
             console.print(f"[green]DRIVE queued.[/green] dest={dest}" + (f" vehicle={vid}" if vid else ""))
-        except Exception:
+        except Exception as _omni_sw_228:
+            log_swallowed_exception('engine/commands/mobility.py:228', _omni_sw_228)
             console.print("[red]DRIVE error.[/red]")
         return True
     if up == "TRAVELTO" or up.startswith("TRAVELTO "):
         try:
-            from engine.systems.judicial import block_travel_if_incarcerated
-
             bt = block_travel_if_incarcerated(state)
             if bt:
                 console.print(f"[yellow]{bt}[/yellow]")
@@ -264,7 +265,8 @@ def handle_mobility(state: dict[str, Any], cmd: str, *, console: Any, run_pipeli
                     console.print(f"[yellow]Warning: Crime risk {enc.get('risk')}/5 in this area![/yellow]")
                 elif enc.get("type") == "police":
                     console.print("[yellow]Warning: Heavy police presence in this area![/yellow]")
-        except Exception:
+        except Exception as _omni_sw_267:
+            log_swallowed_exception('engine/commands/mobility.py:267', _omni_sw_267)
             console.print("[red]TRAVELTO error.[/red]")
         return True
     if up == "WHEREAMI":
@@ -275,14 +277,12 @@ def handle_mobility(state: dict[str, Any], cmd: str, *, console: Any, run_pipeli
         console.print("[bold]WHEREAMI[/bold]")
         console.print(f"- loc={p.get('location','-')} year={p.get('year','-')} seed={state.get('meta',{}).get('seed_pack','-')}")
         try:
-            from engine.world.atlas import ensure_location_profile, fmt_profile_short
-
             loc = str(p.get("location", "") or "").strip()
             if loc:
                 prof = ensure_location_profile(state, loc)
                 console.print(f"- profile: {fmt_profile_short(prof)}")
-        except Exception:
-            pass
+        except Exception as _omni_sw_284:
+            log_swallowed_exception('engine/commands/mobility.py:284', _omni_sw_284)
         if known:
             console.print(f"- known_locations({len(known)}): " + ", ".join(known[:12]) + (" ..." if len(known) > 12 else ""))
         else:

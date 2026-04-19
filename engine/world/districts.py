@@ -8,6 +8,9 @@ This module provides:
 """
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.world.atlas import resolve_place
+from engine.world.weather import travel_minutes_modifier
 import hashlib
 from typing import Any
 
@@ -124,7 +127,6 @@ def ensure_city_districts(state: dict[str, Any], city: str, country: str | None 
     
     # Detect country if not provided
     if not country:
-        from engine.world.atlas import resolve_place
         country, _ = resolve_place(city)
         if not country:
             country = ""
@@ -216,7 +218,8 @@ def district_heat_snapshot(state: dict[str, Any], city: str, district_id: str) -
             continue
         try:
             best = max(best, int(row.get("level", 0) or 0))
-        except Exception:
+        except Exception as _omni_sw_219:
+            log_swallowed_exception('engine/world/districts.py:219', _omni_sw_219)
             continue
     return max(0, min(100, best))
 
@@ -280,7 +283,6 @@ def travel_within_city(state: dict[str, Any], target_district_id: str) -> dict[s
     
     # Weather affects travel time
     try:
-        from engine.world.weather import travel_minutes_modifier
         loc = str(state.get("player", {}).get("location", "") or "").strip().lower()
         meta = state.get("meta", {}) or {}
         day = int(meta.get("day", 1) or 1)
@@ -289,11 +291,9 @@ def travel_within_city(state: dict[str, Any], target_district_id: str) -> dict[s
         weather_kind = str(weather.get("kind", "clear") or "clear")
         weather_mod = travel_minutes_modifier(weather_kind)
         base_time += weather_mod
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_292:
+        log_swallowed_exception('engine/world/districts.py:292', _omni_sw_292)
     # Apply time to state (trace tier friction is applied inside update_timers for all travel).
-    from engine.world.timers import update_timers
     ctx = {
         "action_type": "travel",
         "domain": "evasion",
@@ -301,7 +301,10 @@ def travel_within_city(state: dict[str, Any], target_district_id: str) -> dict[s
         "travel_minutes": base_time,
         "stakes": "low",
     }
-    update_timers(state, ctx)
+    # Lazy: shop/timers can pull ``districts`` during their init — avoid cycle at module load.
+    import engine.world.timers as _timers_mod
+
+    _timers_mod.update_timers(state, ctx)
     
     # Update player location
     state["player"]["district"] = target_district_id
@@ -321,9 +324,8 @@ def travel_within_city(state: dict[str, Any], target_district_id: str) -> dict[s
             lvl = int(ca.get("level", 0) or 0)
             if lvl >= 60 and tech_level in ("high", "cutting_edge"):
                 police_presence = min(5, int(police_presence) + 1)
-    except Exception:
-        pass
-    
+    except Exception as _omni_sw_324:
+        log_swallowed_exception('engine/world/districts.py:324', _omni_sw_324)
     # Roll for random encounter during travel
     meta = state.get("meta", {}) or {}
     seed = str(meta.get("seed_pack", "") or "")
@@ -335,22 +337,22 @@ def travel_within_city(state: dict[str, Any], target_district_id: str) -> dict[s
         encounter = {"type": "crime", "risk": crime_risk}
         # Apply trace if caught in illegal area
         if target.get("id") in ("slums", "underside", "vice", "black_market"):
-            from engine.core.trace import update_trace
             trace_inc = crime_risk * 2
             try:
                 tr = state.setdefault("trace", {})
                 current_trace = int(tr.get("trace_pct", 0) or 0)
                 tr["trace_pct"] = min(100, current_trace + trace_inc)
-            except Exception:
-                pass
+            except Exception as _omni_sw_344:
+                log_swallowed_exception('engine/world/districts.py:344', _omni_sw_344)
     elif roll > 95 - police_presence * 3:  # Police encounter
         encounter = {"type": "police", "presence": police_presence}
-        # Check for illegal items
+        # Check for illegal items (lazy: ``police_check`` imports this module for ``get_district``).
         try:
             from engine.social.police_check import maybe_schedule_weapon_check
+
             maybe_schedule_weapon_check(state)
-        except Exception:
-            pass
+        except Exception as _omni_sw_352:
+            log_swallowed_exception('engine/world/districts.py:352', _omni_sw_352)
         # Cyber crackdown: police stops are more likely to check devices/IDs.
         try:
             loc_slot = (state.get("world", {}) or {}).get("locations", {}) or {}
@@ -358,9 +360,8 @@ def travel_within_city(state: dict[str, Any], target_district_id: str) -> dict[s
             ca = slot.get("cyber_alert") if isinstance(slot, dict) else None
             if isinstance(ca, dict) and int(ca.get("level", 0) or 0) >= 60 and tech_level in ("high", "cutting_edge"):
                 state.setdefault("world_notes", []).append("[Cyber] checkpoint: device checks intensified in this district.")
-        except Exception:
-            pass
-    
+        except Exception as _omni_sw_361:
+            log_swallowed_exception('engine/world/districts.py:361', _omni_sw_361)
     return {
         "ok": True,
         "from": current.get("id"),

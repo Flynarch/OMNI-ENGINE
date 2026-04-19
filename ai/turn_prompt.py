@@ -608,11 +608,13 @@ def _fmt_npcs(state: dict[str, Any]) -> str:
 
 
 def _fmt_world_notes(state: dict[str, Any]) -> str:
+    from engine.core.feed_prune import world_note_plain
+
     notes = state.get("world_notes") or []
     if not notes:
         return "(empty)"
     tail = notes[-6:] if isinstance(notes, list) else []
-    return "\n".join(f"- {n}" for n in tail)
+    return "\n".join(f"- {world_note_plain(n)}" for n in tail)
 
 
 def _fmt_economy_detail(state: dict[str, Any], lang: str) -> str:
@@ -626,10 +628,16 @@ def _fmt_economy_detail(state: dict[str, Any], lang: str) -> str:
 
 
 def _fmt_engine_recent_commerce(state: dict[str, Any], lang: str) -> str:
+    from engine.core.feed_prune import world_note_plain
+
     notes = state.get("world_notes") or []
     if not isinstance(notes, list):
         return ""
-    hits = [str(x) for x in notes[-14:] if isinstance(x, str) and ("[Shop]" in x or "[Bank]" in x or "[Stay]" in x)]
+    hits = [
+        t
+        for x in notes[-14:]
+        if (t := world_note_plain(x)) and ("[Shop]" in t or "[Bank]" in t or "[Stay]" in t)
+    ]
     if not hits:
         return ""
     tail = " | ".join(hits[-4:])

@@ -2,15 +2,16 @@ from __future__ import annotations
 
 from typing import Any
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.world.timers_bus import enqueue_ripple as _queue_ripple
+from engine.world.timers_bus import push_news as _push_news
+
 
 def handle_police_sweep(state: dict[str, Any], ev: dict[str, Any], *, day: int, time_min: int) -> bool:
     return True
 
 
 def handle_corporate_lockdown(state: dict[str, Any], ev: dict[str, Any], *, day: int, time_min: int) -> bool:
-    from engine.world.timers_bus import enqueue_ripple as _queue_ripple
-    from engine.world.timers_bus import push_news as _push_news
-
     payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
     loc = str(payload.get("location", "") or str(state.get("player", {}).get("location", "") or "")).strip().lower()
     world = state.setdefault("world", {})
@@ -40,11 +41,13 @@ def handle_corporate_lockdown(state: dict[str, Any], ev: dict[str, Any], *, day:
                 e = m.get("electronics") or {}
                 try:
                     e_sc = int(e.get("scarcity", 0) or 0)
-                except Exception:
+                except Exception as _omni_sw_43:
+                    log_swallowed_exception('engine/world/timers_handlers_security.py:43', _omni_sw_43)
                     e_sc = 0
                 try:
                     e_px = int(e.get("price_idx", 100) or 100)
-                except Exception:
+                except Exception as _omni_sw_47:
+                    log_swallowed_exception('engine/world/timers_handlers_security.py:47', _omni_sw_47)
                     e_px = 100
                 e["scarcity"] = max(0, min(100, e_sc + 3))
                 e["price_idx"] = max(60, min(300, e_px + 5))
@@ -73,14 +76,12 @@ def handle_corporate_lockdown(state: dict[str, Any], ev: dict[str, Any], *, day:
 
 
 def handle_investigation_sweep(state: dict[str, Any], ev: dict[str, Any], *, day: int, time_min: int) -> bool:
-    from engine.world.timers_bus import enqueue_ripple as _queue_ripple
-    from engine.world.timers_bus import push_news as _push_news
-
     payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
     loc = str(payload.get("location", "") or str(state.get("player", {}).get("location", "") or "")).strip().lower()
     try:
         trsnap = int(payload.get("trace_snapshot", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_83:
+        log_swallowed_exception('engine/world/timers_handlers_security.py:83', _omni_sw_83)
         trsnap = 0
     world = state.setdefault("world", {})
     locs = world.setdefault("locations", {})
@@ -120,21 +121,19 @@ def handle_investigation_sweep(state: dict[str, Any], ev: dict[str, Any], *, day
 
 
 def handle_manhunt_lockdown(state: dict[str, Any], ev: dict[str, Any], *, day: int, time_min: int) -> bool:
-    from engine.world.timers_bus import enqueue_ripple as _queue_ripple
-    from engine.world.timers_bus import push_news as _push_news
-
     payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
     loc = str(payload.get("location", "") or str(state.get("player", {}).get("location", "") or "")).strip().lower()
     try:
         trsnap = int(payload.get("trace_snapshot", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_130:
+        log_swallowed_exception('engine/world/timers_handlers_security.py:130', _omni_sw_130)
         trsnap = 0
     try:
         tr = state.setdefault("trace", {})
         tp = int(tr.get("trace_pct", 0) or 0)
         tr["trace_pct"] = max(0, min(100, tp + 2))
-    except Exception:
-        pass
+    except Exception as _omni_sw_136:
+        log_swallowed_exception('engine/world/timers_handlers_security.py:136', _omni_sw_136)
     world = state.setdefault("world", {})
     locs = world.setdefault("locations", {})
     if isinstance(locs, dict) and loc:
@@ -174,15 +173,13 @@ def handle_manhunt_lockdown(state: dict[str, Any], ev: dict[str, Any], *, day: i
 
 
 def handle_npc_sell_info(state: dict[str, Any], ev: dict[str, Any], *, day: int, time_min: int) -> bool:
-    from engine.world.timers_bus import enqueue_ripple as _queue_ripple
-    from engine.world.timers_bus import push_news as _push_news
-
     payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
     npc = str(payload.get("npc", "unknown") or "unknown")
     buyer = str(payload.get("buyer_faction", "black_market") or "black_market").strip().lower()
     try:
         sus = int(payload.get("suspicion", 50) or 50)
-    except Exception:
+    except Exception as _omni_sw_185:
+        log_swallowed_exception('engine/world/timers_handlers_security.py:185', _omni_sw_185)
         sus = 50
     sus = max(0, min(100, sus))
     world = state.setdefault("world", {})
@@ -191,11 +188,13 @@ def handle_npc_sell_info(state: dict[str, Any], ev: dict[str, Any], *, day: int,
         f = factions.get(buyer) or {}
         try:
             pw = int(f.get("power", 50) or 50)
-        except Exception:
+        except Exception as _omni_sw_194:
+            log_swallowed_exception('engine/world/timers_handlers_security.py:194', _omni_sw_194)
             pw = 50
         try:
             st = int(f.get("stability", 50) or 50)
-        except Exception:
+        except Exception as _omni_sw_198:
+            log_swallowed_exception('engine/world/timers_handlers_security.py:198', _omni_sw_198)
             st = 50
         bump = 1 + int((sus - 50) / 25)
         f["power"] = max(0, min(100, pw + max(1, min(3, bump))))
@@ -212,11 +211,13 @@ def handle_npc_sell_info(state: dict[str, Any], ev: dict[str, Any], *, day: int,
                     row = market2.get(cat) or {}
                     try:
                         sc2 = int(row.get("scarcity", 0) or 0)
-                    except Exception:
+                    except Exception as _omni_sw_215:
+                        log_swallowed_exception('engine/world/timers_handlers_security.py:215', _omni_sw_215)
                         sc2 = 0
                     try:
                         px2 = int(row.get("price_idx", 100) or 100)
-                    except Exception:
+                    except Exception as _omni_sw_219:
+                        log_swallowed_exception('engine/world/timers_handlers_security.py:219', _omni_sw_219)
                         px2 = 100
                     row["scarcity"] = max(0, sc2 - 1)
                     row["price_idx"] = max(60, min(200, px2 - 1))
@@ -227,18 +228,20 @@ def handle_npc_sell_info(state: dict[str, Any], ev: dict[str, Any], *, day: int,
                     row = market2.get(cat) or {}
                     try:
                         sc2 = int(row.get("scarcity", 0) or 0)
-                    except Exception:
+                    except Exception as _omni_sw_230:
+                        log_swallowed_exception('engine/world/timers_handlers_security.py:230', _omni_sw_230)
                         sc2 = 0
                     try:
                         px2 = int(row.get("price_idx", 100) or 100)
-                    except Exception:
+                    except Exception as _omni_sw_234:
+                        log_swallowed_exception('engine/world/timers_handlers_security.py:234', _omni_sw_234)
                         px2 = 100
                     row["scarcity"] = max(0, sc2 + 1)
                     row["price_idx"] = max(60, min(220, px2 + 2))
                     market2[cat] = row
             econ3["market"] = market2
-    except Exception:
-        pass
+    except Exception as _omni_sw_240:
+        log_swallowed_exception('engine/world/timers_handlers_security.py:240', _omni_sw_240)
     _push_news(state, text=f"Intel diperdagangkan di bawah tanah (sumber: {npc}).", source="faction_network")
     _queue_ripple(
         state,

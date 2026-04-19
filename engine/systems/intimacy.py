@@ -4,6 +4,7 @@ Narration stays fade-to-black via turn prompt; this module only updates state + 
 
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
 
 from engine.npc.npcs import ensure_ambient_npcs
@@ -85,8 +86,8 @@ def apply_intimacy_aftermath(state: dict[str, Any], action_ctx: dict[str, Any], 
             sd = float(bio.get("sleep_debt", 0.0) or 0.0)
             cut = round(min(4.0, (sat / 100.0) * 2.8), 2)
             bio["sleep_debt"] = max(0.0, sd - cut)
-        except Exception:
-            pass
+        except Exception as _omni_sw_88:
+            log_swallowed_exception('engine/systems/intimacy.py:88', _omni_sw_88)
     p = state.setdefault("player", {})
     stats = p.setdefault("social_stats", {})
     if isinstance(stats, dict):

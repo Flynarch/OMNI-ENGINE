@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -64,12 +65,14 @@ def add_effect(
         return {"ok": False, "reason": "missing_id_or_kind"}
     try:
         dur = int(duration_min or 0)
-    except Exception:
+    except Exception as _omni_sw_67:
+        log_swallowed_exception('engine/systems/effects.py:67', _omni_sw_67)
         dur = 0
     dur = max(1, min(24 * 60, dur))
     try:
         st = int(stacks or 1)
-    except Exception:
+    except Exception as _omni_sw_72:
+        log_swallowed_exception('engine/systems/effects.py:72', _omni_sw_72)
         st = 1
     st = max(1, min(20, st))
     mx = max(1, min(20, int(max_stacks or 5)))
@@ -139,7 +142,8 @@ def tick_effects_expiry(state: dict[str, Any]) -> None:
             try:
                 ud = int(e.get("until_day", 0) or 0)
                 ut = int(e.get("until_time", 0) or 0)
-            except Exception:
+            except Exception as _omni_sw_142:
+                log_swallowed_exception('engine/systems/effects.py:142', _omni_sw_142)
                 ud, ut = 0, 0
             if not _is_expired(day, tmin, ud, ut):
                 kept.append(e)
@@ -157,7 +161,8 @@ def tick_effects_expiry(state: dict[str, Any]) -> None:
                 try:
                     ud = int(e.get("until_day", 0) or 0)
                     ut = int(e.get("until_time", 0) or 0)
-                except Exception:
+                except Exception as _omni_sw_160:
+                    log_swallowed_exception('engine/systems/effects.py:160', _omni_sw_160)
                     ud, ut = 0, 0
                 if not _is_expired(day, tmin, ud, ut):
                     kept2.append(e)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
 
 
@@ -52,7 +53,8 @@ def _pick_best_focus(state: dict[str, Any]) -> str | None:
         ambient = 1 if data.get("ambient") is True else 0
         try:
             fear = int(data.get("fear", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_55:
+            log_swallowed_exception('engine/npc/npc_targeting.py:55', _omni_sw_55)
             fear = 0
         return (ambient, -fear)
 

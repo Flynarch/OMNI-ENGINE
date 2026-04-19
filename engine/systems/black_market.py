@@ -3,6 +3,16 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.player.medical_bio import record_substance_use
+from engine.social.reputation_lanes import (
+    black_market_access_tier,
+    black_market_price_percent,
+    can_buy_black_market_item,
+)
+from engine.systems.black_market_tiers import ITEM_REPUTATION_TIER
+from engine.systems.judicial import is_incarcerated
+
 
 _POOL: list[dict[str, Any]] = [
     {"id": "cyberdeck_mk1", "name": "Cyberdeck MK1", "base_price": 4200},
@@ -12,16 +22,6 @@ _POOL: list[dict[str, Any]] = [
     {"id": "lockpick", "name": "Lockpick Set", "base_price": 250},
     {"id": "disguise_kit", "name": "Disguise Kit", "base_price": 1200},
 ]
-
-# W2-2: minimum black-market standing tier (0..3) to see & buy listing.
-ITEM_REPUTATION_TIER: dict[str, int] = {
-    "lockpick": 0,
-    "burner_phone": 0,
-    "fake_id": 1,
-    "police_scanner": 2,
-    "cyberdeck_mk1": 2,
-    "disguise_kit": 3,
-}
 
 # W2-13: optional substance hook for medical_bio (engine-only; not narrator authority).
 ITEM_SUBSTANCE_KIND: dict[str, str] = {
@@ -40,7 +40,8 @@ def _day(state: dict[str, Any]) -> int:
     meta = state.get("meta", {}) or {}
     try:
         return int(meta.get("day", 1) or 1)
-    except Exception:
+    except Exception as _omni_sw_43:
+        log_swallowed_exception('engine/systems/black_market.py:43', _omni_sw_43)
         return 1
 
 
@@ -48,7 +49,8 @@ def _time_min(state: dict[str, Any]) -> int:
     meta = state.get("meta", {}) or {}
     try:
         return int(meta.get("time_min", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_51:
+        log_swallowed_exception('engine/systems/black_market.py:51', _omni_sw_51)
         return 0
 
 
@@ -99,19 +101,17 @@ def has_underworld_contact_here(state: dict[str, Any]) -> bool:
                     tags_l = [str(x).strip().lower() for x in tags if isinstance(x, str)]
                     if "fixer" in tags_l or "smuggler" in tags_l or role in ("fixer", "smuggler"):
                         return True
-    except Exception:
-        pass
+    except Exception as _omni_sw_102:
+        log_swallowed_exception('engine/systems/black_market.py:102', _omni_sw_102)
     return False
 
 
 def black_market_accessible(state: dict[str, Any]) -> bool:
     try:
-        from engine.systems.judicial import is_incarcerated
-
         if is_incarcerated(state):
             return False
-    except Exception:
-        pass
+    except Exception as _omni_sw_113:
+        log_swallowed_exception('engine/systems/black_market.py:113', _omni_sw_113)
     return _night_access(_time_min(state)) or has_underworld_contact_here(state)
 
 
@@ -143,8 +143,6 @@ def generate_black_market_inventory(state: dict[str, Any]) -> dict[str, Any]:
         picked.append(row)
 
     try:
-        from engine.social.reputation_lanes import black_market_access_tier
-
         tier_have = black_market_access_tier(state)
         picked = [
             x
@@ -152,20 +150,17 @@ def generate_black_market_inventory(state: dict[str, Any]) -> dict[str, Any]:
             if isinstance(x, dict)
             and int(ITEM_REPUTATION_TIER.get(str(x.get("id", "") or "").strip().lower(), 0)) <= int(tier_have)
         ]
-    except Exception:
-        pass
+    except Exception as _omni_sw_155:
+        log_swallowed_exception('engine/systems/black_market.py:155', _omni_sw_155)
     try:
-        from engine.social.reputation_lanes import black_market_price_percent
-
         mul = black_market_price_percent(state)
         for x in picked:
             if not isinstance(x, dict):
                 continue
             bp = int(x.get("price", 0) or 0)
             x["price"] = max(1, (bp * mul + 50) // 100)
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_166:
+        log_swallowed_exception('engine/systems/black_market.py:166', _omni_sw_166)
     world = state.setdefault("world", {})
     bm = world.setdefault("black_market", {})
     if not isinstance(bm, dict):
@@ -203,8 +198,6 @@ def buy_black_market_item(state: dict[str, Any], item_id: str) -> dict[str, Any]
     if not isinstance(row, dict):
         return {"ok": False, "reason": "not_in_stock"}
     try:
-        from engine.social.reputation_lanes import can_buy_black_market_item
-
         gate = can_buy_black_market_item(state, iid)
         if not gate.get("ok"):
             return {
@@ -214,13 +207,14 @@ def buy_black_market_item(state: dict[str, Any], item_id: str) -> dict[str, Any]
                 "need_tier": gate.get("need_tier"),
                 "your_tier": gate.get("your_tier"),
             }
-    except Exception:
-        pass
+    except Exception as _omni_sw_217:
+        log_swallowed_exception('engine/systems/black_market.py:217', _omni_sw_217)
     price = int(row.get("price", 0) or 0)
     eco = state.setdefault("economy", {})
     try:
         cash = int(eco.get("cash", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_223:
+        log_swallowed_exception('engine/systems/black_market.py:223', _omni_sw_223)
         cash = 0
     if cash < price:
         return {"ok": False, "reason": "not_enough_cash", "need": int(price), "cash": int(cash)}
@@ -228,7 +222,8 @@ def buy_black_market_item(state: dict[str, Any], item_id: str) -> dict[str, Any]
     try:
         tr = state.get("trace", {}) or {}
         tp = int(tr.get("trace_pct", 0) or 0) if isinstance(tr, dict) else 0
-    except Exception:
+    except Exception as _omni_sw_231:
+        log_swallowed_exception('engine/systems/black_market.py:231', _omni_sw_231)
         tp = 0
     base_chance = 5 + (15 if int(tp) > 50 else 0)
     seed = _seed_key(state)
@@ -284,10 +279,8 @@ def buy_black_market_item(state: dict[str, Any], item_id: str) -> dict[str, Any]
     sk = ITEM_SUBSTANCE_KIND.get(str(iid).strip().lower())
     if sk:
         try:
-            from engine.player.medical_bio import record_substance_use
-
             record_substance_use(state, kind=sk)
-        except Exception:
-            pass
+        except Exception as _omni_sw_290:
+            log_swallowed_exception('engine/systems/black_market.py:290', _omni_sw_290)
     return {"ok": True, "item_id": iid, "name": nm, "price": int(price), "cash_after": int(eco.get("cash", 0) or 0)}
 

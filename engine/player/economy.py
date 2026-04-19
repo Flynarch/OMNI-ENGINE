@@ -1,6 +1,14 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.core.integration_hooks import record_economy_ledger_line
+from engine.npc.relationship import get_top_relationships
 from engine.player.market import update_market
+from engine.systems.accommodation import process_accommodation_daily
+from engine.systems.occupation import accrue_career_salary_and_decay
+from engine.systems.property import process_property_daily_economy
+from engine.systems.safehouse import process_daily_rent
+from engine.systems.smartphone import maybe_police_track_phone_daily
 
 def update_economy(state: dict, action_ctx: dict) -> None:
     econ = state.setdefault("economy", {})
@@ -24,22 +32,16 @@ def update_economy(state: dict, action_ctx: dict) -> None:
         econ["bank"] = bank
         econ["last_economic_cycle_day"] = day
         try:
-            from engine.core.integration_hooks import record_economy_ledger_line
-
             record_economy_ledger_line(state, "daily_burn", int(-burn), "housing/living costs")
-        except Exception:
-            pass
+        except Exception as _omni_sw_30:
+            log_swallowed_exception('engine/player/economy.py:30', _omni_sw_30)
         # W2-9: career payroll + career-break rep decay (once per sim day).
         try:
-            from engine.systems.occupation import accrue_career_salary_and_decay
-
             accrue_career_salary_and_decay(state)
-        except Exception:
-            pass
+        except Exception as _omni_sw_37:
+            log_swallowed_exception('engine/player/economy.py:37', _omni_sw_37)
         # Relationship passive: business partners can generate a small deterministic daily income.
         try:
-            from engine.npc.relationship import get_top_relationships
-
             rels = get_top_relationships(state, limit=12)
             partner_income = 0
             for _nm, rel in rels:
@@ -49,38 +51,29 @@ def update_economy(state: dict, action_ctx: dict) -> None:
             if partner_income > 0:
                 econ["cash"] = int(int(econ.get("cash", 0) or 0) + int(partner_income))
                 state.setdefault("world_notes", []).append(f"[Economy] Business partner income +${int(partner_income)}.")
-        except Exception:
-            pass
+        except Exception as _omni_sw_52:
+            log_swallowed_exception('engine/player/economy.py:52', _omni_sw_52)
         # W2-10: property maintenance/rent + small-business passive income (Python-only; not action_ctx).
         try:
-            from engine.systems.property import process_property_daily_economy
-
             process_property_daily_economy(state)
-        except Exception:
-            pass
+        except Exception as _omni_sw_59:
+            log_swallowed_exception('engine/player/economy.py:59', _omni_sw_59)
         # W2-11: powered phone + high trace → small daily trace pressure.
         try:
-            from engine.systems.smartphone import maybe_police_track_phone_daily
-
             maybe_police_track_phone_daily(state)
-        except Exception:
-            pass
+        except Exception as _omni_sw_66:
+            log_swallowed_exception('engine/player/economy.py:66', _omni_sw_66)
         # Market updates once per day (reactive economy layer).
         update_market(state)
         # Safehouse rent processing (optional system).
         try:
-            from engine.systems.safehouse import process_daily_rent
-
             process_daily_rent(state)
-        except Exception:
-            pass
+        except Exception as _omni_sw_75:
+            log_swallowed_exception('engine/player/economy.py:75', _omni_sw_75)
         try:
-            from engine.systems.accommodation import process_accommodation_daily
-
             process_accommodation_daily(state)
-        except Exception:
-            pass
-
+        except Exception as _omni_sw_81:
+            log_swallowed_exception('engine/player/economy.py:81', _omni_sw_81)
     # FICO checks (event-driven from action context)
     fico = int(econ.get("fico", 600))
     payment = action_ctx.get("payment_event")

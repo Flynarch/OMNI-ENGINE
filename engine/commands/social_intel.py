@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
 
 
@@ -25,15 +26,18 @@ def handle_social_intel(state: dict[str, Any], cmd: str, *, console: Any, table_
                 target = k.split("|", 1)[1] if "|" in k else k
                 try:
                     heat = int(v.get("heat", 0) or 0)
-                except Exception:
+                except Exception as _omni_sw_28:
+                    log_swallowed_exception('engine/commands/social_intel.py:28', _omni_sw_28)
                     heat = 0
                 try:
                     noise = int(v.get("noise", 0) or 0)
-                except Exception:
+                except Exception as _omni_sw_32:
+                    log_swallowed_exception('engine/commands/social_intel.py:32', _omni_sw_32)
                     noise = 0
                 try:
                     signal = int(v.get("signal", 0) or 0)
-                except Exception:
+                except Exception as _omni_sw_36:
+                    log_swallowed_exception('engine/commands/social_intel.py:36', _omni_sw_36)
                     signal = 0
                 rec = "OK"
                 if heat >= 75 or signal >= 75:
@@ -69,7 +73,8 @@ def handle_social_intel(state: dict[str, Any], cmd: str, *, console: Any, table_
             svc = str(v.get("service", "offer"))
             try:
                 exp = int(v.get("expires_day", day) or day)
-            except Exception:
+            except Exception as _omni_sw_72:
+                log_swallowed_exception('engine/commands/social_intel.py:72', _omni_sw_72)
                 exp = day
             ttl = max(0, exp - day)
             out.append(f"- {npc} ({role}): {svc} (ttl {ttl}d)")

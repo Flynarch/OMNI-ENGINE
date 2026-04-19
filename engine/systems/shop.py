@@ -1,10 +1,21 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from dataclasses import dataclass
 from typing import Any
 import hashlib
 
+from engine.core.language import _split_lang, player_language_proficiency
+from engine.npc.memory import get_npc_social_modifiers
 from engine.systems.ammo import item_is_ammo, rounds_per_purchase
+from engine.systems.illegal_trade import (
+    _is_contraband_for_heat,
+    _item_tags as _illegal_trade_item_tags,
+    apply_contraband_acquire_pressure,
+)
+from engine.systems.weapon_kit import ensure_weapon_for_item
+from engine.world.atlas import ensure_location_profile
+from engine.world.districts import get_district, list_districts
 
 
 @dataclass(frozen=True)
@@ -32,7 +43,8 @@ class CapacityStatus:
 def _clamp_int(v: Any, lo: int, hi: int, default: int) -> int:
     try:
         x = int(v)
-    except Exception:
+    except Exception as _omni_sw_35:
+        log_swallowed_exception('engine/systems/shop.py:35', _omni_sw_35)
         return int(default)
     return max(lo, min(hi, x))
 
@@ -45,15 +57,16 @@ def _get_local_market(state: dict[str, Any]) -> dict[str, dict[str, int]]:
         slot = ((state.get("world", {}) or {}).get("locations", {}) or {}).get(loc)
         if isinstance(slot, dict) and isinstance(slot.get("market"), dict) and slot.get("market"):
             mkt = slot.get("market") or mkt
-    except Exception:
-        pass
+    except Exception as _omni_sw_48:
+        log_swallowed_exception('engine/systems/shop.py:48', _omni_sw_48)
     return mkt if isinstance(mkt, dict) else {}
 
 
 def _get_loc_key(state: dict[str, Any]) -> str:
     try:
         return str((state.get("player", {}) or {}).get("location", "") or "").strip().lower()
-    except Exception:
+    except Exception as _omni_sw_56:
+        log_swallowed_exception('engine/systems/shop.py:56', _omni_sw_56)
         return ""
 
 
@@ -101,7 +114,8 @@ def _get_day(state: dict[str, Any]) -> int:
     meta = state.get("meta", {}) or {}
     try:
         return int((meta.get("day", 1) if isinstance(meta, dict) else 1) or 1)
-    except Exception:
+    except Exception as _omni_sw_104:
+        log_swallowed_exception('engine/systems/shop.py:104', _omni_sw_104)
         return 1
 
 
@@ -128,13 +142,11 @@ def _district_police_presence(state: dict[str, Any]) -> int:
         did = str(p.get("district", "") or "").strip().lower()
         if not (loc and did):
             return 0
-        from engine.world.districts import get_district
-
         d = get_district(state, loc, did)
         if isinstance(d, dict):
             return max(0, min(5, int(d.get("police_presence", 0) or 0)))
-    except Exception:
-        pass
+    except Exception as _omni_sw_136:
+        log_swallowed_exception('engine/systems/shop.py:136', _omni_sw_136)
     return 0
 
 
@@ -189,7 +201,8 @@ def _skill_level(state: dict[str, Any], key: str) -> int:
         return 1
     try:
         return max(1, min(20, int(row.get("level", 1) or 1)))
-    except Exception:
+    except Exception as _omni_sw_192:
+        log_swallowed_exception('engine/systems/shop.py:192', _omni_sw_192)
         return 1
 
 
@@ -206,9 +219,6 @@ def _apply_player_price_mods(state: dict[str, Any], *, buy: int, sell: int) -> t
     outsider_premium = 0.0
     try:
         # Use explicit language facts (avoid dummy action_ctx coupling).
-        from engine.core.language import _split_lang, player_language_proficiency
-        from engine.world.atlas import ensure_location_profile
-
         loc = _get_loc_key(state)
         prof = ensure_location_profile(state, loc) if loc else {}
         local_lang = str((prof.get("language") if isinstance(prof, dict) else "") or "").strip().lower()
@@ -220,16 +230,16 @@ def _apply_player_price_mods(state: dict[str, Any], *, buy: int, sell: int) -> t
                 if int(pl.get(str(code).lower(), 0) or 0) >= 60:
                     shared = True
                     break
-            except Exception:
+            except Exception as _omni_sw_223:
+                log_swallowed_exception('engine/systems/shop.py:223', _omni_sw_223)
                 continue
         if not shared and local_codes:
             outsider_premium = 0.04  # 4% premium when you can't communicate well
             lvl_lang = _skill_level(state, "languages")
             lang_bonus = min(0.03, max(0.0, (lvl_lang - 1) * 0.01))  # up to 3%
             outsider_premium = max(0.0, outsider_premium - lang_bonus)
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_230:
+        log_swallowed_exception('engine/systems/shop.py:230', _omni_sw_230)
     buy_mult = max(0.70, min(1.20, (1.0 + outsider_premium) * (1.0 - sw_bonus)))
     sell_mult = max(0.40, min(0.95, (1.0 - outsider_premium * 0.5) * (1.0 + sw_bonus * 0.5)))
     b2 = max(1, int(round(b * buy_mult)))
@@ -252,8 +262,6 @@ def _apply_player_price_mods(state: dict[str, Any], *, buy: int, sell: int) -> t
                     npc_id = str(v.get("npc", _k) or _k).strip()
                     break
         if npc_id:
-            from engine.npc.memory import get_npc_social_modifiers
-
             sm = get_npc_social_modifiers(state, npc_id)
             trust = int(sm.get("trust", 0) or 0)
             susp = int(sm.get("suspicion", 0) or 0)
@@ -264,8 +272,8 @@ def _apply_player_price_mods(state: dict[str, Any], *, buy: int, sell: int) -> t
             b2 = max(1, int(round(b2 * (1.0 + susp_prem - trust_disc))))
             # sell price multiplier: trust raises, suspicion lowers
             s2 = max(1, int(round(s2 * (1.0 + trust_disc - susp_prem))))
-    except Exception:
-        pass
+    except Exception as _omni_sw_267:
+        log_swallowed_exception('engine/systems/shop.py:267', _omni_sw_267)
     return (b2, s2)
 
 
@@ -286,21 +294,19 @@ def _is_sold_out(state: dict[str, Any], *, item_id: str, category: str, scarcity
             if _has_district_context(state):
                 sv = _district_services(state)
                 if "black_market" not in sv:
-                    from engine.systems.illegal_trade import _is_contraband_for_heat, _item_tags  # type: ignore
-
-                    tags = _item_tags(state, str(item_id or ""))
+                    tags = _illegal_trade_item_tags(state, str(item_id or ""))
                     if _is_contraband_for_heat(tags):
                         return (True, "no_black_market_access")
-    except Exception:
-        pass
+    except Exception as _omni_sw_294:
+        log_swallowed_exception('engine/systems/shop.py:294', _omni_sw_294)
     # In high-police districts, weapons/ammo effectively "sell out" more often (or vanish from shelves).
     try:
         if str(category or "") == "weapons":
             pp = _district_police_presence(state)
             if pp >= 4:
                 rate = min(95, rate + (10 if pp == 4 else 18))
-    except Exception:
-        pass
+    except Exception as _omni_sw_302:
+        log_swallowed_exception('engine/systems/shop.py:302', _omni_sw_302)
     if rate <= 0:
         return (False, "")
     seed = _get_seed_key(state)
@@ -596,23 +602,19 @@ def buy_item(
 
     # District-aware restrictions: high police districts may refuse contraband sales outright.
     try:
-        from engine.systems.illegal_trade import _is_contraband_for_heat, _item_tags  # type: ignore
-
-        tags = _item_tags(state, q.item_id)
+        tags = _illegal_trade_item_tags(state, q.item_id)
         if _is_contraband_for_heat(tags):
             p = state.get("player", {}) or {}
             loc = str(p.get("location", "") or "").strip().lower()
             did = str(p.get("district", "") or "").strip().lower()
             if loc and did:
-                from engine.world.districts import get_district
-
                 d = get_district(state, loc, did)
                 if isinstance(d, dict):
                     pp = int(d.get("police_presence", 0) or 0)
                     if pp >= 5:
                         return {"ok": False, "reason": "district_refuses_contraband", "detail": f"police_presence={pp}"}
-    except Exception:
-        pass
+    except Exception as _omni_sw_614:
+        log_swallowed_exception('engine/systems/shop.py:614', _omni_sw_614)
     eco = state.setdefault("economy", {})
     cash = _clamp_int(eco.get("cash", 0), 0, 10_000_000_000, 0)
     if cash < q.buy_price:
@@ -628,14 +630,11 @@ def buy_item(
 
     # For contraband, allow safer delivery methods that delay the actual handoff.
     try:
-        from engine.systems.illegal_trade import _is_contraband_for_heat, _item_tags  # type: ignore
-
-        tags = _item_tags(state, q.item_id)
+        tags = _illegal_trade_item_tags(state, q.item_id)
         if _is_contraband_for_heat(tags) and delivery_n in ("dead_drop", "courier"):
             return _schedule_delivery(state, q, prefer=prefer, delivery=delivery_n)
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_636:
+        log_swallowed_exception('engine/systems/shop.py:636', _omni_sw_636)
     if item_is_ammo(state, q.item_id):
         inv = state.setdefault("inventory", {})
         iq = inv.setdefault("item_quantities", {})
@@ -646,11 +645,9 @@ def buy_item(
         iq[q.item_id] = int(iq.get(q.item_id, 0) or 0) + int(rpb)
         eco["cash"] = cash - q.buy_price
         try:
-            from engine.systems.illegal_trade import apply_contraband_acquire_pressure
-
             apply_contraband_acquire_pressure(state, q.item_id, via="shop")
-        except Exception:
-            pass
+        except Exception as _omni_sw_652:
+            log_swallowed_exception('engine/systems/shop.py:652', _omni_sw_652)
         state.setdefault("world_notes", []).append(
             f"[Shop] BUY_AMMO {q.item_id} price={q.buy_price} rounds=+{rpb} reserve={iq.get(q.item_id)}"
         )
@@ -692,19 +689,13 @@ def buy_item(
     eco["cash"] = cash - q.buy_price
 
     try:
-        from engine.systems.weapon_kit import ensure_weapon_for_item
-
         ensure_weapon_for_item(state, q.item_id, source="buy")
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_698:
+        log_swallowed_exception('engine/systems/shop.py:698', _omni_sw_698)
     try:
-        from engine.systems.illegal_trade import apply_contraband_acquire_pressure
-
         apply_contraband_acquire_pressure(state, q.item_id, via="shop")
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_705:
+        log_swallowed_exception('engine/systems/shop.py:705', _omni_sw_705)
     state.setdefault("world_notes", []).append(f"[Shop] BUY {q.item_id} price={q.buy_price} cat={q.category} to={placed}")
     _maybe_schedule_undercover_sting(state, bought_item_id=q.item_id)
     return {"ok": True, "quote": q, "cash_after": int(eco["cash"]), "placed_to": placed}
@@ -746,15 +737,14 @@ def _schedule_delivery(state: dict[str, Any], q: ShopQuote, *, prefer: str, deli
     did = ""
     try:
         did = str((state.get("player", {}) or {}).get("district", "") or "").strip().lower()
-    except Exception:
+    except Exception as _omni_sw_749:
+        log_swallowed_exception('engine/systems/shop.py:749', _omni_sw_749)
         did = ""
 
     # Choose a target drop district (sometimes different from current).
     drop_district = did
     try:
         if _has_district_context(state):
-            from engine.world.districts import list_districts
-
             all_d = list_districts(state, loc)
             bm = []
             for d in all_d:
@@ -774,7 +764,8 @@ def _schedule_delivery(state: dict[str, Any], q: ShopQuote, *, prefer: str, deli
                     drop_district = alt[r2 % len(alt)]
                 else:
                     drop_district = did if did else bm[r2 % len(bm)]
-    except Exception:
+    except Exception as _omni_sw_777:
+        log_swallowed_exception('engine/systems/shop.py:777', _omni_sw_777)
         drop_district = did
 
     # Expiry: if you don't pick it up in time, it's gone.
@@ -832,7 +823,8 @@ def _schedule_delivery(state: dict[str, Any], q: ShopQuote, *, prefer: str, deli
     if delivery == "courier":
         try:
             seed = str(meta.get("world_seed", "") or meta.get("seed_pack", "") or "").strip()
-        except Exception:
+        except Exception as _omni_sw_835:
+            log_swallowed_exception('engine/systems/shop.py:835', _omni_sw_835)
             seed = "seed"
         # Delay 2–6 hours deterministically.
         h3 = hashlib.md5(f"{seed}|{delivery_id}|paper_trail".encode("utf-8", errors="ignore")).hexdigest()
@@ -845,7 +837,8 @@ def _schedule_delivery(state: dict[str, Any], q: ShopQuote, *, prefer: str, deli
         # Suspicion: depends on trace + police presence.
         try:
             tp = int((state.get("trace", {}) or {}).get("trace_pct", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_848:
+            log_swallowed_exception('engine/systems/shop.py:848', _omni_sw_848)
             tp = 0
         sus = 45 + (tp // 20) * 8 + (8 if pp >= 4 else 0)
         sus = max(30, min(95, int(sus)))
@@ -892,15 +885,13 @@ def _district_services(state: dict[str, Any]) -> list[str]:
         did = str(p.get("district", "") or "").strip().lower()
         if not (loc and did):
             return []
-        from engine.world.districts import get_district
-
         d = get_district(state, loc, did)
         if isinstance(d, dict):
             sv = d.get("services", []) or []
             if isinstance(sv, list):
                 return [str(x).strip().lower() for x in sv if isinstance(x, str) and str(x).strip()]
-    except Exception:
-        pass
+    except Exception as _omni_sw_902:
+        log_swallowed_exception('engine/systems/shop.py:902', _omni_sw_902)
     return []
 
 
@@ -910,7 +901,8 @@ def _has_district_context(state: dict[str, Any]) -> bool:
         loc = str(p.get("location", "") or "").strip().lower()
         did = str(p.get("district", "") or "").strip().lower()
         return bool(loc and did)
-    except Exception:
+    except Exception as _omni_sw_913:
+        log_swallowed_exception('engine/systems/shop.py:913', _omni_sw_913)
         return False
 
 
@@ -926,12 +918,11 @@ def _maybe_schedule_undercover_sting(state: dict[str, Any], *, bought_item_id: s
         return
 
     try:
-        from engine.systems.illegal_trade import _is_contraband_for_heat, _item_tags  # type: ignore
-
-        tags = _item_tags(state, iid)
+        tags = _illegal_trade_item_tags(state, iid)
         if not _is_contraband_for_heat(tags):
             return
-    except Exception:
+    except Exception as _omni_sw_934:
+        log_swallowed_exception('engine/systems/shop.py:934', _omni_sw_934)
         return
 
     # Avoid duplicates.
@@ -950,7 +941,8 @@ def _maybe_schedule_undercover_sting(state: dict[str, Any], *, bought_item_id: s
         ca = slot.get("cyber_alert") if isinstance(slot, dict) else None
         if isinstance(ca, dict):
             ca_lvl = int(ca.get("level", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_953:
+        log_swallowed_exception('engine/systems/shop.py:953', _omni_sw_953)
         ca_lvl = 0
 
     base = 4
@@ -965,14 +957,11 @@ def _maybe_schedule_undercover_sting(state: dict[str, Any], *, bought_item_id: s
 
     # Weapon/ammo buys are more likely to be stung.
     try:
-        from engine.systems.illegal_trade import _item_tags as _itags  # type: ignore
-
-        t = _itags(state, iid)
+        t = _illegal_trade_item_tags(state, iid)
         if "firearm" in t or "ammo" in t:
             base += 10
-    except Exception:
-        pass
-
+    except Exception as _omni_sw_973:
+        log_swallowed_exception('engine/systems/shop.py:973', _omni_sw_973)
     chance = max(0, min(45, int(base)))
     if chance <= 0:
         return

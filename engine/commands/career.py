@@ -5,22 +5,22 @@ from typing import Any
 from rich.table import Table
 
 from display.renderer import console
+from engine.systems.occupation import (
+    career_daily_salary_usd,
+    career_title_for_level,
+    clear_permanent_career_stain,
+    ensure_career,
+    list_career_paths,
+    promote_career,
+    set_active_career_track,
+    set_career_break,
+)
 
 
 def handle_career(state: dict[str, Any], cmd: str) -> bool:
     up = cmd.strip().upper()
     if not up.startswith("CAREER"):
         return False
-    from engine.systems.occupation import (
-        career_daily_salary_usd,
-        career_title_for_level,
-        clear_permanent_career_stain,
-        ensure_career,
-        list_career_paths,
-        promote_career,
-        set_active_career_track,
-        set_career_break,
-    )
 
     ensure_career(state)
     parts = cmd.split()

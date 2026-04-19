@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
 
 
@@ -18,11 +19,13 @@ def append_casefile(state: dict[str, Any], entry: dict[str, Any]) -> None:
     meta = state.get("meta", {}) or {}
     try:
         day = int(meta.get("day", 1) or 1)
-    except Exception:
+    except Exception as _omni_sw_21:
+        log_swallowed_exception('engine/world/casefile.py:21', _omni_sw_21)
         day = 1
     try:
         tmin = int(meta.get("time_min", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_25:
+        log_swallowed_exception('engine/world/casefile.py:25', _omni_sw_25)
         tmin = 0
 
     # Normalize keys and keep entries small/stable.
@@ -51,7 +54,8 @@ def summarize_casefile(state: dict[str, Any], n: int = 6) -> list[dict[str, Any]
         return []
     try:
         nn = int(n or 6)
-    except Exception:
+    except Exception as _omni_sw_54:
+        log_swallowed_exception('engine/world/casefile.py:54', _omni_sw_54)
         nn = 6
     nn = max(0, min(20, nn))
     out: list[dict[str, Any]] = []

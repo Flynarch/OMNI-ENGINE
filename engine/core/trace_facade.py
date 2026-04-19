@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from engine.core.mutation_gateway import bump_trace_pct
+
 
 class TraceFacade:
     __slots__ = ("_state",)
@@ -19,6 +21,4 @@ class TraceFacade:
             return 0
 
     def bump(self, delta: int) -> None:
-        from engine.core.mutation_gateway import bump_trace_pct
-
         bump_trace_pct(self._state, delta)

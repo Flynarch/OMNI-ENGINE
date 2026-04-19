@@ -1,6 +1,7 @@
 """W2-1: macro faction report — deterministic aggregates (power/stability, 3d delta, heat, ripples)."""
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
 
 # Canonical display order; unknown faction keys sort after these.
@@ -10,7 +11,8 @@ _KNOWN_ORDER = ("corporate", "police", "black_market")
 def _clamp_int(v: Any, lo: int, hi: int) -> int:
     try:
         return max(lo, min(hi, int(v)))
-    except Exception:
+    except Exception as _omni_sw_13:
+        log_swallowed_exception('engine/world/faction_report.py:13', _omni_sw_13)
         return (lo + hi) // 2
 
 
@@ -74,7 +76,8 @@ def maybe_record_faction_daily_snapshot(state: dict[str, Any]) -> None:
     meta = state.get("meta", {}) or {}
     try:
         day = int(meta.get("day", 1) or 1)
-    except Exception:
+    except Exception as _omni_sw_77:
+        log_swallowed_exception('engine/world/faction_report.py:77', _omni_sw_77)
         day = 1
     world = state.setdefault("world", {})
     if not isinstance(world, dict):
@@ -82,7 +85,8 @@ def maybe_record_faction_daily_snapshot(state: dict[str, Any]) -> None:
     ensure_factions_shape(state)
     try:
         last = int(world.get("faction_macro_history_last_day", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_85:
+        log_swallowed_exception('engine/world/faction_report.py:85', _omni_sw_85)
         last = 0
     if day == last:
         return
@@ -112,7 +116,8 @@ def _ref_snapshot_for_delta(state: dict[str, Any], *, cur_day: int, lookback: in
             continue
         try:
             d = int(h.get("day", 0) or 0)
-        except Exception:
+        except Exception as _omni_sw_115:
+            log_swallowed_exception('engine/world/faction_report.py:115', _omni_sw_115)
             continue
         if d <= target_day and d > best_d:
             fac = h.get("factions")
@@ -151,7 +156,8 @@ def _max_heat_at_location(state: dict[str, Any], loc: str) -> int:
             continue
         try:
             best = max(best, int(row.get("level", 0) or 0))
-        except Exception:
+        except Exception as _omni_sw_154:
+            log_swallowed_exception('engine/world/faction_report.py:154', _omni_sw_154)
             continue
     return max(0, min(100, best))
 
@@ -166,7 +172,8 @@ def append_faction_ripple_impact(state: dict[str, Any], rp: dict[str, Any], delt
     meta = state.get("meta", {}) or {}
     try:
         day = int(meta.get("day", 1) or 1)
-    except Exception:
+    except Exception as _omni_sw_169:
+        log_swallowed_exception('engine/world/faction_report.py:169', _omni_sw_169)
         day = 1
     log = world.setdefault("faction_impact_log", [])
     if not isinstance(log, list):
@@ -195,7 +202,8 @@ def build_faction_macro_report(state: dict[str, Any], *, full: bool = False) -> 
     meta = state.get("meta", {}) or {}
     try:
         cur_day = int(meta.get("day", 1) or 1)
-    except Exception:
+    except Exception as _omni_sw_198:
+        log_swallowed_exception('engine/world/faction_report.py:198', _omni_sw_198)
         cur_day = 1
 
     statuses = world.get("faction_statuses", {}) or {}
@@ -271,7 +279,8 @@ def build_faction_macro_report(state: dict[str, Any], *, full: bool = False) -> 
             for _k, dv in d0.items():
                 try:
                     mag += abs(int(dv))
-                except Exception:
+                except Exception as _omni_sw_274:
+                    log_swallowed_exception('engine/world/faction_report.py:274', _omni_sw_274)
                     continue
             txt = str(e.get("text", "") or "")
             sig = f"{e.get('kind','')}|{txt[:48]}"
@@ -280,7 +289,8 @@ def build_faction_macro_report(state: dict[str, Any], *, full: bool = False) -> 
             seen_text.add(sig)
             try:
                 ed = int(e.get("day", 0) or 0)
-            except Exception:
+            except Exception as _omni_sw_283:
+                log_swallowed_exception('engine/world/faction_report.py:283', _omni_sw_283)
                 ed = 0
             scored.append((ed, mag, txt, e))
         scored.sort(key=lambda x: (-x[0], -x[1], x[2]))

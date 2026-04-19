@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
 
 
@@ -41,7 +42,8 @@ def _sig(rp: dict[str, Any]) -> str:
         meta = rp.get("meta") if isinstance(rp.get("meta"), dict) else {}
         sm = _stable_meta(meta) if isinstance(meta, dict) else []
         return f"{kind}|{prop}|{ol}|{of}|{sm}|{str(rp.get('text','') or '')[:80]}"
-    except Exception:
+    except Exception as _omni_sw_44:
+        log_swallowed_exception('engine/social/ripple_queue.py:44', _omni_sw_44)
         return ""
 
 

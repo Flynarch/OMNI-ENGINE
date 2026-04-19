@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
 
 
@@ -20,11 +21,13 @@ def normalize_item_quantities(state: dict[str, Any], *, max_qty: int = 99999, dr
             continue
         try:
             n = int(v)
-        except Exception:
+        except Exception as _omni_sw_23:
+            log_swallowed_exception('engine/player/inventory_norm.py:23', _omni_sw_23)
             # Try string-to-int-ish; otherwise treat as 0.
             try:
                 n = int(str(v).strip())
-            except Exception:
+            except Exception as _omni_sw_27:
+                log_swallowed_exception('engine/player/inventory_norm.py:27', _omni_sw_27)
                 n = 0
         if n < 0:
             n = 0

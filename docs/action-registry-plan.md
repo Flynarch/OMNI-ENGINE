@@ -8,6 +8,26 @@ Menggantikan rantai `if / elif` tanpa akhir di `parse_action_intent` dengan mode
 
 Yang *tidak* berubah: **Python memegang kebenaran** (RNG, state, roll); AI tidak memutuskan hasil.
 
+## Status sinkron dengan repo (ringkas)
+
+| Area | Kode utama | Catatan |
+|------|------------|--------|
+| Loader + JSON | `data/action_registry/registry_v1.json`, `action_registry.py` | Cache setelah load. |
+| Combat NL | `_registry_try_combat` + `_registry_try_combat_keyword_fallback` | Sinonim dari JSON; tanpa ``elif combat_terms``. |
+| Hedge NL | `instant.nl_hedge_uncertainty` + `_registry_apply_nl_hedge_flags` | Keyword di JSON; boleh overlay trivial. |
+| Tidur jam / default | `sleep.nl_duration_hours` + `parse_sleep_hours_from_nl` | Handler di `action_registry_handlers`. |
+| Akomodasi (hotel semalam) | `economy.nl_accommodation_stay` + `parse_accommodation_intent_from_nl` | Handler `apply_accommodation_nl`. |
+| Smartphone (telepon/SMS/dark web) | `other.nl_smartphone_w2` + `try_parse_smartphone_nl` | Regex di handlers. |
+| Travel | `_registry_try_travel` + `_registry_try_travel_keyword_fallback` | Keyword + heuristik menit/destinasi/kendaraan: `_apply_travel_heuristics`. |
+| Skill domain | `_registry_try_skill_domain` + `_registry_first_keywords_any_hit_apply` (urutan `hacking` → `medical` → `driving` → `stealth`) | Satu sumber keyword: JSON. |
+| Sosial | `match_registry_action_prefixed("social.")` + fallback `social.nl_dialogue` / `social.nl_scan_crowd` + suplemen `cari` + `_PEOPLE_WORDS` untuk scan | |
+| Negosiasi | `social.nl_negotiation` memakai `match.keywords_any` di JSON; menang lewat `_registry_try_social_nl` (prioritas 48) | Tanpa `elif` khusus di Python. |
+| Konflik ke orang | `social.nl_conflict` + `get_registry_action_by_id` | AND: `_SOCIAL_CONFLICT_WORDS` + `_PEOPLE_WORDS` (tetap kode). |
+| Trivial / mustahil / clear jam / STOP | `instant.*` + `iter_registry_matches_by_prefix` | Lihat Fase 2. |
+| FFCI / LLM | `registry_action_id_hint` divalidasi; setelah `normalize_resolved_intent`, field mekanis yang ada di `ctx_patch` entri hint di-**overlay** ke v1 / step0 v2 (LLM tidak boleh kontradiksi registry pada key itu) + anchor + `registry_hint_alignment` / mismatch | Fase 3 (parsial). |
+
+Dokumen di bawah menjelaskan **arsitektur**; tandai **(selesai di kode)** = perilaku utama sudah di `main` + `action_intent` + `verify.py` (regresi).
+
 ## Konsep inti
 
 | Elemen | Fungsi |
@@ -15,7 +35,7 @@ Yang *tidak* berubah: **Python memegang kebenaran** (RNG, state, roll); AI tidak
 | **Registry** (JSON / DB) | Daftar `action_id` yang valid: kata kunci, prioritas, patch ke `action_ctx`, atau rujukan *handler* kode. |
 | **Resolver** | Memilih **satu** `action_id` (urutan prioritas + match pertama / skor). |
 | **Dispatcher / handler** | Memetakan `action_id` → fungsi Python yang mengisi `action_ctx` dan memicu pipeline yang sudah ada (`update_timers`, combat gates, dll.). |
-| **LLM (opsional, FFCI)** | Hanya mengembalikan **`action_id` + `params`** dari **himpunan terbatas** (constrained intent), bukan aturan baru. |
+| **LLM (opsional, FFCI)** | Hanya mengembalikan **`registry_action_id_hint`** dari **himpunan terbatas** (`allowed_registry_action_ids`); unknown dibuang. |
 
 ## Skema registry (v1)
 
@@ -27,11 +47,11 @@ Minimal per entri:
   - `keywords_any`: list substring / kata
   - `regex` (opsional, hati-hati performa)
 - `ctx_patch`: objek parsial yang di-merge ke `action_ctx` (hanya field yang sudah dipakai engine)
-- `handler` (opsional): nama simbol di Python, mis. `"apply_travel_from_text"` — untuk logika yang tidak bisa diekspresikan statis (estimasi menit travel, ekstraksi destinasi).
+- `handler` (opsional): nama simbol di Python — untuk logika yang tidak bisa diekspresikan statis.
 
 Versi berikutnya bisa menambah: `preconditions`, `requires_scene`, `mutually_exclusive_group`.
 
-## Fase migrasi (disarankan)
+## Fase migrasi
 
 ### Fase 0 — Kontrak ✅
 
@@ -39,117 +59,130 @@ Versi berikutnya bisa menambah: `preconditions`, `requires_scene`, `mutually_exc
 
 ### Fase 1 — Dual path (aman) ✅
 
-- **Tidur NL** dari registry: `parse_action_intent` memanggil `_registry_try_sleep` **setelah** cabang akomodasi (supaya “hotel semalam” tidak tertimpa), **sebelum** `_parse_sleep_hours` legacy.
+- **Tidur NL** dari registry: `parse_action_intent` memanggil `_registry_try_sleep` lalu **`_registry_try_sleep_hours_nl`** (**setelah** cabang akomodasi); parser jam ada di **`parse_sleep_hours_from_nl`** (handler registry).
 - `meta["resolved_action_id"]` + `meta["intent_resolution"] = "registry"` diset di `main.py` bila `action_ctx["registry_action_id"]` ada.
 
 ### Fase 1b — Combat NL (registry-first) ✅ (parsial)
 
-- `_registry_try_combat` dipanggil **sebelum** cabang combat legacy (`combat_terms`): jika match `combat.*` di JSON, `ctx_patch` diterapkan + `registry_action_id`.
-- Entri: `combat.nl_ranged_attempt` (tembak/nembak/shoot, …), `combat.nl_melee` (serang/attack/pukul, …). `intent_note: nl_attempt` **bukan** dari JSON; diset di Python bila substring sama seperti legacy (`mencoba`, `try to`, …).
-- Input yang tidak match registry tetap jatuh ke **legacy** `elif combat_terms` (perilaku lama).
+- `_registry_try_combat` **sebelum** cabang combat legacy (`combat_terms`): match `combat.*` di JSON + `registry_action_id`.
+- Input yang tidak match registry tetap jatuh ke **legacy** `elif combat_terms`.
 
-### Fase 1c — Travel NL (registry-first) ✅ (parsial)
+### Fase 1c — Travel NL (registry-first) ✅
 
-- `_registry_try_travel` sebelum cabang `_TRAVEL_LEGACY_KEYWORDS`; heuristik menit / destinasi / kendaraan dipusatkan di `_apply_travel_heuristics` (dipakai registry + legacy).
-- Entri `travel.nl_generic` (prioritas 40): kata kunci perjalanan yang sudah ada + sinonim aman (`head to`, `heading to`, `commute to`); ekstraksi destinasi Inggris ditambah di Python untuk frasa tersebut.
+- `_registry_try_travel` (match global `travel.*`) lalu **`_registry_try_travel_keyword_fallback`** — keyword dari **`travel.nl_generic`** di JSON (bukan tuple Python).
+- Heuristik menit / destinasi / kendaraan: **`_apply_travel_heuristics`** (dipakai kedua jalur).
 
-### Fase 1d — Domain skill (registry-first) ✅ (parsial)
+### Fase 1d — Domain skill (registry-first) ✅
 
-- `_registry_try_skill_domain` sebelum cabang legacy `hacking` / `medical` / `driving` / `stealth` (hanya set `domain` seperti sebelumnya).
-- Entri: `hacking.nl_keywords`, `medical.nl_keywords`, `driving.nl_keywords`, `stealth.nl_keywords` (prioritas 42–45, setelah travel). Sinonim tambahan hanya di JSON (mis. `piratear`, `first aid`, `take the wheel`, `stay hidden`) tetap memakai jalur registry; kata kunci lama tetap lewat legacy jika tidak ada di data.
+- `_registry_try_skill_domain` + fallback keyword dari JSON untuk `hacking.*` … `stealth.*` — **tanpa** tuple legacy di Python.
 
-### Fase 1e — Sosial & trivial (registry-first, parsial) ✅
+### Fase 1e — Sosial & trivial (registry-first) ✅
 
-- `match_registry_action_prefixed(text, id_prefix)` memilih aksi hanya dalam prefiks (`social.*`, `instant.*`) agar tidak berebut prioritas global dengan tidur/combat/travel.
-- `_registry_try_social_nl` sebelum `_is_social_dialogue` / `_is_social_scan`: entri `social.nl_dialogue`, `social.nl_scan_crowd` (prioritas 46–47).
-- `_registry_try_instant_trivial` di gate realism: `instant.nl_trivial` (50); tidak menimpa `registry_action_id` yang sudah diisi cabang `elif` lebih kuat; sinonim baru contoh `check inventory`.
+- `match_registry_action_prefixed(text, "social.")` untuk urutan prioritas dalam keluarga sosial.
+- Fallback: **`_registry_try_social_nl_dialogue_fallback`** (`social.nl_dialogue`), **`_registry_try_social_nl_scan_crowd_fallback`** (`social.nl_scan_crowd` + suplemen `cari` + orang).
+- **`_registry_try_instant_trivial`**: hanya **`instant.nl_trivial`** (+ fallback substring selaras JSON).
 
 ### Fase 1f — Inquiry sosial + anchor LLM ✅ (parsial)
 
-- `_registry_try_social_inquiry_nl` memakai `match_registry_action_prefixed(..., "social.inquiry.")` **sebelum** `_is_social_inquiry` (subset frasa + `?` + sinonim data-only seperti `what time is it`).
-- **Policy merge FFCI**: setelah `merge_intent_into_action_ctx`, `apply_parser_registry_anchor_after_llm` mengembalikan `action_ctx["registry_action_id"]` dan men-set `meta["intent_resolution"] = "registry+llm"` sambil mempertahankan `meta["resolved_action_id"]` ke id parser (jejak audit; field mekanik lain tetap boleh di-overlay LLM).
-- Jalur abuse re-parse: `resolved_action_id` / `intent_resolution` diselaraskan ulang dari hasil parse kedua (atau dihapus jika tidak ada registry).
+- `_registry_try_social_inquiry_nl` dengan prefiks **`social.inquiry.`**
+- Merge FFCI: `apply_parser_registry_anchor_after_llm`, `merge_intent_into_action_ctx`, mismatch gate.
 
-### Fase 1g — Handler + inquiry tunggal ✅ (parsial)
+### Fase 1g — Handler + inquiry tunggal ✅
 
-- Field opsional **`handler`** (string) per entri registry; hasil match menyertakan key `handler` bila ada; `action_intent` memanggil `apply_registry_handler` setelah patch (no-op jika nama belum terdaftar — lihat `engine/core/action_registry_handlers.py`).
-- **`inquiry_phrases_match`**: substring inquiry disatukan dengan semua aksi `social.inquiry.*` di JSON; **`_is_social_inquiry`** memakainya (fallback minimal hanya jika load registry gagal).
+- **`handler`** di JSON → `action_registry_handlers.apply_registry_handler`.
+- **`inquiry_phrases_match`** + **`_is_social_inquiry`** memakai keyword inquiry dari data.
 
-### Fase 1h — Handler inquiry + audit keyword ✅ (parsial)
+### Fase 1h — Handler inquiry + audit keyword ✅
 
-- Entri **`social.inquiry.nl_keywords`** memakai **`handler`: `ensure_social_inquiry_shape`** (`action_registry_handlers`): `ctx_patch` boleh tipis/kosong; field domain / inquiry diset di Python.
-- **Tumpang-tindih yang disengaja / diketahui**: substring **`siapa `** di inquiry membuat frasa scan seperti `siapa di sekitar` terklasifikasi inquiry (sama seperti urutan legacy `_is_social_inquiry` sebelum `_is_social_scan`). Tidak ada overlap keyword antara `social.nl_dialogue` dan `social.inquiry.*`; `lihat sekitar` / `lihat orang` hanya di scan, bukan di trivial `lihat status`.
+- **`social.inquiry.nl_keywords`** + **`ensure_social_inquiry_shape`**.
+- **Tumpang-tindih diketahui**: substring **`siapa `** di inquiry dapat mengalahkan frasa scan yang overlap; `lihat sekitar` / `lihat orang` hanya di scan.
 
-### Fase 1i — Allowlist intent + snapshot FFCI ✅ (parsial)
+### Fase 1i — Allowlist intent + snapshot FFCI ✅
 
-- **`allowed_registry_action_ids()`** di `action_registry.py` (alias semantik di atas `list_action_ids`) untuk permukaan allowlist / prompt.
-- **`resolve_intent`** menyisipkan blok `[REGISTRY_ACTION_IDS]` ke user message; **INTENT_SYSTEM_PROMPT** menjelaskan bahwa itu hanya petunjuk silang, bukan field JSON baru.
+- **`allowed_registry_action_ids()`**; prompt intent menyertakan blok `[REGISTRY_ACTION_IDS]`.
 
-### Fase 1j — Hint registry dari LLM ✅ (parsial)
+### Fase 1j — Hint registry dari LLM ✅
 
-- Intent v1/v2 boleh membawa **`registry_action_id_hint`** (top-level); `normalize_resolved_intent` memanggil `sanitize_registry_action_id_hint` — id tidak dikenal **dibuang**.
-- **`merge_intent_into_action_ctx`** menyalin hint tervalidasi ke **`action_ctx["llm_registry_action_id_hint"]`** (terpisah dari `registry_action_id` parser / anchor).
+- **`registry_action_id_hint`** → **`sanitize_registry_action_id_hint`** → **`action_ctx["llm_registry_action_id_hint"]`**.
 
-### Fase 1k — Telemetri hint vs parser ✅ (parsial)
+### Fase 1k — Telemetri hint vs parser ✅
 
-- **`registry_hint_alignment`**: label `none` | `parser_only` | `llm_only` | `match` | `mismatch` (parser `registry_action_id` vs `llm_registry_action_id_hint`).
-- **`main.py`**: mirror `llm_registry_action_id_hint` ke `meta` + set `registry_hint_alignment` setelah intent merge (tiap turn).
+- **`registry_hint_alignment`**; mirror di `main.py`.
 
-### Fase 1l — Handler travel + flag mismatch ✅ (parsial)
+### Fase 1l — Handler travel + flag mismatch ✅
 
-- **`ensure_travel_registry_shape`**: handler untuk `travel.nl_generic` dengan `ctx_patch` kosong; heuristik `_apply_travel_heuristics` tetap mengisi menit/destinasi/kendaraan.
-- **`meta["registry_hint_mismatch"]`**: `True` hanya jika `registry_hint_alignment == "mismatch"` (parser vs hint LLM).
+- **`ensure_travel_registry_shape`** untuk `travel.nl_generic`.
+- **`meta["registry_hint_mismatch"]`** bila parser vs hint tidak cocok.
 
-### Fase 1m — Narration + mechanical gate (alignment) ✅ (parsial)
+### Fase 1m — Narration + mechanical gate (alignment) ✅
 
-- **`main.py`**: `registry_hint_alignment` dan `registry_hint_mismatch` dicerminkan ke **`action_ctx`** (agar paket narasi konsisten).
-- **`turn_prompt._fmt_action_ctx`**: baris ENGINE jika alignment ≠ `none`; peringatan keras jika **`registry_hint_mismatch`** (prioritas hasil parser/engine atas konflik hint LLM).
-- **Gate mekanik**: jika parser punya **`registry_action_id`** dan setelah merge terjadi **`mismatch`** (parser vs `llm_registry_action_id_hint`), field yang sama dengan **`merge_intent_into_action_ctx`** dipulihkan dari snapshot pra-merge (dan field merge yang tidak ada di snapshot di-**pop** supaya tidak tertinggal overlay LLM); **`strip_llm_intent_overlay_on_registry_hint_mismatch`** menghapus overlay intent v2 (`intent_plan`, `step_now_id`, `player_goal`, …) agar tidak menabrak domain yang dipulihkan.
-- **UI**: **`display/renderer`** — monitor compact `[INTENT]` dan full monitor `hint_mismatch=yes` pada baris LastIntent.
+- Mirror alignment ke `action_ctx`; **`turn_prompt._fmt_action_ctx`**; **`strip_llm_intent_overlay_on_registry_hint_mismatch`**.
+- Renderer: `[INTENT]` / `hint_mismatch`.
 
-### Fase 2 — Pindahkan cabang demi cabang
+### Fase 2 — Cabang utama → data + helper ✅ **dimaksimalkan (selesai praktis)**
 
-- Tidur, combat, travel “polos” → data + patch.
-- Cabang yang butuh heuristik panjang → `handler` Python tunggal terdaftar di map, bukan 200 `elif`.
-- **Parsial**: konflik sosial eksplisit ke orang (`social.nl_conflict`) — `ctx_patch` di JSON, syarat AND (kata konflik + kata orang) tetap di Python; **`get_registry_action_by_id`** untuk load patch tanpa keyword global.
-- **Parsial**: negosiasi / tipu ringkas (`social.nl_negotiation`, kata kunci di Python) — `ctx_patch` + handler **`ensure_social_negotiation_shape`** (formal vs standard).
-- **Parsial**: istirahat singkat 60m — ``rest.nl_istirahat_short`` (frasa Indonesia di JSON) + ``rest.nl_prefix_60m`` (prefix ``rest …`` / kata ``istirahat`` saja lewat Python).
-- **Parsial**: intimacy private konsensual — ``social.nl_intimacy_private`` (``ctx_patch`` + handler ``ensure_intimacy_private_registry_shape``); guard blokir / frasa positif tetap ``_is_intimacy_private``.
-- **Parsial (data-only)**: sinonim tambahan di JSON untuk ``social.nl_dialogue`` (``dengan orang``, ``ke orang``, …) dan ``social.nl_scan_crowd`` (``mengintai``, ``people watching``, …) yang sebelumnya hanya di legacy ``_is_social_*``.
-- **Parsial**: ``instant.nl_clear_jam`` (``clear jam`` / ``bersihin macet``) — menggantikan ``if`` string di ``parse_action_intent``; prioritas 49 sebelum ``instant.nl_trivial``.
-- **Parsial**: ``instant.nl_physically_impossible`` (mustahil fisik) — prioritas 51; menggantikan ``if`` string realism gate.
-- **Parsial**: STOP sequence — ``instant.nl_stop_irreversible`` / ``instant.nl_stop_new_zone`` / ``instant.nl_stop_critical_blood`` + ``iter_registry_matches_by_prefix`` (beberapa flag dalam satu input).
+Seluruh item migrasi NL ke registry / helper untuk **travel, skill domain, sosial (termasuk negosiasi), rest, intimacy, inquiry, trivial/clear jam/mustahil/STOP** sudah di kode + **`verify.py`**.
 
-### Fase 3 — LLM terikat registry
+**Perluasan terakhir (maksimalisasi):**
 
-- Prompt intent resolver: output JSON **hanya** `action_id` ∈ `allowed_action_ids` + `params` sesuai skema entri.
-- Parser teks menjadi fallback ketika LLM tidak dipanggil atau gagal.
+- **Combat**: tuple **`combat_terms`** + cabang ranged/melee manual dihapus; fallback **`_registry_try_combat_keyword_fallback`** memakai keyword **`combat.nl_ranged_attempt`** lalu **`combat.nl_melee`** dari JSON (sama urutan prioritas), plus **`nl_attempt`** lewat **`_NL_ATTEMPT_MARKERS`**. Frasa hanya menyebut senjata tanpa verba serangan tetap **tidak** memicu combat (mitigasi false positive).
+- **Hedge ketidakpastian**: entri **`instant.nl_hedge_uncertainty`** di JSON; **`_registry_apply_nl_hedge_flags`** menggantikan literal Python (tetap bisa menimpa trivial); **`registry_action_id`** di-set hanya bila belum ada id lain.
+
+**Logika parser di Python** (tetap deterministik; sebagian disatukan lewat **id registry + handler**):
+
+- Pola **jam tidur** dari teks NL: ``parse_sleep_hours_from_nl`` + handler ``apply_sleep_duration_from_nl`` di ``action_registry_handlers.py``, id ``sleep.nl_duration_hours``.
+- **Akomodasi semalam / hotel**: ``parse_accommodation_intent_from_nl`` + ``apply_accommodation_nl`` (``economy.nl_accommodation_stay``).
+- **Smartphone NL**: ``try_parse_smartphone_nl`` di ``action_registry_handlers``; id ``other.nl_smartphone_w2``.
+- **Social inquiry**: cabang manual ``elif _is_social_inquiry`` diganti ``_registry_try_social_inquiry_nl_legacy_fallback`` → ``social.inquiry.nl_keywords`` + ``ensure_social_inquiry_shape`` bila prefixed NL lewat tetapi heuristik inquiry tetap True (jaga drift / konsistensi ``registry_action_id``).
+- Penyesuaian risiko sosial setelah hedge: ``apply_social_post_hedge_risk_rules`` di ``action_registry_handlers`` (dialogue/scan/inquiry, kata konflik, default ``social_mode``).
+- **`_SOCIAL_CONFLICT_WORDS`** + **`_PEOPLE_WORDS`** untuk **`social.nl_conflict`** (AND).
+
+Penambahan sinonim combat/hedge baru → **edit `registry_v1.json`**.
+
+### Fase 3 — LLM terikat registry ✅ (parsial; dilanjutkan)
+
+**Sudah ada:**
+
+- Snapshot **`[REGISTRY_ACTION_IDS]`** dari **`allowed_registry_action_ids()`**.
+- **`registry_action_id_hint`** harus ∈ allowlist; invalid dibuang (**`sanitize_registry_action_id_hint`**).
+- **`normalize_resolved_intent`** (v1 flat dan v2 langkah pertama): jika hint valid, **`ctx_patch`** entri registry di-merge ke field mekanis yang overlap (**`ai/intent_resolver.py`** — registry menang atas LLM untuk key seperti `action_type`, `domain`, `combat_style`, …).
+- Overlay diperluas ke field tambahan dari JSON (mis. ``rested_minutes``, ``sleep_duration_h``, flag trivial / mustahil / ``instant_minutes``, ``visibility``, …) lewat **`_registry_overlay_merge_key`**; merge ke **`action_ctx`** lewat **`INTENT_MERGE_FIELD_KEYS`** + flatten v2.
+- **Stub registry-first:** ``version: 3`` + ``intent_schema_version: 3`` + hint valid → keluaran berbentuk v1 (**``_normalize_registry_stub_v3``**; ``version`` output tetap 1). Objek **`params`** (opsional) di-merge setelah ``ctx_patch`` dengan allowlist yang sama dengan overlay + ``suggested_dc`` / ``targets`` / ``travel_destination`` / ``inventory_ops``.
+- **Payload minimal alat:** satu id lewat ``registry_action_id`` atau ``registry_action_id_hint`` atau ``action_id`` (+ ``params``, dll.) **tanpa** kunci ``version`` / ``intent_schema_version`` / ``plan`` / ``action_type`` / ``domain`` di root → **``normalize_resolved_intent``** → **``_normalize_minimal_registry_intent_payload``** (dua alias berbeda nilai → ditolak).
+- ``params`` stub: ``smartphone_op`` (disanitasi), ``accommodation_intent`` (dict dangkal: maks 24 kunci, hanya bool/int/float/string, nilai non-primitif dibuang). Helper **`parse_and_normalize_intent_json`** (``ai/intent_resolver.py``) untuk string JSON → ``normalize_resolved_intent``.
+- Prompt menjelaskan hint + overlay mekanik + stub v3 + satu baris format JSON alat tanpa ``version``.
+
+**Belum / roadmap:**
+
+- (Opsional) Skema lebih kaya untuk ``accommodation_intent`` (field wajib / enum) bila ekonomi mengikat ke model terstruktur.
 
 ### Fase 4 — Penyederhanaan
 
-- Kurangi duplikasi antara `action_intent.py` dan registry; satu sumber kebenaran untuk sinonim NL.
+- Kurangi duplikasi antara `action_intent.py` dan registry; sinonim baru **utamanya** lewat JSON.
+- Lanjutkan pengujian di **`scripts/verify.py`** tiap penggeseran cabang (mis. scan/inquiry/dialogue: ``registry_action_id`` + ``risk_level`` setelah hedge + ``apply_social_post_hedge_risk_rules``).
 
 ## Risiko & mitigasi
 
 | Risiko | Mitigasi |
 |--------|----------|
-| Regresi perilaku | Fase 1 selalu punya fallback legacy; `verify.py` untuk setiap cabang yang dipindah. |
-| JSON tidak cukup untuk logika kompleks | Field `handler` + fungsi Python kecil, tetap deterministik. |
-| LLM “kreatif” di luar registry | Validasi keras: tolak `action_id` tidak dikenal; clamp params. |
-| Performa | Match keyword dulu; regex terbatas; cache registry di memori setelah load. |
+| Regresi perilaku | Fallback legacy tempat berisiko; `verify.py` untuk cabang yang disentuh. |
+| JSON tidak cukup untuk logika kompleks | Field `handler` + fungsi Python kecil, deterministik. |
+| LLM di luar registry | Validasi hint; mismatch gate mengembalikan snapshot parser. |
+| Performa | Match keyword dulu; cache registry di memori setelah load. |
 
-## Kriteria selesai (definisi “seperti database”)
+## Kriteria selesai (“seperti database”)
 
-- Menambah perilaku baru yang **murni data** (sinonim + `ctx_patch`) **tanpa** menyentuh `if` baru di `action_intent.py`.
-- LLM (jika dipakai) **tidak** bisa mengusulkan aksi di luar `allowed_action_ids`.
+- Menambah perilaku baru yang **murni data** (sinonim + `ctx_patch`) **tanpa** `if` baru di `action_intent.py` — **hampir** tercapai untuk jalur yang sudah dipindah; cabang hedge/combat legacy masih boleh menyentuh Python.
+- LLM tidak mengusulkan **hint** id di luar allowlist (**tercapai** untuk hint).
 
-## File yang direncanakan (repo)
+## File terkait
 
-- `data/action_registry/registry_v1.json` — isi entri bertambah seiring migrasi.
-- `engine/core/action_registry.py` — load, validasi, resolve, merge patch.
-- `engine/core/action_registry_handlers.py` — map nama `handler` → callable (Fase 1g+).
-- Integrasi bertahap di `engine/core/action_intent.py`.
+- `data/action_registry/registry_v1.json`
+- `engine/core/action_registry.py`
+- `engine/core/action_registry_handlers.py`
+- `engine/core/action_intent.py`
+- `ai/intent_resolver.py`, `main.py`, `display/renderer.py`, `scripts/verify.py`
 
 ## Catatan OMNI-ENGINE
 
-Crafting, shop, travel engine, dll. sudah **data-driven** di modul masing-masing; registry ini menyatukan **lapisan “apa maksud input pemain ini?”** agar konsisten dengan pola tersebut.
+Crafting, shop, travel engine, dll. sudah **data-driven** di modul masing-masing; registry menyatukan lapisan **“apa maksud input pemain ini?”** agar konsisten dengan pola tersebut.

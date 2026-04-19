@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
+
+from engine.social.news import push_news as _social_push_news
+from engine.social.ripple_queue import enqueue_ripple as _social_enqueue_ripple
 
 
 def can_surface_ripple(state: dict[str, Any], rp: dict[str, Any]) -> bool:
@@ -30,11 +34,13 @@ def can_surface_ripple(state: dict[str, Any], rp: dict[str, Any]) -> bool:
                         continue
                     if int(c.get("trust", 0) or 0) >= 85:
                         return int(rp.get("surface_attempts", 0) or 0) >= 1
-            except Exception:
+            except Exception as _omni_sw_33:
+                log_swallowed_exception('engine/world/timers_bus.py:33', _omni_sw_33)
                 return False
             try:
                 return int(rp.get("surface_attempts", 0) or 0) >= 2
-            except Exception:
+            except Exception as _omni_sw_37:
+                log_swallowed_exception('engine/world/timers_bus.py:37', _omni_sw_37)
                 return False
         return True
 
@@ -47,10 +53,9 @@ def can_surface_ripple(state: dict[str, Any], rp: dict[str, Any]) -> bool:
 def push_news(state: dict[str, Any], *, text: str, source: str = "broadcast") -> None:
     """Append a bounded, structured headline to world.news_feed."""
     try:
-        from engine.social.news import push_news as _push
-
-        _push(state, text=text, source=source)
-    except Exception:
+        _social_push_news(state, text=text, source=source)
+    except Exception as _omni_sw_53:
+        log_swallowed_exception('engine/world/timers_bus.py:53', _omni_sw_53)
         meta = state.get("meta", {}) or {}
         day = int(meta.get("day", 1) or 1)
         world = state.setdefault("world", {})
@@ -66,10 +71,9 @@ def push_news(state: dict[str, Any], *, text: str, source: str = "broadcast") ->
 def enqueue_ripple(state: dict[str, Any], rp: dict[str, Any]) -> None:
     """Queue ripple with dedupe/fallback semantics."""
     try:
-        from engine.social.ripple_queue import enqueue_ripple as _enqueue
-
-        _enqueue(state, rp)
-    except Exception:
+        _social_enqueue_ripple(state, rp)
+    except Exception as _omni_sw_72:
+        log_swallowed_exception('engine/world/timers_bus.py:72', _omni_sw_72)
         arr = state.setdefault("active_ripples", [])
         if not isinstance(arr, list):
             arr = []

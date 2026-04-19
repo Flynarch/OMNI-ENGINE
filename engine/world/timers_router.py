@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any, Callable
+
+import engine.systems.encounter_router as _encounter_router
 
 
 def apply_triggered_events(
@@ -24,25 +27,19 @@ def apply_triggered_events(
         et = str(ev.get("event_type", "") or "")
         payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
         try:
-            from engine.systems.encounter_router import audit_casefile_for_event
-
-            audit_casefile_for_event(state, ev)
-        except Exception:
-            pass
+            _encounter_router.audit_casefile_for_event(state, ev)
+        except Exception as _omni_sw_30:
+            log_swallowed_exception('engine/world/timers_router.py:30', _omni_sw_30)
         routed_fp: dict[str, Any] | None = None
         try:
-            from engine.systems.encounter_router import foreshadow_for_routed_event
-
-            fp = foreshadow_for_routed_event(state, ev)
+            fp = _encounter_router.foreshadow_for_routed_event(state, ev)
             if isinstance(fp, dict):
                 routed_fp = fp
-        except Exception:
-            pass
+        except Exception as _omni_sw_39:
+            log_swallowed_exception('engine/world/timers_router.py:39', _omni_sw_39)
         if isinstance(routed_fp, dict):
             try:
-                from engine.systems.encounter_router import handle_triggered_event
-
-                handle_triggered_event(state, ev)
+                _encounter_router.handle_triggered_event(state, ev)
                 text = str(routed_fp.get("text", "") or "").strip()
                 if text:
                     push_news(state, text=text, source=str(routed_fp.get("news_source", "police") or "police"))
@@ -63,7 +60,8 @@ def apply_triggered_events(
                         "meta": routed_fp.get("meta") if isinstance(routed_fp.get("meta"), dict) else {},
                     },
                 )
-            except Exception:
+            except Exception as _omni_sw_66:
+                log_swallowed_exception('engine/world/timers_router.py:66', _omni_sw_66)
                 state.setdefault("world_notes", []).append(f"[Timers] router-first handler failed for event_type={et}")
             continue
         handled_by_registry = dispatch_registered_event_handler(state, ev, day=day, time_min=time_min)

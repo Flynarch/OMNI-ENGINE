@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.social.reputation_lanes import premium_intel_pay_cap
 import hashlib
 from typing import Any
 
@@ -22,7 +24,8 @@ def _get_cash(state: dict[str, Any]) -> int:
     eco = state.get("economy", {}) if isinstance(state.get("economy"), dict) else {}
     try:
         return int(eco.get("cash", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_25:
+        log_swallowed_exception('engine/social/informant_ops.py:25', _omni_sw_25)
         return 0
 
 
@@ -47,8 +50,6 @@ def pay_informant(state: dict[str, Any], npc_name: str, amount: int) -> dict[str
     if amt <= 0:
         return {"ok": False, "reason": "invalid_amount"}
     try:
-        from engine.social.reputation_lanes import premium_intel_pay_cap
-
         cap = int(premium_intel_pay_cap(state))
         if amt > cap:
             return {
@@ -57,8 +58,8 @@ def pay_informant(state: dict[str, Any], npc_name: str, amount: int) -> dict[str
                 "message": "They won't move serious money without street or political credibility first.",
                 "cap": cap,
             }
-    except Exception:
-        pass
+    except Exception as _omni_sw_60:
+        log_swallowed_exception('engine/social/informant_ops.py:60', _omni_sw_60)
     prof = _profile(state, nm)
     if not isinstance(prof, dict):
         return {"ok": False, "reason": "not_informant"}
@@ -68,14 +69,16 @@ def pay_informant(state: dict[str, Any], npc_name: str, amount: int) -> dict[str
     _set_cash(state, cash - amt)
     try:
         rel = int(prof.get("reliability", 50) or 50)
-    except Exception:
+    except Exception as _omni_sw_71:
+        log_swallowed_exception('engine/social/informant_ops.py:71', _omni_sw_71)
         rel = 50
     rel2 = _clamp(rel + max(1, amt // 250), 0, 100)
     prof["reliability"] = rel2
     # Paying reduces immediate chance of backlash slightly (modeled via greed).
     try:
         greed = int(prof.get("greed", 40) or 40)
-    except Exception:
+    except Exception as _omni_sw_78:
+        log_swallowed_exception('engine/social/informant_ops.py:78', _omni_sw_78)
         greed = 40
     prof["greed"] = _clamp(greed + 1, 0, 100)
     state.setdefault("world", {}).setdefault("informants", {})[nm] = dict(prof)
@@ -98,7 +101,8 @@ def burn_informant(state: dict[str, Any], npc_name: str) -> dict[str, Any]:
     aff = _norm((prof or {}).get("affiliation", "")) or "civilian"
     try:
         rel = int((prof or {}).get("reliability", 50) or 50)
-    except Exception:
+    except Exception as _omni_sw_101:
+        log_swallowed_exception('engine/social/informant_ops.py:101', _omni_sw_101)
         rel = 50
 
     # Deterministic backlash chance: high reliability informants can retaliate when burned.

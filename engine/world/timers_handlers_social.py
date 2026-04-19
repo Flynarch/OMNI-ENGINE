@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
+
+from engine.core.factions import sync_faction_statuses_from_trace
+from engine.social.informants import maybe_queue_informant_tip
+from engine.social.investigation_chains import handle_informant_tip as informant_tip_investigation_chain
+from engine.social.social_diffusion import propagate_rumor
+from engine.world.heat import bump_heat, bump_suspicion
+from engine.world.timers_bus import enqueue_ripple as _queue_ripple
+from engine.world.timers_bus import push_news as _push_news
 
 
 def handle_social_diffusion_hop(state: dict[str, Any], ev: dict[str, Any], *, day: int, time_min: int) -> bool:
     payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
-    try:
-        from engine.social.social_diffusion import propagate_rumor
-    except Exception:
-        return True
 
     frm = str(payload.get("from_npc", "") or "").strip()
     to = str(payload.get("to_npc", "") or "").strip()
@@ -16,7 +21,8 @@ def handle_social_diffusion_hop(state: dict[str, Any], ev: dict[str, Any], *, da
     cat = str(payload.get("category", "") or "").strip()
     try:
         hop = int(payload.get("hop", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_19:
+        log_swallowed_exception('engine/world/timers_handlers_social.py:19', _omni_sw_19)
         hop = 0
     if not (frm and to and rumor and cat):
         return True
@@ -24,7 +30,8 @@ def handle_social_diffusion_hop(state: dict[str, Any], ev: dict[str, Any], *, da
     try:
         meta2 = state.get("meta", {}) or {}
         turn2 = int(meta2.get("turn", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_27:
+        log_swallowed_exception('engine/world/timers_handlers_social.py:27', _omni_sw_27)
         turn2 = 0
 
     world2 = state.setdefault("world", {})
@@ -34,11 +41,13 @@ def handle_social_diffusion_hop(state: dict[str, Any], ev: dict[str, Any], *, da
         world2["social_diffusion"] = sd
     try:
         sd_day = int(sd.get("day", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_37:
+        log_swallowed_exception('engine/world/timers_handlers_social.py:37', _omni_sw_37)
         sd_day = 0
     try:
         sd_turn = int(sd.get("turn", -1) or -1)
-    except Exception:
+    except Exception as _omni_sw_41:
+        log_swallowed_exception('engine/world/timers_handlers_social.py:41', _omni_sw_41)
         sd_turn = -1
     if sd_day != day:
         sd["day"] = int(day)
@@ -59,7 +68,8 @@ def handle_social_diffusion_hop(state: dict[str, Any], ev: dict[str, Any], *, da
     propagated = []
     try:
         propagated = propagate_rumor(state, frm, rumor, cat, hop=hop)
-    except Exception:
+    except Exception as _omni_sw_62:
+        log_swallowed_exception('engine/world/timers_handlers_social.py:62', _omni_sw_62)
         propagated = []
     if propagated:
         pending = state.setdefault("pending_events", [])
@@ -83,8 +93,6 @@ def handle_social_diffusion_hop(state: dict[str, Any], ev: dict[str, Any], *, da
                     }
                 )
     try:
-        from engine.social.informants import maybe_queue_informant_tip
-
         maybe_queue_informant_tip(
             state,
             from_npc=frm,
@@ -93,8 +101,8 @@ def handle_social_diffusion_hop(state: dict[str, Any], ev: dict[str, Any], *, da
             category=cat,
             hop=hop,
         )
-    except Exception:
-        pass
+    except Exception as _omni_sw_96:
+        log_swallowed_exception('engine/world/timers_handlers_social.py:96', _omni_sw_96)
     state.setdefault("world_notes", []).append(f"[SocialDiffusion] {to} mendengar: {rumor[:90]}")
     return True
 
@@ -102,31 +110,29 @@ def handle_social_diffusion_hop(state: dict[str, Any], ev: dict[str, Any], *, da
 def handle_informant_tip(state: dict[str, Any], ev: dict[str, Any], *, day: int, time_min: int) -> bool:
     payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
     try:
-        from engine.social.investigation_chains import handle_informant_tip as _handle_informant_tip
-
         if isinstance(payload, dict):
-            _handle_informant_tip(state, payload)
-    except Exception:
-        pass
+            informant_tip_investigation_chain(state, payload)
+    except Exception as _omni_sw_109:
+        log_swallowed_exception('engine/world/timers_handlers_social.py:109', _omni_sw_109)
     return True
 
 
 def handle_npc_report(state: dict[str, Any], ev: dict[str, Any], *, day: int, time_min: int) -> bool:
     payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
-    from engine.world.timers_bus import enqueue_ripple as _queue_ripple
-    from engine.world.timers_bus import push_news as _push_news
 
     reporter = str(payload.get("reporter", "unknown") or "unknown")
     aff = str(payload.get("affiliation", "") or "").strip().lower()
     try:
         sus = int(payload.get("suspicion", 50) or 50)
-    except Exception:
+    except Exception as _omni_sw_123:
+        log_swallowed_exception('engine/world/timers_handlers_social.py:123', _omni_sw_123)
         sus = 50
     sus = max(0, min(100, sus))
     tr = state.setdefault("trace", {})
     try:
         tp = int(tr.get("trace_pct", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_129:
+        log_swallowed_exception('engine/world/timers_handlers_social.py:129', _omni_sw_129)
         tp = 0
     before_tp = tp
     bump = 1 + int((sus - 50) / 20)
@@ -137,21 +143,17 @@ def handle_npc_report(state: dict[str, Any], ev: dict[str, Any], *, day: int, ti
     trace_delta = tp - before_tp
 
     try:
-        from engine.core.factions import sync_faction_statuses_from_trace
-
         sync_faction_statuses_from_trace(state)
-    except Exception:
-        pass
+    except Exception as _omni_sw_143:
+        log_swallowed_exception('engine/world/timers_handlers_social.py:143', _omni_sw_143)
     _push_news(state, text=f"Tip masuk: pihak berwenang menerima laporan anon tentang player ({reporter}).", source="broadcast")
     try:
-        from engine.world.heat import bump_heat, bump_suspicion
-
         loc0 = str(payload.get("origin_location", "") or str((state.get("player", {}) or {}).get("location", "") or "")).strip().lower()
         if loc0:
             bump_suspicion(state, loc=loc0, delta=2 + (1 if aff == "police" else 0), reason="npc_report", ttl_days=2)
             bump_heat(state, loc=loc0, delta=1, reason="npc_report", ttl_days=5)
-    except Exception:
-        pass
+    except Exception as _omni_sw_153:
+        log_swallowed_exception('engine/world/timers_handlers_social.py:153', _omni_sw_153)
     _queue_ripple(
         state,
         {
@@ -179,7 +181,8 @@ def handle_paper_trail_ping(state: dict[str, Any], ev: dict[str, Any], *, day: i
     aff = str(payload.get("affiliation", "police") or "police").strip().lower()
     try:
         sus = int(payload.get("suspicion", 55) or 55)
-    except Exception:
+    except Exception as _omni_sw_182:
+        log_swallowed_exception('engine/world/timers_handlers_social.py:182', _omni_sw_182)
         sus = 55
     origin_location = str(payload.get("origin_location", "") or "").strip().lower()
     delivery_id = str(payload.get("delivery_id", "") or "").strip()
@@ -203,20 +206,17 @@ def handle_paper_trail_ping(state: dict[str, Any], ev: dict[str, Any], *, day: i
         )
     state.setdefault("world_notes", []).append(f"[PaperTrail] ping reporter={reporter} sus={sus} delivery_id={delivery_id} item={item_id}")
     try:
-        from engine.world.heat import bump_heat, bump_suspicion
-
         loc0 = str(origin_location or str((state.get("player", {}) or {}).get("location", "") or "")).strip().lower()
         if loc0:
             bump_suspicion(state, loc=loc0, delta=2, reason="paper_trail", ttl_days=2)
             bump_heat(state, loc=loc0, delta=1, reason="paper_trail", ttl_days=6)
-    except Exception:
-        pass
+    except Exception as _omni_sw_212:
+        log_swallowed_exception('engine/world/timers_handlers_social.py:212', _omni_sw_212)
     return True
 
 
 def handle_npc_offer(state: dict[str, Any], ev: dict[str, Any], *, day: int, time_min: int) -> bool:
     payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
-    from engine.world.timers_bus import enqueue_ripple as _queue_ripple
 
     npc = str(payload.get("npc", "unknown") or "unknown")
     role = str(payload.get("role", "civilian") or "civilian")
@@ -241,18 +241,20 @@ def handle_npc_offer(state: dict[str, Any], ev: dict[str, Any], *, day: int, tim
                 row = market.get(cat) or {}
                 try:
                     sc = int(row.get("scarcity", 0) or 0)
-                except Exception:
+                except Exception as _omni_sw_244:
+                    log_swallowed_exception('engine/world/timers_handlers_social.py:244', _omni_sw_244)
                     sc = 0
                 try:
                     px = int(row.get("price_idx", 100) or 100)
-                except Exception:
+                except Exception as _omni_sw_248:
+                    log_swallowed_exception('engine/world/timers_handlers_social.py:248', _omni_sw_248)
                     px = 100
                 row["scarcity"] = max(0, sc - 1)
                 row["price_idx"] = max(60, min(180, px - 1))
                 market[cat] = row
                 econ2["market"] = market
-    except Exception:
-        pass
+    except Exception as _omni_sw_254:
+        log_swallowed_exception('engine/world/timers_handlers_social.py:254', _omni_sw_254)
     _queue_ripple(
         state,
         {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
 
 
@@ -31,11 +32,13 @@ def get_heat_brief(state: dict[str, Any]) -> dict[str, Any]:
     row = _get_bucket(state, "heat_map")
     try:
         lv = int(row.get("level", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_34:
+        log_swallowed_exception('engine/social/suspicion_ui.py:34', _omni_sw_34)
         lv = 0
     try:
         until = int(row.get("until_day", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_38:
+        log_swallowed_exception('engine/social/suspicion_ui.py:38', _omni_sw_38)
         until = 0
     rs = row.get("reasons", [])
     if not isinstance(rs, list):
@@ -48,11 +51,13 @@ def get_suspicion_brief(state: dict[str, Any]) -> dict[str, Any]:
     row = _get_bucket(state, "suspicion")
     try:
         lv = int(row.get("level", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_51:
+        log_swallowed_exception('engine/social/suspicion_ui.py:51', _omni_sw_51)
         lv = 0
     try:
         until = int(row.get("until_day", 0) or 0)
-    except Exception:
+    except Exception as _omni_sw_55:
+        log_swallowed_exception('engine/social/suspicion_ui.py:55', _omni_sw_55)
         until = 0
     rs = row.get("reasons", [])
     if not isinstance(rs, list):

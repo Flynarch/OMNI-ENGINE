@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
+from engine.player.inventory_norm import normalize_item_quantities
 from engine.systems.combat import get_active_weapon
 
 
@@ -48,8 +50,6 @@ def update_inventory(state: dict, action_ctx: dict) -> None:
 
     # Normalize quantities (clamp non-negative, coerce types) once per turn.
     try:
-        from engine.player.inventory_norm import normalize_item_quantities
-
         normalize_item_quantities(state)
-    except Exception:
-        pass
+    except Exception as _omni_sw_54:
+        log_swallowed_exception('engine/player/inventory.py:54', _omni_sw_54)

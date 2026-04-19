@@ -1,6 +1,20 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
+
+from engine.systems.scenes import (
+    enqueue_scene,
+    has_active_scene,
+    start_border_control_scene,
+    start_checkpoint_sweep_scene,
+    start_police_stop_scene,
+    start_raid_response_scene,
+    start_sting_setup_scene,
+    start_traffic_stop_scene,
+    start_vehicle_search_scene,
+)
+from engine.world.casefile import append_casefile
 
 
 def foreshadow_for_routed_event(state: dict[str, Any], ev: dict[str, Any]) -> dict[str, Any] | None:
@@ -77,13 +91,6 @@ def audit_casefile_for_event(state: dict[str, Any], ev: dict[str, Any]) -> dict[
         return None
     et = str(ev.get("event_type", "") or "").strip()
     payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
-    try:
-        from engine.world.casefile import append_casefile
-    except Exception:
-        append_casefile = None  # type: ignore
-    if not callable(append_casefile):
-        return None
-
     # Basic context
     loc = str(payload.get("location", "") or str((state.get("player", {}) or {}).get("location", "") or "")).strip().lower()
     did = str((state.get("player", {}) or {}).get("district", "") or "").strip().lower()
@@ -146,7 +153,8 @@ def audit_casefile_for_event(state: dict[str, Any], ev: dict[str, Any]) -> dict[
         aff = str(payload.get("affiliation", "") or "").strip().lower()
         try:
             sus = int(payload.get("suspicion", 55) or 55)
-        except Exception:
+        except Exception as _omni_sw_149:
+            log_swallowed_exception('engine/systems/encounter_router.py:149', _omni_sw_149)
             sus = 55
         summary = f"Informant tip received ({reporter}, aff={aff or '-'}, sus={sus})"
         row = {"kind": "event_trigger", "scene_type": "", "event_type": et, "location": loc, "district": did, "summary": summary, "tags": ["informant", aff or "unknown"], "meta": {"reporter": reporter, "affiliation": aff, "suspicion": int(sus)}}
@@ -203,11 +211,6 @@ def handle_triggered_event(state: dict[str, Any], ev: dict[str, Any]) -> dict[st
     if not (isinstance(flags, dict) and bool(flags.get("scenes_enabled", True))):
         return {"handled": False, "reason": "scenes_disabled"}
 
-    try:
-        from engine.systems.scenes import enqueue_scene, has_active_scene
-    except Exception:
-        return {"handled": False, "reason": "scenes_import_failed"}
-
     if has_active_scene(state):
         enqueue_scene(state, {"scene_type": st, "payload": payload, "sig": sig})
         return {"handled": True, "queued": True, "started": False, "scene_type": st}
@@ -215,41 +218,28 @@ def handle_triggered_event(state: dict[str, Any], ev: dict[str, Any]) -> dict[st
     # Start immediately.
     try:
         if st == "police_stop":
-            from engine.systems.scenes import start_police_stop_scene
-
             start_police_stop_scene(state, payload=payload)
             return {"handled": True, "queued": False, "started": True, "scene_type": st}
         if st == "sting_setup":
-            from engine.systems.scenes import start_sting_setup_scene
-
             start_sting_setup_scene(state, payload=payload)
             return {"handled": True, "queued": False, "started": True, "scene_type": st}
         if st == "raid_response":
-            from engine.systems.scenes import start_raid_response_scene
-
             start_raid_response_scene(state, payload=payload)
             return {"handled": True, "queued": False, "started": True, "scene_type": st}
         if st == "checkpoint_sweep":
-            from engine.systems.scenes import start_checkpoint_sweep_scene
-
             start_checkpoint_sweep_scene(state, payload=payload)
             return {"handled": True, "queued": False, "started": True, "scene_type": st}
         if st == "traffic_stop":
-            from engine.systems.scenes import start_traffic_stop_scene
-
             start_traffic_stop_scene(state, payload=payload)
             return {"handled": True, "queued": False, "started": True, "scene_type": st}
         if st == "vehicle_search":
-            from engine.systems.scenes import start_vehicle_search_scene
-
             start_vehicle_search_scene(state, payload=payload)
             return {"handled": True, "queued": False, "started": True, "scene_type": st}
         if st == "border_control":
-            from engine.systems.scenes import start_border_control_scene
-
             start_border_control_scene(state, payload=payload)
             return {"handled": True, "queued": False, "started": True, "scene_type": st}
-    except Exception:
+    except Exception as _omni_sw_252:
+        log_swallowed_exception('engine/systems/encounter_router.py:252', _omni_sw_252)
         # Fallback: if start fails, queue it so it isn't lost.
         enqueue_scene(state, {"scene_type": st, "payload": payload, "sig": sig})
         return {"handled": True, "queued": True, "started": False, "scene_type": st, "reason": "start_failed"}

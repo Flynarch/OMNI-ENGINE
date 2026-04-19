@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any
 
 from engine.world.atlas import ensure_location_profile
@@ -50,7 +51,8 @@ def learn_language(
     world = state.get("world", {}) or {}
     try:
         tp = float((world.get("tech_progress", 0.0) if isinstance(world, dict) else 0.0) or 0.0)
-    except Exception:
+    except Exception as _omni_sw_53:
+        log_swallowed_exception('engine/player/language_learning.py:53', _omni_sw_53)
         tp = 0.0
     epoch = tech_epoch_for_year(year, tech_progress=tp)
 

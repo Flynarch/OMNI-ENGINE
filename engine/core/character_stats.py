@@ -5,6 +5,7 @@ Attribute modifiers apply after skill-level lines in `compute_roll_package` (sma
 
 from __future__ import annotations
 
+from engine.core.error_taxonomy import log_swallowed_exception
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -88,8 +89,8 @@ def _load_cfg() -> Dict[str, Any]:
             cs = raw.get("character_stats") if isinstance(raw.get("character_stats"), dict) else {}
             if cs:
                 merged = _deep_merge_cs(merged, cs)
-        except Exception:
-            pass
+        except Exception as _omni_sw_91:
+            log_swallowed_exception('engine/core/character_stats.py:91', _omni_sw_91)
     _cached_cfg = merged
     return _cached_cfg
 

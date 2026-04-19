@@ -1,15 +1,26 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ai.llm_http import chat_completion_json
 
+from engine.core.action_registry import (
+    allowed_registry_action_ids,
+    get_registry_action_by_id,
+    sanitize_registry_action_id_hint,
+)
+from engine.core.intent_lru import intent_cache_get, intent_cache_set
+from engine.core.security_intent import check_llm_intent_budget, record_intent_budget_rollback
+
 # Contract version for intent JSON (bumped when required fields / shape changes).
 INTENT_SCHEMA_VERSION = 2
 # Minimum schema accepted by normalize_resolved_intent (roadmap: intent schema versioning).
 INTENT_SCHEMA_MIN_SUPPORTED = INTENT_SCHEMA_VERSION
+# ``version`` / ``intent_schema_version`` 3: registry-first stub → normalized v1-shaped output.
+REGISTRY_STUB_INTENT_SCHEMA_VERSION = 3
 
 ALLOWED_ACTION_TYPES: Set[str] = frozenset(
     {"instant", "combat", "travel", "sleep", "rest", "talk", "investigate", "use_item", "custom"}
@@ -104,8 +115,49 @@ TOP_LEVEL_V1_KEYS: Set[str] = frozenset(
         "registry_action_id_hint",
     }
 )
+TOP_LEVEL_V3_STUB_KEYS: Set[str] = frozenset(
+    {
+        "version",
+        "intent_schema_version",
+        "confidence",
+        "registry_action_id_hint",
+        "player_goal",
+        "context_assumptions",
+        "params",
+    }
+)
 ON_LINK_KEYS: Set[str] = frozenset({"next", "when"})
 PRECONDITION_KEYS: Set[str] = frozenset({"kind", "op", "value"})
+
+# Mechanical keys merged from registry ``ctx_patch`` when ``registry_action_id_hint`` is valid (Fase 3).
+_REGISTRY_PATCH_OVERLAY_KEYS_V1: Set[str] = frozenset(
+    {
+        "action_type",
+        "domain",
+        "combat_style",
+        "social_mode",
+        "social_context",
+        "intent_note",
+        "stakes",
+        "risk_level",
+        "time_cost_min",
+        "rested_minutes",
+        "sleep_duration_h",
+        "has_stakes",
+        "uncertain",
+        "visibility",
+        "trivial",
+        "trivial_action",
+        "impossible",
+        "physically_impossible",
+        "attempt_clear_jam",
+        "instant_minutes",
+    }
+)
+_REGISTRY_PATCH_OVERLAY_KEYS_STEP: Set[str] = _REGISTRY_PATCH_OVERLAY_KEYS_V1 | frozenset({"suggested_dc"})
+_REGISTRY_OVERLAY_VISIBILITY: Set[str] = frozenset(
+    {"private", "public", "low", "stealth", "standard", "local", "global", "network"}
+)
 
 
 INTENT_SYSTEM_PROMPT = """OMNI-ENGINE v6.9 — INTENT RESOLVER (Schema v2, intent_schema_version=2).
@@ -153,6 +205,11 @@ for that path instead of defaulting to custom. Examples:
 Use action_type "custom" ONLY when the action does not fit the standard set above.
 
 Optional top-level (v1 and v2): registry_action_id_hint: string — if present, MUST exactly equal one id from the REGISTRY_ACTION_IDS line in the snapshot; omit when unsure. Invalid or unknown ids are dropped by the engine.
+When the hint is valid, the engine overlays that registry entry's ctx_patch onto your structured fields so mechanical domain/action_type cannot contradict the registry definition for overlapping keys.
+
+Registry-first stub (optional): version=3 AND intent_schema_version=3 with registry_action_id_hint (+ optional confidence, player_goal, context_assumptions, params object). ``params`` may override or add mechanical fields after the registry ctx_patch (same key families as overlay: action_type, domain, suggested_dc, targets, rested_minutes, …). The engine expands this to the same normalized v1-shaped dict as after a valid hint overlay (for tooling / tests).
+
+Tool-only JSON (no version): ``{"registry_action_id":"<id>","params":{...}}`` or the same with ``registry_action_id_hint`` / ``action_id`` as the id key (only one distinct id if multiple aliases are present). Optional confidence / player_goal / context_assumptions. Omit ``action_type``, ``domain``, ``plan``, and ``version`` so it is not mistaken for v1/v2.
 
 Optional step keys:
 - combat_style: one of ["melee","ranged","none"] (only meaningful when domain="combat"; otherwise "none")
@@ -361,8 +418,6 @@ def _sanitize_step(step: Any) -> Optional[Dict[str, Any]]:
 def _sanitize_registry_action_id_hint_field(blob: Dict[str, Any]) -> None:
     """Drop or clamp ``registry_action_id_hint`` to known registry ids (in-place)."""
     try:
-        from engine.core.action_registry import sanitize_registry_action_id_hint
-
         h = sanitize_registry_action_id_hint(blob.get("registry_action_id_hint"))
         if h:
             blob["registry_action_id_hint"] = h
@@ -372,14 +427,387 @@ def _sanitize_registry_action_id_hint_field(blob: Dict[str, Any]) -> None:
         blob.pop("registry_action_id_hint", None)
 
 
+def _registry_overlay_merge_key(blob: Dict[str, Any], k: str, v: Any) -> None:
+    """Apply one registry ``ctx_patch`` entry onto a v1 dict or a v2 step dict."""
+    if k == "action_type":
+        at = str(v).strip().lower()
+        if at in ALLOWED_ACTION_TYPES:
+            blob["action_type"] = at
+    elif k == "domain":
+        dom = str(v).strip().lower()
+        if dom in ALLOWED_DOMAINS:
+            blob["domain"] = dom
+    elif k == "combat_style":
+        cs = str(v).strip().lower()
+        blob["combat_style"] = cs if cs in ALLOWED_COMBAT_STYLES else "none"
+    elif k == "social_mode":
+        sm = str(v).strip().lower()
+        blob["social_mode"] = sm if sm in ALLOWED_SOCIAL_MODES else "none"
+    elif k == "social_context":
+        sc = str(v).strip().lower()
+        blob["social_context"] = sc if sc in ALLOWED_SOCIAL_CONTEXTS else "none"
+    elif k == "intent_note":
+        note = str(v).strip().lower().replace(" ", "_")
+        blob["intent_note"] = note[:80] if note else "abstract_intent"
+    elif k == "stakes":
+        st = str(v).strip().lower()
+        if st in ALLOWED_STAKES:
+            blob["stakes"] = st
+    elif k == "risk_level":
+        rk = str(v).strip().lower()
+        if rk in ALLOWED_RISK:
+            blob["risk_level"] = rk
+    elif k == "time_cost_min":
+        try:
+            blob["time_cost_min"] = int(v)
+        except (TypeError, ValueError):
+            pass
+    elif k == "suggested_dc":
+        blob["suggested_dc"] = clamp_suggested_dc(v)
+    elif k == "rested_minutes":
+        try:
+            rm = int(v)
+            blob["rested_minutes"] = max(0, min(12 * 60, rm))
+        except (TypeError, ValueError):
+            pass
+    elif k == "sleep_duration_h":
+        try:
+            sh = int(v)
+            blob["sleep_duration_h"] = max(0, min(24, sh))
+        except (TypeError, ValueError):
+            pass
+    elif k == "instant_minutes":
+        try:
+            im = int(v)
+            blob["instant_minutes"] = max(0, min(24 * 60, im))
+        except (TypeError, ValueError):
+            pass
+    elif k in ("has_stakes", "uncertain", "trivial", "trivial_action", "impossible", "physically_impossible", "attempt_clear_jam"):
+        if isinstance(v, bool):
+            blob[k] = v
+        elif isinstance(v, str):
+            s = v.strip().lower()
+            if s in ("true", "1", "yes"):
+                blob[k] = True
+            elif s in ("false", "0", "no"):
+                blob[k] = False
+    elif k == "visibility":
+        vis = str(v).strip().lower()[:32]
+        if vis in _REGISTRY_OVERLAY_VISIBILITY:
+            blob["visibility"] = vis
+
+
+def _reclamp_v1_time_cost_min(flat: Dict[str, Any]) -> None:
+    try:
+        tcm = int(flat.get("time_cost_min", 0) or 0)
+    except (TypeError, ValueError):
+        tcm = 0
+    at = str(flat.get("action_type", "") or "").strip().lower()
+    if at == "sleep":
+        flat["time_cost_min"] = max(0, min(12 * 60, tcm))
+    else:
+        flat["time_cost_min"] = max(0, min(240, tcm))
+
+
+def _apply_registry_ctx_patch_to_normalized_v1(flat: Dict[str, Any]) -> None:
+    """When ``registry_action_id_hint`` is a known id, overlay ctx_patch fields onto v1 output (registry wins)."""
+    h = flat.get("registry_action_id_hint")
+    if not h:
+        return
+    try:
+        m = get_registry_action_by_id(str(h))
+    except Exception:
+        return
+    if not m:
+        return
+    patch = m.get("ctx_patch") if isinstance(m.get("ctx_patch"), dict) else {}
+    for k, v in patch.items():
+        if k not in _REGISTRY_PATCH_OVERLAY_KEYS_V1 or v is None:
+            continue
+        _registry_overlay_merge_key(flat, k, v)
+    _reclamp_v1_time_cost_min(flat)
+
+
+def _apply_registry_ctx_patch_to_normalized_v2(base: Dict[str, Any]) -> None:
+    """Overlay registry ctx_patch onto the first plan step when hint is valid (v2)."""
+    h = base.get("registry_action_id_hint")
+    if not h:
+        return
+    try:
+        m = get_registry_action_by_id(str(h))
+    except Exception:
+        return
+    if not m:
+        return
+    patch = m.get("ctx_patch") if isinstance(m.get("ctx_patch"), dict) else {}
+    plan = base.get("plan")
+    if not isinstance(plan, dict):
+        return
+    steps = plan.get("steps")
+    if not isinstance(steps, list) or not steps:
+        return
+    s0 = steps[0]
+    if not isinstance(s0, dict):
+        return
+    for k, v in patch.items():
+        if k not in _REGISTRY_PATCH_OVERLAY_KEYS_STEP or v is None:
+            continue
+        _registry_overlay_merge_key(s0, k, v)
+    try:
+        tcm = int(s0.get("time_cost_min", 0) or 0)
+    except (TypeError, ValueError):
+        tcm = 0
+    at = str(s0.get("action_type", "") or "").strip().lower()
+    if at == "sleep":
+        s0["time_cost_min"] = max(0, min(12 * 60, tcm))
+    else:
+        s0["time_cost_min"] = max(0, min(240, tcm))
+
+
+def _finalize_v1_flat_fields(flat: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Clamp v1 mechanical fields after ``ctx_patch`` overlay (returns None if action_type/domain invalid)."""
+    at = str(flat.get("action_type", "") or "").strip().lower()
+    dom = str(flat.get("domain", "") or "").strip().lower()
+    if at not in ALLOWED_ACTION_TYPES or dom not in ALLOWED_DOMAINS:
+        return None
+    note = str(flat.get("intent_note", "") or "").strip().lower().replace(" ", "_")
+    if not note:
+        note = "abstract_intent"
+    flat["intent_note"] = note[:80]
+    flat["suggested_dc"] = clamp_suggested_dc(flat.get("suggested_dc"))
+    cs = str(flat.get("combat_style", "none") or "none").strip().lower()
+    flat["combat_style"] = cs if cs in ALLOWED_COMBAT_STYLES else "none"
+    sm = str(flat.get("social_mode", "none") or "none").strip().lower()
+    flat["social_mode"] = sm if sm in ALLOWED_SOCIAL_MODES else "none"
+    sc = str(flat.get("social_context", "none") or "none").strip().lower()
+    flat["social_context"] = sc if sc in ALLOWED_SOCIAL_CONTEXTS else "none"
+    if "targets" in flat and isinstance(flat["targets"], list):
+        flat["targets"] = [str(x).strip()[:80] for x in flat["targets"][:16] if str(x).strip()]
+    st = str(flat.get("stakes", "none") or "none").strip().lower()
+    if st in ALLOWED_STAKES:
+        flat["stakes"] = st
+    rk = str(flat.get("risk_level", "low") or "low").strip().lower()
+    if rk in ALLOWED_RISK:
+        flat["risk_level"] = rk
+    try:
+        tcm = int(flat.get("time_cost_min", 0) or 0)
+        at2 = str(flat.get("action_type", "") or "").strip().lower()
+        if at2 == "sleep":
+            flat["time_cost_min"] = max(0, min(12 * 60, tcm))
+        else:
+            flat["time_cost_min"] = max(0, min(240, tcm))
+    except (TypeError, ValueError):
+        flat["time_cost_min"] = 0
+    flat["travel_destination"] = str(flat.get("travel_destination", "") or "").strip()[:120]
+    if isinstance(flat.get("inventory_ops"), list):
+        flat["inventory_ops"] = flat["inventory_ops"][:24]
+    if isinstance(flat.get("smartphone_op"), dict):
+        spo = _sanitize_smartphone_op(flat["smartphone_op"])
+        if spo:
+            flat["smartphone_op"] = spo
+        else:
+            flat.pop("smartphone_op", None)
+    try:
+        conf = float(flat.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        conf = 0.0
+    flat["confidence"] = max(0.0, min(1.0, conf))
+    return flat
+
+
+def _shallow_sanitize_stub_accommodation_intent(raw: Any) -> Optional[Dict[str, Any]]:
+    """Bounded primitive-only dict for ``params.accommodation_intent`` (stub v3 / tooling)."""
+    if not isinstance(raw, dict):
+        return None
+    out: Dict[str, Any] = {}
+    for i, (k, v) in enumerate(raw.items()):
+        if i >= 24:
+            break
+        ks = str(k).strip()[:64]
+        if not ks:
+            continue
+        if isinstance(v, bool):
+            out[ks] = v
+        elif isinstance(v, int) and not isinstance(v, bool):
+            out[ks] = v
+        elif isinstance(v, float):
+            if math.isfinite(v):
+                out[ks] = v
+        elif isinstance(v, str):
+            ts = v.strip()
+            out[ks] = ts[:400] if len(ts) > 400 else ts
+    return out or None
+
+
+def _apply_registry_stub_v3_params(flat: Dict[str, Any], raw_params: Any) -> None:
+    """Merge optional ``params`` onto stub ``flat`` after registry ``ctx_patch`` (deterministic overrides)."""
+    if not isinstance(raw_params, dict):
+        return
+    for idx, (k, v) in enumerate(raw_params.items()):
+        if idx >= 48:
+            break
+        ks = str(k).strip()
+        if not ks:
+            continue
+        if ks == "suggested_dc":
+            flat["suggested_dc"] = clamp_suggested_dc(v)
+        elif ks == "targets" and isinstance(v, list):
+            flat["targets"] = [str(x).strip()[:80] for x in v[:16] if str(x).strip()]
+        elif ks == "travel_destination":
+            flat["travel_destination"] = str(v).strip()[:120]
+        elif ks == "inventory_ops" and isinstance(v, list):
+            flat["inventory_ops"] = v[:24]
+        elif ks == "smartphone_op" and isinstance(v, dict):
+            spo = _sanitize_smartphone_op(v)
+            if spo:
+                flat["smartphone_op"] = spo
+        elif ks == "accommodation_intent":
+            acc = _shallow_sanitize_stub_accommodation_intent(v)
+            if acc:
+                flat["accommodation_intent"] = acc
+        elif ks in _REGISTRY_PATCH_OVERLAY_KEYS_V1 and v is not None:
+            _registry_overlay_merge_key(flat, ks, v)
+    _reclamp_v1_time_cost_min(flat)
+
+
+def _normalize_registry_stub_v3(obj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Minimal registry-first payload (``version``/``intent_schema_version`` 3) → v1-shaped normalized intent."""
+    stub = _only_keys(obj, TOP_LEVEL_V3_STUB_KEYS)
+    try:
+        isv = int(stub.get("intent_schema_version", 0) or 0)
+    except (TypeError, ValueError):
+        return None
+    if isv != REGISTRY_STUB_INTENT_SCHEMA_VERSION:
+        return None
+    flat: Dict[str, Any] = {
+        "version": 1,
+        "intent_schema_version": INTENT_SCHEMA_VERSION,
+        "confidence": 0.0,
+        "action_type": "instant",
+        "domain": "evasion",
+        "intent_note": "registry_stub",
+        "combat_style": "none",
+        "social_mode": "none",
+        "social_context": "none",
+        "stakes": "none",
+        "risk_level": "medium",
+        "time_cost_min": 0,
+        "travel_destination": "",
+    }
+    try:
+        conf = float(stub.get("confidence", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        conf = 0.0
+    flat["confidence"] = max(0.0, min(1.0, conf))
+    flat["registry_action_id_hint"] = str(stub.get("registry_action_id_hint", "") or "").strip()
+    pg = str(stub.get("player_goal", "") or "").strip()
+    if pg:
+        flat["player_goal"] = pg[:300]
+    flat["context_assumptions"] = _sanitize_context_assumptions(stub.get("context_assumptions"))
+    _sanitize_registry_action_id_hint_field(flat)
+    if not flat.get("registry_action_id_hint"):
+        return None
+    _apply_registry_ctx_patch_to_normalized_v1(flat)
+    _apply_registry_stub_v3_params(flat, stub.get("params"))
+    return _finalize_v1_flat_fields(flat)
+
+
+_MINIMAL_REGISTRY_ID_KEYS: tuple[str, ...] = (
+    "registry_action_id",
+    "registry_action_id_hint",
+    "action_id",
+)
+
+
+def _minimal_registry_payload_raw_id(obj: Dict[str, Any]) -> str | None:
+    """Return unified id if alias keys agree; ``""`` if none set; ``None`` if values conflict."""
+    seen: set[str] = set()
+    for key in _MINIMAL_REGISTRY_ID_KEYS:
+        v = str(obj.get(key, "") or "").strip()
+        if v:
+            seen.add(v)
+    if not seen:
+        return ""
+    if len(seen) > 1:
+        return None
+    return next(iter(seen))
+
+
+def _minimal_registry_id_alias_keys_present(obj: Dict[str, Any]) -> bool:
+    return any(str(obj.get(k, "") or "").strip() for k in _MINIMAL_REGISTRY_ID_KEYS)
+
+
+def _is_minimal_registry_intent_payload(obj: Dict[str, Any]) -> bool:
+    """True for tool-only shape: one registry id (+ optional ``params``) without ``version`` / v1 / v2 shells."""
+    rid = _minimal_registry_payload_raw_id(obj)
+    if rid is None or rid == "":
+        return False
+    if "version" in obj:
+        return False
+    if "intent_schema_version" in obj:
+        return False
+    if "plan" in obj:
+        return False
+    if "action_type" in obj or "domain" in obj:
+        return False
+    return True
+
+
+def _normalize_minimal_registry_intent_payload(obj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """``{registry_action_id | registry_action_id_hint | action_id, params?, ...}`` → stub v3 path."""
+    raw = _minimal_registry_payload_raw_id(obj)
+    if raw is None or raw == "":
+        return None
+    try:
+        rid = sanitize_registry_action_id_hint(raw)
+    except Exception:
+        rid = None
+    if not rid:
+        return None
+    inner: Dict[str, Any] = {
+        "version": 3,
+        "intent_schema_version": REGISTRY_STUB_INTENT_SCHEMA_VERSION,
+        "registry_action_id_hint": rid,
+    }
+    try:
+        c = float(obj.get("confidence", 0.0) or 0.0)
+        inner["confidence"] = max(0.0, min(1.0, c))
+    except (TypeError, ValueError):
+        pass
+    pg = str(obj.get("player_goal", "") or "").strip()
+    if pg:
+        inner["player_goal"] = pg[:300]
+    if isinstance(obj.get("context_assumptions"), list):
+        inner["context_assumptions"] = obj["context_assumptions"]
+    if isinstance(obj.get("params"), dict):
+        inner["params"] = obj["params"]
+    return _normalize_registry_stub_v3(inner)
+
+
 def normalize_resolved_intent(obj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Validate + whitelist a parsed LLM intent dict. Returns None if unusable."""
+    """Validate + whitelist a parsed LLM intent dict. Returns None if unusable.
+
+    ``version`` 1 / 2: FFCI LLM shapes. ``version`` 3 + ``intent_schema_version`` 3: registry-first stub
+    (``REGISTRY_STUB_INTENT_SCHEMA_VERSION``) expanded to v1-shaped output: registry ``ctx_patch`` then optional ``params``.
+
+    Tool-only: one of ``registry_action_id`` / ``registry_action_id_hint`` / ``action_id`` (+ optional ``params``)
+    with no ``version`` / ``plan`` / ``action_type`` / ``domain`` is normalized like stub v3
+    (see ``_normalize_minimal_registry_intent_payload``).
+    """
     if not isinstance(obj, dict):
         return None
+    rid0 = _minimal_registry_payload_raw_id(obj)
+    if rid0 is None and _minimal_registry_id_alias_keys_present(obj):
+        return None
+    if _is_minimal_registry_intent_payload(obj):
+        return _normalize_minimal_registry_intent_payload(obj)
     try:
         ver = int(obj.get("version", 1) or 1)
     except (TypeError, ValueError):
         ver = 1
+
+    if ver == 3:
+        return _normalize_registry_stub_v3(obj)
 
     if ver == 2:
         base = _only_keys(obj, TOP_LEVEL_V2_KEYS)
@@ -425,6 +853,7 @@ def normalize_resolved_intent(obj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         conf = max(0.0, min(1.0, conf))
         base["confidence"] = conf
         _sanitize_registry_action_id_hint_field(base)
+        _apply_registry_ctx_patch_to_normalized_v2(base)
         return base
 
     # v1 flat (legacy LLM or sleep fastpath)
@@ -434,53 +863,17 @@ def normalize_resolved_intent(obj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     except (TypeError, ValueError):
         flat["version"] = 1
     flat["intent_schema_version"] = INTENT_SCHEMA_VERSION
-    at = str(flat.get("action_type", "") or "").strip().lower()
-    dom = str(flat.get("domain", "") or "").strip().lower()
-    if at not in ALLOWED_ACTION_TYPES or dom not in ALLOWED_DOMAINS:
-        return None
-    note = str(flat.get("intent_note", "") or "").strip().lower().replace(" ", "_")
-    if not note:
-        note = "abstract_intent"
-    flat["intent_note"] = note[:80]
-    flat["suggested_dc"] = clamp_suggested_dc(flat.get("suggested_dc"))
-    cs = str(flat.get("combat_style", "none") or "none").strip().lower()
-    flat["combat_style"] = cs if cs in ALLOWED_COMBAT_STYLES else "none"
-    sm = str(flat.get("social_mode", "none") or "none").strip().lower()
-    flat["social_mode"] = sm if sm in ALLOWED_SOCIAL_MODES else "none"
-    sc = str(flat.get("social_context", "none") or "none").strip().lower()
-    flat["social_context"] = sc if sc in ALLOWED_SOCIAL_CONTEXTS else "none"
-    if "targets" in flat and isinstance(flat["targets"], list):
-        flat["targets"] = [str(x).strip()[:80] for x in flat["targets"][:16] if str(x).strip()]
-    st = str(flat.get("stakes", "none") or "none").strip().lower()
-    if st in ALLOWED_STAKES:
-        flat["stakes"] = st
-    rk = str(flat.get("risk_level", "low") or "low").strip().lower()
-    if rk in ALLOWED_RISK:
-        flat["risk_level"] = rk
-    try:
-        tcm = int(flat.get("time_cost_min", 0) or 0)
-        if at == "sleep":
-            flat["time_cost_min"] = max(0, min(12 * 60, tcm))
-        else:
-            flat["time_cost_min"] = max(0, min(240, tcm))
-    except (TypeError, ValueError):
-        flat["time_cost_min"] = 0
-    flat["travel_destination"] = str(flat.get("travel_destination", "") or "").strip()[:120]
-    if isinstance(flat.get("inventory_ops"), list):
-        flat["inventory_ops"] = flat["inventory_ops"][:24]
-    if isinstance(flat.get("smartphone_op"), dict):
-        spo = _sanitize_smartphone_op(flat["smartphone_op"])
-        if spo:
-            flat["smartphone_op"] = spo
-        else:
-            flat.pop("smartphone_op", None)
-    try:
-        conf = float(flat.get("confidence", 0.0))
-    except (TypeError, ValueError):
-        conf = 0.0
-    flat["confidence"] = max(0.0, min(1.0, conf))
     _sanitize_registry_action_id_hint_field(flat)
-    return flat
+    _apply_registry_ctx_patch_to_normalized_v1(flat)
+    return _finalize_v1_flat_fields(flat)
+
+
+def parse_and_normalize_intent_json(text: str) -> Optional[Dict[str, Any]]:
+    """Parse JSON text (single object) then run :func:`normalize_resolved_intent` (FFCI + stub v3 + minimal registry)."""
+    blob = _safe_parse_json_blob(text)
+    if not isinstance(blob, dict):
+        return None
+    return normalize_resolved_intent(blob)
 
 
 def _flatten_intent_v2_for_compat(obj: Dict[str, Any]) -> Dict[str, Any]:
@@ -504,6 +897,17 @@ def _flatten_intent_v2_for_compat(obj: Dict[str, Any]) -> Dict[str, Any]:
         "travel_destination",
         "inventory_ops",
         "smartphone_op",
+        "rested_minutes",
+        "sleep_duration_h",
+        "has_stakes",
+        "uncertain",
+        "visibility",
+        "trivial",
+        "trivial_action",
+        "impossible",
+        "physically_impossible",
+        "attempt_clear_jam",
+        "instant_minutes",
     ):
         if k in step0 and step0.get(k) is not None:
             out[k] = step0.get(k)
@@ -644,21 +1048,15 @@ def resolve_intent(state: Dict[str, Any], player_input: str) -> Optional[Dict[st
     if isinstance(fast, dict):
         return fast
     if os.getenv("OMNI_INTENT_LRU", "1").strip().lower() not in ("0", "false", "no", "off"):
-        from engine.core.intent_lru import intent_cache_get, intent_cache_set
-
         ck = _intent_lru_cache_key(state, player_input)
         hit = intent_cache_get(ck)
         if isinstance(hit, dict):
             return hit
-    from engine.core.security_intent import check_llm_intent_budget, record_intent_budget_rollback
-
     ok_budget, _br = check_llm_intent_budget(state)
     if not ok_budget:
         return None
     reg_block = ""
     try:
-        from engine.core.action_registry import allowed_registry_action_ids
-
         rids = allowed_registry_action_ids()
         if rids:
             reg_block = "\n[REGISTRY_ACTION_IDS]\n" + ",".join(rids) + "\n"
@@ -685,7 +1083,5 @@ def resolve_intent(state: Dict[str, Any], player_input: str) -> Optional[Dict[st
     if conf < 0.15:
         return None
     if os.getenv("OMNI_INTENT_LRU", "1").strip().lower() not in ("0", "false", "no", "off"):
-        from engine.core.intent_lru import intent_cache_set
-
         intent_cache_set(_intent_lru_cache_key(state, player_input), obj)
     return obj
