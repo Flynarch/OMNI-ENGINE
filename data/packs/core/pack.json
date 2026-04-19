@@ -77,6 +77,94 @@
       "rarity": "common"
     },
     {
+      "id": "field_ammo_roll",
+      "name": "Field Ammo Wrap (9mm box)",
+      "size": 1,
+      "tags": ["ammo", "caliber_9mm", "restricted", "craft_made"],
+      "base_price": 55,
+      "rarity": "common"
+    },
+    {
+      "id": "duct_tape",
+      "name": "Duct Tape",
+      "size": 1,
+      "tags": ["tool", "craft"],
+      "base_price": 15,
+      "rarity": "common"
+    },
+    {
+      "id": "scrap_wire",
+      "name": "Scrap Wire",
+      "size": 1,
+      "tags": ["salvage", "craft"],
+      "base_price": 10,
+      "rarity": "common"
+    },
+    {
+      "id": "restraint_zip",
+      "name": "Zip Restraint (improvised)",
+      "size": 1,
+      "tags": ["tool", "restraint", "craft_made"],
+      "base_price": 40,
+      "rarity": "common"
+    },
+    {
+      "id": "comms_phrase_bundle",
+      "name": "Travel Comms + Phrase Bundle",
+      "size": 2,
+      "tags": ["comms", "translator_lowtech", "craft_made"],
+      "base_price": 220,
+      "rarity": "common"
+    },
+    {
+      "id": "bypass_wire_tool",
+      "name": "Wired Bypass Tool",
+      "size": 1,
+      "tags": ["tool", "stealth", "craft_made"],
+      "base_price": 140,
+      "rarity": "uncommon"
+    },
+    {
+      "id": "signal_pouch_crude",
+      "name": "Crude Signal Pouch",
+      "size": 1,
+      "tags": ["electronics", "noise_reduction", "craft_made"],
+      "base_price": 55,
+      "rarity": "common"
+    },
+    {
+      "id": "signal_pouch_tuned",
+      "name": "Tuned Signal Pouch",
+      "size": 1,
+      "tags": ["electronics", "noise_reduction", "craft_made", "tuned"],
+      "base_price": 120,
+      "rarity": "uncommon"
+    },
+    {
+      "id": "restraint_reinforced",
+      "name": "Reinforced Zip Restraint",
+      "size": 1,
+      "tags": ["tool", "restraint", "craft_made"],
+      "base_price": 65,
+      "rarity": "common"
+    },
+    {
+      "id": "tactical_restraint_kit",
+      "name": "Tactical Restraint Kit",
+      "size": 2,
+      "tags": ["tool", "restraint", "craft_made", "kit"],
+      "base_price": 280,
+      "rarity": "uncommon"
+    },
+    {
+      "id": "field_coupler_kit",
+      "name": "Field Comms Coupler Kit",
+      "size": 2,
+      "tags": ["comms", "electronics", "craft_made", "kit"],
+      "base_price": 340,
+      "rarity": "uncommon"
+    },
+    {
       "id": "weapon_permit_usa",
       "name": "Weapon Permit (USA)",
       "size": 1,

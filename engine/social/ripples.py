@@ -118,6 +118,21 @@ def apply_ripple_effects(state: dict[str, Any], rp: dict[str, Any]) -> None:
         world = state.setdefault("world", {})
         factions = world.setdefault("factions", {})
         if isinstance(factions, dict):
+            before: dict[str, dict[str, int]] = {}
+            for fname, delta in list(f_imp.items())[:8]:
+                if not isinstance(fname, str) or not isinstance(delta, dict):
+                    continue
+                row0 = factions.get(fname)
+                if isinstance(row0, dict):
+                    try:
+                        before[fname] = {
+                            "power": int(row0.get("power", 50) or 50),
+                            "stability": int(row0.get("stability", 50) or 50),
+                        }
+                    except Exception:
+                        before[fname] = {"power": 50, "stability": 50}
+                else:
+                    before[fname] = {"power": 50, "stability": 50}
             for fname, delta in list(f_imp.items())[:8]:
                 if not isinstance(fname, str) or not isinstance(delta, dict):
                     continue
@@ -131,3 +146,31 @@ def apply_ripple_effects(state: dict[str, Any], rp: dict[str, Any]) -> None:
                         except Exception:
                             dd = 0
                         row[k] = _clamp_int(int(row.get(k, 50) or 50) + dd, 0, 100)
+            applied: dict[str, dict[str, int]] = {}
+            for fname, delta in list(f_imp.items())[:8]:
+                if not isinstance(fname, str) or not isinstance(delta, dict):
+                    continue
+                row = factions.get(fname)
+                if not isinstance(row, dict):
+                    continue
+                b = before.get(fname) or {"power": 50, "stability": 50}
+                try:
+                    ap = int(row.get("power", 50) or 50)
+                    ast = int(row.get("stability", 50) or 50)
+                except Exception:
+                    ap, ast = 50, 50
+                dp = ap - int(b.get("power", 50))
+                dst = ast - int(b.get("stability", 50))
+                if dp != 0 or dst != 0:
+                    applied[fname] = {}
+                    if dp != 0:
+                        applied[fname]["power"] = dp
+                    if dst != 0:
+                        applied[fname]["stability"] = dst
+            if applied:
+                try:
+                    from engine.world.faction_report import append_faction_ripple_impact
+
+                    append_faction_ripple_impact(state, rp, applied)
+                except Exception:
+                    pass

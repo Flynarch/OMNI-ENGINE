@@ -1376,5 +1376,111 @@ def render_monitor(state: dict[str, Any]) -> None:
         _render_monitor_full(state)
 
 
+def render_district_map_lite(state: dict[str, Any]) -> None:
+    """W2-4: current district, ring neighbors, heat markers (Rich)."""
+    try:
+        from engine.world.districts import district_heat_snapshot, district_neighbor_ids, get_district, get_current_district
+
+        p = state.get("player", {}) or {}
+        city = str(p.get("location", "") or "").strip().lower()
+        did = str(p.get("district", "") or "").strip().lower()
+        if not city or not did:
+            console.print("[yellow]MAP: set location + district first (travel / TRAVELTO).[/yellow]")
+            return
+        cur = get_current_district(state) or get_district(state, city, did) or {}
+        cur_name = str(cur.get("name", did) or did)
+        nh = district_neighbor_ids(state, city, did)
+        h0 = district_heat_snapshot(state, city, did)
+
+        def _heat_tag(hv: int) -> str:
+            if hv >= 70:
+                return "[bold red]HOT[/]"
+            if hv >= 40:
+                return "[yellow]warm[/]"
+            return "[dim]cool[/]"
+
+        lines = [
+            f"[bold cyan]MAP[/] [dim]{city}[/]",
+            f"  [bold]You:[/] {cur_name} ({did}) — heat {_heat_tag(h0)} ({h0})",
+            "  [bold]Neighbors:[/]",
+        ]
+        if not nh:
+            lines.append("    [dim](none / single district)[/]")
+        for nid in nh:
+            d2 = get_district(state, city, nid) or {}
+            nm = str(d2.get("name", nid) or nid)
+            hv = district_heat_snapshot(state, city, nid)
+            lines.append(f"    - {nm} [dim]({nid})[/] {_heat_tag(hv)} ({hv})")
+        console.print("\n".join(lines))
+    except Exception:
+        console.print("[red]MAP error.[/red]")
+
+
+def render_faction_report(state: dict[str, Any], *, full: bool = False) -> None:
+    """W2-1: deterministic macro faction summary (compact or full)."""
+    from engine.world.faction_report import build_faction_macro_report
+
+    pkg = build_faction_macro_report(state, full=full)
+    title = "FACTION REPORT (full)" if full else "FACTION REPORT"
+    rows: list[list[str]] = []
+    for f in pkg.get("factions", []) or []:
+        if not isinstance(f, dict):
+            continue
+        fid = str(f.get("id", "?"))
+        dp = f.get("d_pw")
+        ds = f.get("d_st")
+        dps = "n/a" if dp is None else f"{int(dp):+d}"
+        dss = "n/a" if ds is None else f"{int(ds):+d}"
+        rows.append(
+            [
+                fid,
+                str(int(f.get("power", 0) or 0)),
+                str(int(f.get("stability", 0) or 0)),
+                str(f.get("attention", "-")),
+                dps,
+                dss,
+            ]
+        )
+    hot = pkg.get("hot", {}) or {}
+    hot_lines: list[str] = []
+    if isinstance(hot, dict):
+        for fid, h in sorted(hot.items(), key=lambda x: str(x[0])):
+            if not isinstance(h, dict):
+                continue
+            loc = str(h.get("loc", "") or "-") or "-"
+            try:
+                hv = int(h.get("heat", 0) or 0)
+            except Exception:
+                hv = 0
+            hot_lines.append(f"{fid}: {loc or '—'} (heat {hv})")
+
+    t = format_data_table(
+        title,
+        ["faction", "power", "stab", "attention", "Δ3d pw", "Δ3d st"],
+        rows,
+        theme="cyan",
+    )
+    console.print(t)
+    if hot_lines:
+        console.print("[bold]Hot spots (3d, ripple-tagged):[/bold]")
+        for ln in hot_lines:
+            console.print(f"  [dim]{ln}[/]")
+    if full and isinstance(pkg.get("top_causes"), dict):
+        console.print("[bold]Top ripple causes (3d):[/bold]")
+        for fid, causes in sorted(pkg["top_causes"].items(), key=lambda x: str(x[0])):
+            console.print(f"  [cyan]{fid}[/]")
+            if not causes:
+                console.print("    [dim](none logged)[/]")
+                continue
+            for c in causes[:3]:
+                if not isinstance(c, dict):
+                    continue
+                k = str(c.get("kind", "") or "")
+                tx = str(c.get("text", "") or "")
+                if len(tx) > 72:
+                    tx = tx[:69] + "..."
+                console.print(f"    [dim]d{c.get('day', '?')}[/] [{k}] {tx}")
+
+
 def stream_render(text_chunk: str) -> None:
     console.print(text_chunk, end="")

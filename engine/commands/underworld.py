@@ -53,6 +53,8 @@ def handle_underworld(
                     ui_err("ACCESS DENIED", "Darknet node offline.")
                 elif r.get("reason") == "not_in_stock":
                     ui_err("ERROR", "Item not in stock today.")
+                elif r.get("reason") == "reputation_gate":
+                    ui_err("ACCESS DENIED", str(r.get("message") or "Vendor trust too low for this listing."))
                 else:
                     ui_err("ERROR", f"BUY_DARK failed: {r.get('reason','error')}")
                 return True

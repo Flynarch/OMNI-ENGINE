@@ -13,6 +13,22 @@ _POOL: list[dict[str, Any]] = [
     {"id": "disguise_kit", "name": "Disguise Kit", "base_price": 1200},
 ]
 
+# W2-2: minimum black-market standing tier (0..3) to see & buy listing.
+ITEM_REPUTATION_TIER: dict[str, int] = {
+    "lockpick": 0,
+    "burner_phone": 0,
+    "fake_id": 1,
+    "police_scanner": 2,
+    "cyberdeck_mk1": 2,
+    "disguise_kit": 3,
+}
+
+# W2-13: optional substance hook for medical_bio (engine-only; not narrator authority).
+ITEM_SUBSTANCE_KIND: dict[str, str] = {
+    "cyberdeck_mk1": "chrome",
+    "disguise_kit": "sedative",
+}
+
 
 def _seed_key(state: dict[str, Any]) -> str:
     meta = state.get("meta", {}) or {}
@@ -89,6 +105,13 @@ def has_underworld_contact_here(state: dict[str, Any]) -> bool:
 
 
 def black_market_accessible(state: dict[str, Any]) -> bool:
+    try:
+        from engine.systems.judicial import is_incarcerated
+
+        if is_incarcerated(state):
+            return False
+    except Exception:
+        pass
     return _night_access(_time_min(state)) or has_underworld_contact_here(state)
 
 
@@ -118,6 +141,30 @@ def generate_black_market_inventory(state: dict[str, Any]) -> dict[str, Any]:
         row["day"] = int(day)
         row["stock"] = 1
         picked.append(row)
+
+    try:
+        from engine.social.reputation_lanes import black_market_access_tier
+
+        tier_have = black_market_access_tier(state)
+        picked = [
+            x
+            for x in picked
+            if isinstance(x, dict)
+            and int(ITEM_REPUTATION_TIER.get(str(x.get("id", "") or "").strip().lower(), 0)) <= int(tier_have)
+        ]
+    except Exception:
+        pass
+    try:
+        from engine.social.reputation_lanes import black_market_price_percent
+
+        mul = black_market_price_percent(state)
+        for x in picked:
+            if not isinstance(x, dict):
+                continue
+            bp = int(x.get("price", 0) or 0)
+            x["price"] = max(1, (bp * mul + 50) // 100)
+    except Exception:
+        pass
 
     world = state.setdefault("world", {})
     bm = world.setdefault("black_market", {})
@@ -155,6 +202,20 @@ def buy_black_market_item(state: dict[str, Any], item_id: str) -> dict[str, Any]
             break
     if not isinstance(row, dict):
         return {"ok": False, "reason": "not_in_stock"}
+    try:
+        from engine.social.reputation_lanes import can_buy_black_market_item
+
+        gate = can_buy_black_market_item(state, iid)
+        if not gate.get("ok"):
+            return {
+                "ok": False,
+                "reason": "reputation_gate",
+                "message": str(gate.get("message", "locked")),
+                "need_tier": gate.get("need_tier"),
+                "your_tier": gate.get("your_tier"),
+            }
+    except Exception:
+        pass
     price = int(row.get("price", 0) or 0)
     eco = state.setdefault("economy", {})
     try:
@@ -220,5 +281,13 @@ def buy_black_market_item(state: dict[str, Any], item_id: str) -> dict[str, Any]
 
     nm = str(row.get("name", iid) or iid)
     state.setdefault("world_notes", []).append(f"[Economy] Purchased {nm} from the underground network.")
+    sk = ITEM_SUBSTANCE_KIND.get(str(iid).strip().lower())
+    if sk:
+        try:
+            from engine.player.medical_bio import record_substance_use
+
+            record_substance_use(state, kind=sk)
+        except Exception:
+            pass
     return {"ok": True, "item_id": iid, "name": nm, "price": int(price), "cash_after": int(eco.get("cash", 0) or 0)}
 

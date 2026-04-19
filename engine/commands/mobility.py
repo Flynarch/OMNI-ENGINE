@@ -5,6 +5,26 @@ from typing import Any, Callable
 
 def handle_mobility(state: dict[str, Any], cmd: str, *, console: Any, run_pipeline: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]) -> bool:
     up = cmd.upper()
+    if up == "MAP":
+        try:
+            from display.renderer import render_district_map_lite
+
+            render_district_map_lite(state)
+        except Exception:
+            console.print("[red]MAP error.[/red]")
+        return True
+    if up == "JUDICIAL" or up == "JUDICIAL STATUS":
+        try:
+            from engine.systems.judicial import ensure_judicial, fmt_judicial_brief
+
+            ensure_judicial(state)
+            console.print(f"[bold]{fmt_judicial_brief(state)}[/bold]")
+            j = state.get("judicial", {}) or {}
+            if isinstance(j, dict) and str(j.get("phase", "free") or "") != "free":
+                console.print(f"[dim]release_day={j.get('release_day','-')} seized_items={len(j.get('seized_bag_snapshot') or []) if isinstance(j.get('seized_bag_snapshot'), list) else 0}[/dim]")
+        except Exception:
+            console.print("[red]JUDICIAL error.[/red]")
+        return True
     if up == "DISTRICTS" or up == "DISTRICT":
         try:
             from engine.world.districts import describe_location, list_districts
@@ -169,6 +189,12 @@ def handle_mobility(state: dict[str, Any], cmd: str, *, console: Any, run_pipeli
         return True
     if up == "DRIVE" or up.startswith("DRIVE "):
         try:
+            from engine.systems.judicial import block_travel_if_incarcerated
+
+            bt = block_travel_if_incarcerated(state)
+            if bt:
+                console.print(f"[yellow]{bt}[/yellow]")
+                return True
             parts = cmd.split(maxsplit=1)
             if len(parts) < 2:
                 console.print("[yellow]Usage: DRIVE <dest> [vehicle_type][/yellow]")
@@ -204,6 +230,12 @@ def handle_mobility(state: dict[str, Any], cmd: str, *, console: Any, run_pipeli
         return True
     if up == "TRAVELTO" or up.startswith("TRAVELTO "):
         try:
+            from engine.systems.judicial import block_travel_if_incarcerated
+
+            bt = block_travel_if_incarcerated(state)
+            if bt:
+                console.print(f"[yellow]{bt}[/yellow]")
+                return True
             parts = cmd.split(maxsplit=1)
             if len(parts) < 2:
                 console.print("[yellow]Usage: TRAVELTO <district_id>[/yellow]")

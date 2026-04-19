@@ -1,0 +1,101 @@
+{
+  "registry_version": 1,
+  "description": "Data-driven action templates. Expanded as branches migrate from action_intent.py — see docs/action-registry-plan.md",
+  "actions": [
+    {
+      "id": "sleep.nl_default_8h",
+      "priority": 20,
+      "match": {
+        "keywords_any": [
+          "ingin tidur",
+          "pengen tidur",
+          "want to sleep",
+          "need to sleep",
+          "going to sleep",
+          "try to sleep",
+          "coba tidur",
+          "perlu tidur",
+          "istirahat tidur",
+          "get some sleep"
+        ]
+      },
+      "ctx_patch": {
+        "action_type": "sleep",
+        "domain": "other",
+        "rested_minutes": 480,
+        "sleep_duration_h": 8,
+        "stakes": "none",
+        "risk_level": "low",
+        "has_stakes": false,
+        "uncertain": false
+      }
+    },
+    {
+      "id": "combat.nl_ranged_attempt",
+      "priority": 30,
+      "match": {
+        "keywords_any": [
+          "menembak",
+          "menembakan",
+          "nembak",
+          "tembak",
+          "tembakin",
+          "shoot",
+          "shooting"
+        ]
+      },
+      "ctx_patch": {
+        "action_type": "combat",
+        "domain": "combat",
+        "combat_style": "ranged"
+      }
+    },
+    {
+      "id": "combat.nl_melee",
+      "priority": 35,
+      "match": {
+        "keywords_any": [
+          "serang",
+          "menyerang",
+          "attack",
+          "stab",
+          "menusuk",
+          "pukul",
+          "memukul",
+          "hit",
+          "punch",
+          "slash"
+        ]
+      },
+      "ctx_patch": {
+        "action_type": "combat",
+        "domain": "combat",
+        "combat_style": "melee"
+      }
+    },
+    {
+      "id": "travel.nl_generic",
+      "priority": 40,
+      "match": {
+        "keywords_any": [
+          "travel",
+          "pergi ke",
+          "naik",
+          "menuju",
+          "balik ke",
+          "pulang ke",
+          "kembali ke",
+          "balik",
+          "pulang",
+          "kembali",
+          "head to",
+          "heading to",
+          "commute to"
+        ]
+      },
+      "ctx_patch": {
+        "action_type": "travel"
+      }
+    }
+  ]
+}

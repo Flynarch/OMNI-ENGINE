@@ -4,12 +4,13 @@ from typing import Any
 
 
 def execute_arrest(state: dict[str, Any], *, bribery_attempt: bool = False) -> None:
-    """Arrest outcome: time skip, financial penalty, hands cleared, trace reset, scene cleared."""
+    """Arrest outcome: financial penalty, hands cleared, trace reset, scene cleared, W2-12 sentence + seized bag."""
     meta = state.setdefault("meta", {})
     try:
         d = int(meta.get("day", 1) or 1)
     except Exception:
         d = 1
+    # Time skip (legacy) + W2-12 sentence timer from post-skip calendar day.
     meta["day"] = int(d + 2)
     meta["time_min"] = 480
 
@@ -58,7 +59,14 @@ def execute_arrest(state: dict[str, Any], *, bribery_attempt: bool = False) -> N
     except Exception:
         pass
 
-    msg = "[Arrest] You were arrested, fined heavily, and contraband was confiscated. Released after 2 days."
+    try:
+        from engine.systems.judicial import apply_arrest_sentence
+
+        apply_arrest_sentence(state, sentence_days=3, bribery_attempt=bribery_attempt)
+    except Exception:
+        pass
+
+    msg = "[Arrest] Booked. Sentence active — travel restricted until release day."
     if bribery_attempt:
-        msg += " Additional charges for attempted bribery."
+        msg += " Extra count: attempted bribery."
     state.setdefault("world_notes", []).append(msg)

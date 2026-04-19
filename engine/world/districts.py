@@ -177,6 +177,50 @@ def list_districts(state: dict[str, Any], city: str) -> list[dict[str, Any]]:
     return ensure_city_districts(state, city)
 
 
+def district_neighbor_ids(state: dict[str, Any], city: str, district_id: str) -> list[str]:
+    """W2-4: deterministic ring neighbors on ordered district list (no geo pathfinding)."""
+    cid = str(city or "").strip().lower()
+    did = str(district_id or "").strip().lower()
+    dists = list_districts(state, cid)
+    if not dists:
+        return []
+    ids = [str(d.get("id", "") or "").strip().lower() for d in dists if isinstance(d, dict) and d.get("id")]
+    ids = [x for x in ids if x]
+    if did not in ids:
+        return []
+    i = ids.index(did)
+    n = len(ids)
+    out: list[str] = []
+    if n > 1:
+        out.append(ids[(i - 1) % n])
+        out.append(ids[(i + 1) % n])
+    return out
+
+
+def district_heat_snapshot(state: dict[str, Any], city: str, district_id: str) -> int:
+    """Max heat level at city key for player-visible district scope."""
+    ck = str(city or "").strip().lower()
+    dk = str(district_id or "").strip().lower()
+    if not ck or not dk:
+        return 0
+    world = state.get("world", {}) or {}
+    hm = world.get("heat_map", {}) if isinstance(world.get("heat_map"), dict) else {}
+    loc_map = hm.get(ck) if isinstance(hm, dict) else None
+    if not isinstance(loc_map, dict):
+        return 0
+    best = 0
+    for sk, row in loc_map.items():
+        if not isinstance(row, dict):
+            continue
+        if sk != "__all__" and sk != dk:
+            continue
+        try:
+            best = max(best, int(row.get("level", 0) or 0))
+        except Exception:
+            continue
+    return max(0, min(100, best))
+
+
 def is_valid_district(state: dict[str, Any], city: str, district_id: str) -> bool:
     """Return True if district_id exists for city."""
     cid = str(city or "").strip().lower()

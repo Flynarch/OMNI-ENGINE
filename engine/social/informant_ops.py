@@ -46,6 +46,19 @@ def pay_informant(state: dict[str, Any], npc_name: str, amount: int) -> dict[str
     amt = int(amount or 0)
     if amt <= 0:
         return {"ok": False, "reason": "invalid_amount"}
+    try:
+        from engine.social.reputation_lanes import premium_intel_pay_cap
+
+        cap = int(premium_intel_pay_cap(state))
+        if amt > cap:
+            return {
+                "ok": False,
+                "reason": "premium_intel_locked",
+                "message": "They won't move serious money without street or political credibility first.",
+                "cap": cap,
+            }
+    except Exception:
+        pass
     prof = _profile(state, nm)
     if not isinstance(prof, dict):
         return {"ok": False, "reason": "not_informant"}

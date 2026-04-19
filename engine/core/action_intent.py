@@ -249,9 +249,174 @@ def _parse_sleep_hours(t: str) -> int | None:
             return max(1, min(12, int(m.group(1))))
         except Exception:
             return 8
+    # Natural-language sleep intent (no duration → default 8h).
+    if re.search(r"\b(ingin|pengen)\s+tidur\b", txt):
+        return 8
+    if any(p in txt for p in ("want to sleep", "need to sleep", "going to sleep", "gonna sleep")):
+        return 8
+    if re.search(r"\b(try|need)\s+to\s+sleep\b", txt):
+        return 8
+    if re.search(r"\b(coba|try)\s+(tidur|to\s+sleep)\b", txt):
+        return 8
+    if re.search(r"\bperlu\s+tidur\b", txt):
+        return 8
+    if "istirahat tidur" in txt or "rest and sleep" in txt or "get some sleep" in txt:
+        return 8
     if txt in ("sleep", "tidur", "aku mau tidur", "saya mau tidur"):
         return 8
     return None
+
+
+def _registry_try_sleep(ctx: dict[str, Any], t: str, player_input: str) -> bool:
+    """Apply sleep intent from action registry when it is not a prepaid-stay booking."""
+    if _parse_accommodation_intent(t) is not None:
+        return False
+    try:
+        from engine.core.action_registry import match_registry_action
+    except Exception:
+        return False
+    m = match_registry_action(player_input)
+    if not m or not str(m.get("id", "") or "").startswith("sleep."):
+        return False
+    patch = m.get("ctx_patch") if isinstance(m.get("ctx_patch"), dict) else {}
+    for k, v in patch.items():
+        ctx[k] = v
+    ctx["registry_action_id"] = str(m.get("id", "") or "").strip()
+    return True
+
+
+_NL_ATTEMPT_MARKERS = (
+    "mencoba",
+    "try to",
+    "trying to",
+    "coba ",
+    "ingin ",
+    "want to",
+    "going to",
+)
+
+
+def _registry_try_combat(ctx: dict[str, Any], t: str, player_input: str) -> bool:
+    """Apply combat intent from action registry (ranged/melee); legacy elif remains fallback."""
+    try:
+        from engine.core.action_registry import match_registry_action
+    except Exception:
+        return False
+    m = match_registry_action(player_input)
+    if not m or not str(m.get("id", "") or "").startswith("combat."):
+        return False
+    patch = m.get("ctx_patch") if isinstance(m.get("ctx_patch"), dict) else {}
+    for k, v in patch.items():
+        if k == "intent_note":
+            continue
+        ctx[k] = v
+    ctx["registry_action_id"] = str(m.get("id", "") or "").strip()
+    if any(x in t for x in _NL_ATTEMPT_MARKERS):
+        ctx["intent_note"] = "nl_attempt"
+    return True
+
+
+_TRAVEL_LEGACY_KEYWORDS = (
+    "travel",
+    "pergi ke",
+    "naik",
+    "menuju",
+    "balik ke",
+    "pulang ke",
+    "kembali ke",
+    "balik",
+    "pulang",
+    "kembali",
+)
+
+
+def _apply_travel_heuristics(ctx: dict[str, Any], t: str, player_input: str) -> None:
+    """Shared travel NL: duration hints, destination extract, vehicle hints (registry + legacy)."""
+    ctx["action_type"] = "travel"
+    if any(k in t for k in ["dekat", "sekitar", "deket", "dekat sini", "sekitar sini", "dekat sana"]):
+        ctx["travel_minutes"] = 10
+    elif any(k in t for k in ["balik", "pulang", "kembali"]) and any(k in t for k in ["ke"]):
+        ctx["travel_minutes"] = 15
+    elif any(k in t for k in ["jauh", "jauhnya", "jauh banget", "antar kota", "beda kota", "lintas", "seberang", "lumayan jauh"]):
+        ctx["travel_minutes"] = 90
+    else:
+        ctx["travel_minutes"] = 30
+
+    m = re.search(r"\b(?:ke|menuju|pulang ke|balik ke|kembali ke)\s+([a-zA-Z][a-zA-Z0-9\s\-']{2,40})", t)
+    if m:
+        dest_raw = m.group(1).strip()
+        for cut in (" dengan ", " pakai ", " untuk ", " agar ", " lalu ", " sambil ", " sebelum ", " setelah ", " dan ", ","):
+            if cut in (" " + dest_raw + " "):
+                dest_raw = dest_raw.split(cut.strip(), 1)[0].strip()
+        dest_raw = dest_raw.strip(" .,!?:;\"'")
+        if dest_raw:
+            ctx["travel_destination"] = dest_raw
+    if not ctx.get("travel_destination"):
+        m2 = re.search(r"\b(?:head to|heading to|commute to)\s+([a-zA-Z][a-zA-Z0-9\s\-']{2,40})", t)
+        if m2:
+            dest_raw = m2.group(1).strip()
+            for cut in (" dengan ", " pakai ", " untuk ", " agar ", " lalu ", " sambil ", " sebelum ", " setelah ", " dan ", ","):
+                if cut in (" " + dest_raw + " "):
+                    dest_raw = dest_raw.split(cut.strip(), 1)[0].strip()
+            dest_raw = dest_raw.strip(" .,!?:;\"'")
+            if dest_raw:
+                ctx["travel_destination"] = dest_raw
+    try:
+
+        def _contains_term(hay: str, needle: str) -> bool:
+            n = str(needle or "").strip().lower()
+            if not n:
+                return False
+            return re.search(rf"(?<![a-z0-9_]){re.escape(n)}(?![a-z0-9_])", hay) is not None
+
+        veh_map = {
+            "sepeda": "bicycle",
+            "bicycle": "bicycle",
+            "bike": "bicycle",
+            "motor": "motorcycle",
+            "motorcycle": "motorcycle",
+            "moge": "motorcycle",
+            "mobil": "car_standard",
+            "car": "car_standard",
+            "sedan": "car_standard",
+            "van": "car_van",
+            "minivan": "car_van",
+            "sportscar": "car_sports",
+            "sports car": "car_sports",
+            "sport": "car_sports",
+        }
+        for vid in ("bicycle", "motorcycle", "car_standard", "car_sports", "car_van"):
+            if _contains_term(t, vid):
+                ctx["vehicle_id"] = vid
+                break
+        if "vehicle_id" not in ctx:
+            for k, vid in veh_map.items():
+                if _contains_term(t, k):
+                    ctx["vehicle_id"] = vid
+                    break
+        if "vehicle_id" in ctx:
+            ctx.setdefault("intent_note", "travel_by_vehicle")
+    except Exception:
+        pass
+
+
+def _registry_try_travel(ctx: dict[str, Any], t: str, player_input: str) -> bool:
+    """Registry-first travel NL; `_TRAVEL_LEGACY_KEYWORDS` remains fallback."""
+    try:
+        from engine.core.action_registry import match_registry_action
+    except Exception:
+        return False
+    m = match_registry_action(player_input)
+    if not m or not str(m.get("id", "") or "").startswith("travel."):
+        return False
+    patch = m.get("ctx_patch") if isinstance(m.get("ctx_patch"), dict) else {}
+    for k, v in patch.items():
+        if k == "intent_note":
+            continue
+        ctx[k] = v
+    ctx["registry_action_id"] = str(m.get("id", "") or "").strip()
+    _apply_travel_heuristics(ctx, t, player_input)
+    return True
 
 
 def _apply_smartphone_ctx_defaults(ctx: dict[str, Any]) -> None:
@@ -369,86 +534,48 @@ def parse_action_intent(player_input: str) -> dict[str, Any]:
     )
     if _parse_smartphone_fills(ctx, player_input, t):
         pass
+    elif _registry_try_combat(ctx, t, player_input):
+        pass
     elif any(k in t for k in combat_terms):
         ctx["action_type"] = "combat"
         ctx["domain"] = "combat"
         # Ranged (peluru) vs melee — untuk aturan jam & amunisi
-        ranged_hints = ("menembak", "menembakan", "nembak", "tembak", "tembakin", "shoot", "pistol", "senjata api", "rifle", "shotgun")
+        ranged_hints = (
+            "menembak",
+            "menembakan",
+            "nembak",
+            "tembak",
+            "tembakin",
+            "shoot",
+            "shooting",
+            "pistol",
+            "pistolku",
+            "pistol ku",
+            "my pistol",
+            "my gun",
+            "senjata api",
+            "rifle",
+            "shotgun",
+        )
         if any(k in t for k in ranged_hints):
             ctx["combat_style"] = "ranged"
         else:
             ctx["combat_style"] = "melee"
+        if any(x in t for x in _NL_ATTEMPT_MARKERS):
+            ctx["intent_note"] = "nl_attempt"
     elif (_acc := _parse_accommodation_intent(t)) is not None:
         ctx["domain"] = "economy"
         ctx["intent_note"] = "accommodation_stay"
         ctx["action_type"] = "instant"
         ctx["accommodation_intent"] = _acc
         ctx["instant_minutes"] = 15
-    elif any(k in t for k in ["travel", "pergi ke", "naik", "menuju", "balik ke", "pulang ke", "kembali ke", "balik", "pulang", "kembali"]):
-        ctx["action_type"] = "travel"
-        # Heuristic distance estimation from text keywords.
-        if any(k in t for k in ["dekat", "sekitar", "deket", "dekat sini", "sekitar sini", "dekat sana"]):
-            ctx["travel_minutes"] = 10
-        elif any(k in t for k in ["balik", "pulang", "kembali"]) and any(k in t for k in ["ke"]):
-            ctx["travel_minutes"] = 15
-        elif any(k in t for k in ["jauh", "jauhnya", "jauh banget", "antar kota", "beda kota", "lintas", "seberang", "lumayan jauh"]):
-            ctx["travel_minutes"] = 90
-        else:
-            ctx["travel_minutes"] = 30
-
-        # Try to extract destination after "ke"/"menuju"/"balik ke"/etc.
-        # Example: "pergi ke london", "balik ke jakarta selatan".
-        m = re.search(r"\b(?:ke|menuju|pulang ke|balik ke|kembali ke)\s+([a-zA-Z][a-zA-Z0-9\s\-']{2,40})", t)
-        if m:
-            dest_raw = m.group(1).strip()
-            # Cut trailing connectors to avoid capturing "dengan/pakai/untuk".
-            for cut in (" dengan ", " pakai ", " untuk ", " agar ", " lalu ", " sambil ", " sebelum ", " setelah ", " dan ", ","):
-                if cut in (" " + dest_raw + " "):
-                    dest_raw = dest_raw.split(cut.strip(), 1)[0].strip()
-            dest_raw = dest_raw.strip(" .,!?:;\"'")
-            if dest_raw:
-                ctx["travel_destination"] = dest_raw
-        # Vehicle hints (best-effort): "pakai mobil", "naik motor", "drive ... car_standard", etc.
-        # This does not validate ownership; engine will ignore if not owned/active.
-        try:
-            def _contains_term(hay: str, needle: str) -> bool:
-                n = str(needle or "").strip().lower()
-                if not n:
-                    return False
-                # Match whole term boundaries to avoid false positives like:
-                # "sedang" -> mistakenly matching "sedan".
-                return re.search(rf"(?<![a-z0-9_]){re.escape(n)}(?![a-z0-9_])", hay) is not None
-
-            veh_map = {
-                "sepeda": "bicycle",
-                "bicycle": "bicycle",
-                "bike": "bicycle",
-                "motor": "motorcycle",
-                "motorcycle": "motorcycle",
-                "moge": "motorcycle",
-                "mobil": "car_standard",
-                "car": "car_standard",
-                "sedan": "car_standard",
-                "van": "car_van",
-                "minivan": "car_van",
-                "sportscar": "car_sports",
-                "sports car": "car_sports",
-                "sport": "car_sports",
-            }
-            # Explicit engine ids if typed.
-            for vid in ("bicycle", "motorcycle", "car_standard", "car_sports", "car_van"):
-                if _contains_term(t, vid):
-                    ctx["vehicle_id"] = vid
-                    break
-            if "vehicle_id" not in ctx:
-                for k, vid in veh_map.items():
-                    if _contains_term(t, k):
-                        ctx["vehicle_id"] = vid
-                        break
-            if "vehicle_id" in ctx:
-                ctx.setdefault("intent_note", "travel_by_vehicle")
-        except Exception:
-            pass
+    elif _registry_try_travel(ctx, t, player_input):
+        pass
+    elif any(k in t for k in _TRAVEL_LEGACY_KEYWORDS):
+        _apply_travel_heuristics(ctx, t, player_input)
+    elif _registry_try_sleep(ctx, t, player_input):
+        # Data-driven sleep templates (registry) — only if not a hotel/stay booking intent.
+        pass
     elif (sleep_h := _parse_sleep_hours(t)) is not None:
         ctx["action_type"] = "sleep"
         ctx["rested_minutes"] = int(sleep_h) * 60

@@ -61,6 +61,7 @@ CONTRACT:
 - SENSORY_FEED: ONLY sensory description + the **felt** result of the player's last action — **You**-directed, no "I". No stat dumps, no inventory spreadsheets.
 - Numbers in CALCULATED STATE / ROLL RESULT are FINAL. Never contradict or recalculate them.
 - [PLAYER INPUT] is what the human typed — address that action first.
+- Natural-language sentences are OK (e.g. wanting to sleep, trying to shoot with your pistol): the parser / intent layer maps them to engine domains; keep the player’s wording and tone, but never override or contradict [ENGINE] / roll outcomes.
 - If [ENGINE] says combat_blocked or lists triggered events/ripples, the story MUST reflect that (no alternate physics).
 - MEMORY_HASH is the continuity channel (max 5 lines this turn); keep NPC lines and ripples consistent with [WORLD QUEUE] when possible.
 - If travel uses a vehicle (see `vehicle_used` in action_ctx or the vehicle line), narration must reflect the chosen vehicle (noise/visibility), and must not contradict fuel/condition changes recorded by the engine.
@@ -118,6 +119,7 @@ KONTRAK:
 - SENSORY_FEED: Hanya panca indra + dampak aksi terakhir — arahkan ke **Kamu**, tanpa "aku/saya". Tanpa tumpukan stat atau inventori.
 - Angka di CALCULATED STATE / HASIL ROLL bersifat FINAL. Jangan membantah atau menghitung ulang.
 - [PLAYER INPUT] adalah perintah pemain — tanggapi tindakan itu dulu.
+- Bahasa alami boleh (mis. mau tidur, mencoba nembak pakai pistol): parser/intent memetakan ke domain engine; pertahankan gaya kalimat pemain, tapi jangan menentang [ENGINE] / hasil roll.
 - Jika [ENGINE] menyebut combat_blocked atau event/ripple terpicu, cerita HARUS selaras (bukan fisika lain).
 - MEMORY_HASH adalah saluran kontinuitas (maks. 5 baris turn ini); samakan NPC/ripple dengan [ANTREAN DUNIA] bila relevan.
 - Jika travel memakai kendaraan (lihat `vehicle_used` di action_ctx atau baris vehicle), narasi wajib menyebut kendaraan itu (suara/visibilitas) dan tidak boleh bertentangan dengan fuel/condition yang sudah diubah engine.
@@ -1038,6 +1040,21 @@ def _fmt_actionable_hooks(state: dict[str, Any], lang: str) -> str:
     return "\n".join(lines)
 
 
+def _fmt_access_gates_qual(state: dict[str, Any]) -> str:
+    try:
+        from engine.social.reputation_lanes import black_market_access_tier, dominant_lane, premium_informant_unlocked
+        from engine.systems.judicial import is_incarcerated
+
+        tier = int(black_market_access_tier(state))
+        depth = ("shallow", "standard", "wide", "full")[min(3, max(0, tier))]
+        inf = "allowed" if premium_informant_unlocked(state) else "limited"
+        dom = str(dominant_lane(state))
+        jud = "incarcerated" if is_incarcerated(state) else "free"
+        return f"judicial_movement: {jud} | bm_catalog_depth: {depth} | informant_deep_payouts: {inf} | rep_dominant_lane: {dom}"
+    except Exception:
+        return "judicial_movement: unknown | bm_catalog_depth: unknown | informant_deep_payouts: unknown"
+
+
 def build_turn_package(
     state: dict[str, Any],
     player_input: str,
@@ -1215,6 +1232,8 @@ corporate: {rep_corporate}
 political: {rep_political}
 street: {rep_street}
 underground: {rep_underground}
+[ACCESS GATES — qualitative; narrator avoids repeating as raw stats in fiction]
+{_fmt_access_gates_qual(state)}
 [CAREER / W2-9 — per-track progression; narrator: no digits in fiction]
 {career_engine}
 [PROPERTY / W2-10 — assets & quotes; narrator: no digits in fiction]

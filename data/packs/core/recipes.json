@@ -1,0 +1,162 @@
+{
+  "version": 6,
+  "recipes": [
+    {
+      "id": "restraint_reinforced_wrap",
+      "label": "Reinforced restraint (wired)",
+      "category": "tools",
+      "ingredients": {
+        "restraint_zip": 1,
+        "scrap_wire": 1
+      },
+      "outputs": {
+        "restraint_reinforced": 1
+      },
+      "time_min": 10,
+      "requires_skill": {
+        "skill": "streetwise",
+        "min_level": 2
+      }
+    },
+    {
+      "id": "tactical_kit_safehouse",
+      "label": "Tactical restraint kit (bench)",
+      "category": "tools",
+      "ingredients": {
+        "restraint_reinforced": 1,
+        "bypass_wire_tool": 1,
+        "duct_tape": 1
+      },
+      "outputs": {
+        "tactical_restraint_kit": 1
+      },
+      "time_min": 22,
+      "requires_skill": {
+        "skill": "stealth",
+        "min_level": 3
+      },
+      "requires_workstation": "safehouse"
+    },
+    {
+      "id": "crude_signal_pouch",
+      "label": "Crude RF-quiet pouch",
+      "category": "electronics",
+      "ingredients": {
+        "scrap_wire": 2,
+        "duct_tape": 1
+      },
+      "outputs": {
+        "signal_pouch_crude": 1
+      },
+      "time_min": 12,
+      "requires_skill": {
+        "skill": "hacking",
+        "min_level": 2
+      }
+    },
+    {
+      "id": "signal_pouch_tuned_room",
+      "label": "Tuned RF pouch (quiet bench)",
+      "category": "electronics",
+      "ingredients": {
+        "signal_pouch_crude": 1,
+        "duct_tape": 1,
+        "scrap_wire": 1
+      },
+      "outputs": {
+        "signal_pouch_tuned": 1
+      },
+      "time_min": 14,
+      "requires_skill": {
+        "skill": "hacking",
+        "min_level": 3
+      },
+      "requires_workstation": "room"
+    },
+    {
+      "id": "lock_bypass_snare",
+      "label": "Bypass snare (wired)",
+      "category": "stealth",
+      "ingredients": {
+        "lockpick_set": 1,
+        "scrap_wire": 1
+      },
+      "outputs": {
+        "bypass_wire_tool": 1
+      },
+      "time_min": 14,
+      "requires_skill": {
+        "skill": "streetwise",
+        "min_level": 3
+      }
+    },
+    {
+      "id": "phrase_travel_kit",
+      "label": "Phrase + comms travel kit",
+      "category": "travel",
+      "ingredients": {
+        "phrasebook": 1,
+        "burner_phone": 1,
+        "duct_tape": 1
+      },
+      "outputs": {
+        "comms_phrase_bundle": 1
+      },
+      "time_min": 18,
+      "cash_cost": 12
+    },
+    {
+      "id": "field_ammo_wrap",
+      "label": "Field ammo wrap (quick-draw)",
+      "category": "tools",
+      "ingredients": {
+        "ammo_9mm": 1,
+        "duct_tape": 1
+      },
+      "outputs": {
+        "field_ammo_roll": 1
+      },
+      "time_min": 10,
+      "requires_skill": {
+        "skill": "streetwise",
+        "min_level": 2
+      }
+    },
+    {
+      "id": "field_coupler_bench",
+      "label": "Field comms coupler (bench)",
+      "category": "comms",
+      "ingredients": {
+        "comms_phrase_bundle": 1,
+        "scrap_wire": 2,
+        "duct_tape": 1
+      },
+      "outputs": {
+        "field_coupler_kit": 1
+      },
+      "time_min": 16,
+      "cash_cost": 18,
+      "requires_skill": {
+        "skill": "operations",
+        "min_level": 2
+      },
+      "requires_workstation": [
+        "safehouse",
+        "room"
+      ]
+    },
+    {
+      "id": "restraint_zip_ties",
+      "label": "Zip restraint (improvised)",
+      "category": "tools",
+      "ingredients": {
+        "duct_tape": 1,
+        "scrap_wire": 1
+      },
+      "outputs": {
+        "restraint_zip": 1
+      },
+      "time_min": 8
+    }
+  ]
+}

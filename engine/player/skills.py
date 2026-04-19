@@ -164,3 +164,25 @@ def apply_skill_xp_after_roll(state: dict[str, Any], action_ctx: dict[str, Any],
         s["mastery_streak"] = int(s.get("mastery_streak", 0) or 0) + 1
     s["xp"] = xp
     s["level"] = lvl
+
+
+def grant_skill_xp_flat(state: dict[str, Any], skill_key: str, *, amount: int = 1) -> None:
+    """Award flat XP without a dice roll (crafting, training hooks). amount clamped 1..15."""
+    amt = max(1, min(15, int(amount)))
+    sk = str(skill_key or "").strip().lower()
+    if sk not in _SKILL_KEYS:
+        return
+    meta = state.get("meta", {}) or {}
+    day = int(meta.get("day", 1) or 1)
+    s = _ensure_skill(state, sk)
+    s["last_used_day"] = day
+    xp = int(s.get("xp", 0) or 0) + amt
+    lvl = int(s.get("level", 1) or 1)
+    need = 15 + (lvl * 5) + (lvl * lvl)
+    while xp >= need and lvl < 20:
+        xp -= need
+        lvl += 1
+        need = 15 + (lvl * 5) + (lvl * lvl)
+        s["mastery_streak"] = int(s.get("mastery_streak", 0) or 0) + 1
+    s["xp"] = xp
+    s["level"] = lvl

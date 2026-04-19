@@ -548,6 +548,9 @@ def _special_turn_profile(cmd: str) -> dict[str, Any]:
         "MYVEHICLE",
         "VEHICLES",
         "WHEREAMI",
+        "MAP",
+        "JUDICIAL",
+        "JUDICIAL STATUS",
         "HEAT",
         "UNDO",
         "MODE",
@@ -555,6 +558,8 @@ def _special_turn_profile(cmd: str) -> dict[str, Any]:
         "WORLD_BRIEF",
         "LANG",
         "NARRATION",
+        "FACTION_REPORT",
+        "FACTION_REPORT FULL",
     }
     if up in non_turn_exact:
         return {"consume": False, "action_type": "instant", "domain": "other"}
@@ -638,7 +643,10 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         from engine.commands.career import handle_career
         from engine.commands.property_cmd import handle_property
         from engine.commands.smartphone_cmd import handle_smartphone
+        from engine.commands.faction_report_cmd import handle_faction_report
 
+        if handle_faction_report(state, cmd):
+            return True
         if handle_property(state, cmd):
             return True
         if handle_smartphone(state, cmd, run_pipeline=run_pipeline):
@@ -2107,7 +2115,11 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
                     amt = 0
                 r = pay_informant(state, name, amt)
                 if not r.get("ok"):
-                    console.print(f"[red]PAY failed:[/red] {r.get('reason','error')}")
+                    msg = str(r.get("message", "") or "")
+                    if r.get("reason") == "premium_intel_locked" and msg:
+                        console.print(f"[yellow]PAY blocked:[/yellow] {msg} (cap {r.get('cap','?')})")
+                    else:
+                        console.print(f"[red]PAY failed:[/red] {r.get('reason','error')}")
                 else:
                     console.print(f"[green]PAY OK[/green] cash {r.get('cash_delta')} reliability {r.get('reliability_before')}→{r.get('reliability_after')}")
                 return True
@@ -2533,6 +2545,9 @@ def main() -> None:
 
         meta = state.setdefault("meta", {})
         action_ctx = parse_action_intent(cmd)
+        if action_ctx.get("registry_action_id"):
+            meta["resolved_action_id"] = str(action_ctx["registry_action_id"])
+            meta["intent_resolution"] = "registry"
         apply_pending_runtime_step(state, action_ctx)
         intent = None
         if ffci_enabled() and security_flags_for_intent_input(cmd).get("block_resolver"):

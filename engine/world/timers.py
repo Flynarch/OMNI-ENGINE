@@ -1096,6 +1096,24 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                 from engine.world.heat import decay_heat_and_suspicion
 
                 decay_heat_and_suspicion(state, cur_day=int(cur_day))
+                try:
+                    from engine.systems.judicial import tick_judicial_daily
+
+                    tick_judicial_daily(state, day=int(cur_day))
+                except Exception:
+                    pass
+                try:
+                    from engine.npc.npc_agenda import tick_npc_agendas_daily
+
+                    tick_npc_agendas_daily(state, day=int(cur_day))
+                except Exception:
+                    pass
+                try:
+                    from engine.player.medical_bio import tick_medical_daily
+
+                    tick_medical_daily(state, day=int(cur_day))
+                except Exception:
+                    pass
                 # NPC memory decay + consolidation (once per day).
                 try:
                     from engine.npc.memory import process_memory_decay

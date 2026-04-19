@@ -88,6 +88,17 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
     day = int(meta.get("day", 1))
     time_min = int(meta.get("time_min", 0))
     notes = state.setdefault("world_notes", [])
+    try:
+        from engine.world.faction_report import maybe_record_faction_daily_snapshot
+
+        maybe_record_faction_daily_snapshot(state)
+    except Exception as e:
+        try:
+            from engine.core.errors import record_error
+
+            record_error(state, "world.maybe_record_faction_daily_snapshot", e)
+        except Exception:
+            pass
     trace_pct = int(state.get("trace", {}).get("trace_pct", 0))
     # Weather refresh (deterministic per day+location).
     try:
@@ -178,6 +189,17 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
 
     # Travel destination changes scene/world objects.
     if action_ctx.get("action_type") == "travel":
+        try:
+            from engine.systems.judicial import is_incarcerated
+
+            if is_incarcerated(state):
+                notes.append("[Judicial] Travel blocked while serving sentence.")
+                action_ctx["action_type"] = "instant"
+                action_ctx.pop("travel_destination", None)
+                action_ctx["instant_minutes"] = int(action_ctx.get("instant_minutes", 2) or 2)
+                return
+        except Exception:
+            pass
         dest = action_ctx.get("travel_destination")
         if dest:
             # Earth-only travel gate: block unknown/imaginary cities (DLC later).

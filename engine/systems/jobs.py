@@ -170,6 +170,20 @@ def execute_gig(state: dict[str, Any], gig_id: str) -> dict[str, Any]:
     if not success and req in ("hacking", "stealth", "security"):
         trace_delta = 10
     meta["daily_gigs_done"] = int(done_today + 1)
+    if success:
+        try:
+            from engine.social.reputation_lanes import bump_lane
+
+            if req in ("hacking", "security"):
+                bump_lane(state, "underground", 2)
+            if req in ("streetwise", "stealth"):
+                bump_lane(state, "street", 2)
+                bump_lane(state, "criminal", 1)
+            if req in ("management",):
+                bump_lane(state, "corporate", 2)
+                bump_lane(state, "political", 1)
+        except Exception:
+            pass
     return {
         "ok": True,
         "gig": dict(target),

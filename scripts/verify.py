@@ -208,6 +208,143 @@ def _smoke() -> None:
     _update_bio_w8(st_hg, ctx_hg)
     assert float((st_hg.get("bio", {}) or {}).get("hunger", 0.0) or 0.0) > 12.0
 
+    # W2-1 Faction macro report: deterministic, tolerant of partial data, ripple log + 3d delta.
+    from engine.social.ripples import apply_ripple_effects
+    from engine.world.faction_report import (
+        build_faction_macro_report,
+        ensure_factions_shape,
+        faction_report_fingerprint,
+    )
+    from engine.world.heat import bump_heat
+
+    st_w21_bad: dict[str, Any] = {"meta": {"day": 5}, "world": {"factions": {"police": "oops"}}}
+    ensure_factions_shape(st_w21_bad)
+    fp_a = faction_report_fingerprint(st_w21_bad, full=False)
+    fp_b = faction_report_fingerprint(st_w21_bad, full=False)
+    assert fp_a == fp_b
+    r_partial = build_faction_macro_report(st_w21_bad, full=True)
+    assert isinstance(r_partial.get("factions"), list)
+
+    st_w21 = initialize_state({"name": "FacRep", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
+    st_w21["meta"]["day"] = 10
+    world_tick(st_w21, {"action_type": "instant"})
+    apply_ripple_effects(
+        st_w21,
+        {
+            "kind": "test_f_impact",
+            "text": "verify ripple bumps corporate power",
+            "origin_location": "jakarta",
+            "origin_faction": "corporate",
+            "impact": {"factions": {"corporate": {"power": 3}}},
+        },
+    )
+    bump_heat(st_w21, loc="jakarta", delta=40, reason="w21_test", ttl_days=5)
+    full_r = build_faction_macro_report(st_w21, full=True)
+    tc = full_r.get("top_causes", {})
+    assert isinstance(tc, dict)
+    assert isinstance(tc.get("corporate"), list) and len(tc["corporate"]) >= 1
+    hot = full_r.get("hot", {})
+    assert int((hot.get("corporate") or {}).get("heat", 0) or 0) >= 40
+
+    st_w21b = initialize_state({"name": "FacRep2", "location": "tokyo", "year": "2025"}, seed_pack="minimal")
+    w21b = st_w21b.setdefault("world", {})
+    w21b["factions"] = {
+        "corporate": {"power": 50, "stability": 50},
+        "police": {"power": 50, "stability": 50},
+        "black_market": {"power": 50, "stability": 50},
+    }
+    w21b["faction_macro_history"] = [{"day": 4, "factions": {"corporate": {"power": 40, "stability": 50}}}]
+    w21b["faction_macro_history_last_day"] = 99
+    st_w21b["meta"]["day"] = 8
+    cr = build_faction_macro_report(st_w21b, full=False)
+    corp_row = next((x for x in cr["factions"] if x.get("id") == "corporate"), None)
+    assert corp_row is not None
+    assert int(corp_row.get("d_pw") or 0) == 10
+
+    # W2-2..4,12,13: reputation gates, NPC agenda daily tick, district MAP neighbors, judicial release, medical mods.
+    from engine.social.reputation_lanes import (
+        black_market_access_tier,
+        bump_lane,
+        can_buy_black_market_item,
+        ensure_reputation_lanes,
+        premium_intel_pay_cap,
+    )
+    from engine.systems.black_market import ITEM_REPUTATION_TIER
+    from engine.social.informant_ops import pay_informant
+    from engine.npc.npc_agenda import tick_npc_agendas_daily
+    from engine.world.districts import default_district_for_city, district_neighbor_ids, ensure_city_districts
+    from engine.systems.judicial import apply_arrest_sentence, ensure_judicial, is_incarcerated, tick_judicial_daily
+    from engine.player.medical_bio import ensure_medical_bio, medical_roll_modifiers, tick_medical_daily, record_substance_use
+
+    st_r2 = initialize_state({"name": "RepGate", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
+    ensure_reputation_lanes(st_r2)
+    bump_lane(st_r2, "underground", -40)
+    bump_lane(st_r2, "criminal", -40)
+    assert black_market_access_tier(st_r2) == 0
+    assert can_buy_black_market_item(st_r2, "disguise_kit").get("ok") is False
+    bump_lane(st_r2, "underground", 50)
+    assert can_buy_black_market_item(st_r2, "police_scanner").get("ok") is True
+    assert can_buy_black_market_item(st_r2, "disguise_kit").get("ok") is False
+    bump_lane(st_r2, "underground", 20)
+    bump_lane(st_r2, "criminal", 10)
+    assert can_buy_black_market_item(st_r2, "disguise_kit").get("ok") is True
+
+    st_cap = initialize_state({"name": "RepCap", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
+    ensure_reputation_lanes(st_cap)
+    st_cap["reputation"]["scores"]["political"] = 10
+    st_cap["reputation"]["scores"]["street"] = 10
+    assert premium_intel_pay_cap(st_cap) == 800
+    st_cap["reputation"]["scores"]["political"] = 40
+    assert premium_intel_pay_cap(st_cap) == 2500
+
+    st_pay = initialize_state({"name": "InfPay", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
+    ensure_reputation_lanes(st_pay)
+    st_pay["reputation"]["scores"]["political"] = 10
+    st_pay["reputation"]["scores"]["street"] = 10
+    st_pay.setdefault("economy", {})["cash"] = 5000
+    st_pay.setdefault("world", {}).setdefault("informants", {})["X"] = {"affiliation": "civilian", "reliability": 50, "greed": 40, "last_tip_turn": -999}
+    assert pay_informant(st_pay, "X", 900).get("ok") is False
+
+    st_ag = initialize_state({"name": "NPCAg", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_ag.setdefault("player", {})["district"] = default_district_for_city(st_ag, "london") or "downtown"
+    st_ag.setdefault("npcs", {})["AgNPC"] = {
+        "alive": True,
+        "current_location": "london",
+        "home_location": "london",
+        "role": "civilian",
+    }
+    tick_npc_agendas_daily(st_ag, day=2)
+    tick_npc_agendas_daily(st_ag, day=2)
+    ag0 = (st_ag.get("npcs", {}).get("AgNPC", {}) or {}).get("w2_agenda", {})
+    assert isinstance(ag0, dict) and str(ag0.get("daily_goal", "") or "") in ("earn_money", "spread_influence", "reduce_heat")
+
+    st_map = initialize_state({"name": "MapW4", "location": "london", "year": "2025"}, seed_pack="minimal")
+    ensure_city_districts(st_map, "london")
+    st_map.setdefault("player", {})["district"] = default_district_for_city(st_map, "london") or "downtown"
+    did = str(st_map["player"]["district"])
+    nh = district_neighbor_ids(st_map, "london", did)
+    assert isinstance(nh, list) and (len(nh) == 2 or len(nh) == 0)
+
+    st_j = initialize_state({"name": "Jud", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_j.setdefault("meta", {})["day"] = 5
+    st_j.setdefault("inventory", {})["bag_contents"] = ["lockpick", "burner_phone"]
+    apply_arrest_sentence(st_j, sentence_days=1)
+    assert is_incarcerated(st_j) is True
+    tick_judicial_daily(st_j, day=6)
+    assert is_incarcerated(st_j) is False
+    assert "lockpick" in (st_j.get("inventory", {}) or {}).get("bag_contents", [])
+
+    st_m = initialize_state({"name": "Med", "location": "london", "year": "2025"}, seed_pack="minimal")
+    ensure_medical_bio(st_m)
+    st_m.setdefault("bio", {})["withdrawal_level"] = 60
+    st_m["bio"]["last_substance_day"] = 1
+    st_m["meta"]["day"] = 5
+    tick_medical_daily(st_m, day=5)
+    mods_m = medical_roll_modifiers(st_m, "combat")
+    assert any("Withdrawal" in t for t, d in mods_m if d < 0)
+    record_substance_use(st_m, kind="stim")
+    assert int(st_m["bio"].get("withdrawal_level", 99) or 99) < 60
+
     # W2-9 Career: per-track progress, stain, promote gates (no intent bypass), cross-track cost, city-scaled pay.
     from engine.systems.occupation import (
         accrue_career_salary_and_decay,
@@ -396,6 +533,47 @@ def _smoke() -> None:
     assert int(ctx_sleep_mau.get("rested_minutes", 0) or 0) == 6 * 60
     ctx_sleep_10 = parse_action_intent("aku mau tidur 10 jam")
     assert int(ctx_sleep_10.get("rested_minutes", 0) or 0) == 10 * 60
+    ctx_sleep_ingin = parse_action_intent("saya ingin tidur")
+    assert ctx_sleep_ingin.get("action_type") == "sleep"
+    assert int(ctx_sleep_ingin.get("rested_minutes", 0) or 0) == 8 * 60
+    assert str(ctx_sleep_ingin.get("registry_action_id", "") or "") == "sleep.nl_default_8h"
+    ctx_stay_nl = parse_action_intent("booking hotel semalam satu malam")
+    assert (ctx_stay_nl.get("accommodation_intent") or {}) and not ctx_stay_nl.get("registry_action_id")
+    ctx_sleep_want = parse_action_intent("i want to sleep")
+    assert ctx_sleep_want.get("action_type") == "sleep"
+    ctx_shoot_nl = parse_action_intent("mencoba menembak orang itu dengan pistolku")
+    assert ctx_shoot_nl.get("domain") == "combat" and ctx_shoot_nl.get("combat_style") == "ranged"
+    assert ctx_shoot_nl.get("intent_note") == "nl_attempt"
+    assert str(ctx_shoot_nl.get("registry_action_id", "") or "") == "combat.nl_ranged_attempt"
+    ctx_nembak_plain = parse_action_intent("aku mau nembak target")
+    assert ctx_nembak_plain.get("combat_style") == "ranged" and ctx_nembak_plain.get("intent_note") != "nl_attempt"
+    assert str(ctx_nembak_plain.get("registry_action_id", "") or "") == "combat.nl_ranged_attempt"
+    ctx_melee_nl = parse_action_intent("serang guard di depan")
+    assert ctx_melee_nl.get("domain") == "combat" and ctx_melee_nl.get("combat_style") == "melee"
+    assert str(ctx_melee_nl.get("registry_action_id", "") or "") == "combat.nl_melee"
+    # Action registry (data-driven intent catalog — Phase 0: load + match only).
+    from engine.core.action_registry import list_action_ids, load_registry, match_registry_action
+
+    reg = load_registry()
+    assert int(reg.get("registry_version", 0) or 0) >= 1
+    assert "sleep.nl_default_8h" in list_action_ids()
+    assert "combat.nl_melee" in list_action_ids()
+    m_sleep = match_registry_action("saya ingin tidur sebentar")
+    assert isinstance(m_sleep, dict) and m_sleep.get("id") == "sleep.nl_default_8h"
+    assert int((m_sleep.get("ctx_patch") or {}).get("rested_minutes", 0) or 0) == 480
+    m_combat = match_registry_action("aku mau nembak target")
+    assert isinstance(m_combat, dict) and m_combat.get("id") == "combat.nl_ranged_attempt"
+    assert (m_combat.get("ctx_patch") or {}).get("combat_style") == "ranged"
+    m_melee = match_registry_action("saya ingin menyerang musuh")
+    assert isinstance(m_melee, dict) and m_melee.get("id") == "combat.nl_melee"
+    assert "travel.nl_generic" in list_action_ids()
+    m_trv = match_registry_action("aku pergi ke bandung")
+    assert isinstance(m_trv, dict) and m_trv.get("id") == "travel.nl_generic"
+    ctx_trv_reg = parse_action_intent("aku pergi ke london")
+    assert ctx_trv_reg.get("action_type") == "travel" and str(ctx_trv_reg.get("registry_action_id", "") or "") == "travel.nl_generic"
+    ctx_trv_head = parse_action_intent("i head to london")
+    assert ctx_trv_head.get("action_type") == "travel" and str(ctx_trv_head.get("travel_destination", "") or "").lower() == "london"
+    assert str(ctx_trv_head.get("registry_action_id", "") or "") == "travel.nl_generic"
     ctx_sleep_clamp_min = parse_action_intent("SLEEP 0")
     assert int(ctx_sleep_clamp_min.get("rested_minutes", 0) or 0) == 60
     ctx_sleep_clamp_max = parse_action_intent("aku mau tidur 20 jam")
@@ -1541,6 +1719,186 @@ def _smoke() -> None:
     st_ps = initialize_state({"name": "PackStrict", "location": "london", "year": "2025"}, seed_pack="minimal")
     freeze_packs_into_state(st_ps, pack_ids=["core"], strict_extras=True)
     assert isinstance(((st_ps.get("meta", {}) or {}).get("content_packs", {}) or {}).get("extras", {}), dict)
+
+    # Crafting (W2-5 lite): recipes.json consumes ingredients and yields output deterministically.
+    from engine.systems.crafting import can_craft, craft
+
+    st_cr = initialize_state({"name": "Craft", "location": "london", "year": "2025"}, seed_pack="minimal")
+    freeze_packs_into_state(st_cr, pack_ids=["core"])
+    apply_pack_effects(st_cr)
+    inv_cr = st_cr.setdefault("inventory", {})
+    inv_cr.setdefault("bag_contents", []).extend(["duct_tape", "scrap_wire"])
+    assert can_craft(st_cr, "restraint_zip_ties")[0] is True
+    res_cr = craft(st_cr, "restraint_zip_ties")
+    assert bool(res_cr.get("ok"))
+    assert str(res_cr.get("xp_skill", "") or "").strip() == "operations" and int(res_cr.get("xp_amount", 0) or 0) == 1
+    assert int((st_cr.get("meta", {}) or {}).get("crafts_total", 0) or 0) == 1
+    assert int(((st_cr.get("skills", {}) or {}).get("operations", {}) or {}).get("xp", 0) or 0) >= 1
+    bag_cr = inv_cr.get("bag_contents", []) or []
+    assert any(str(x).strip().lower() == "restraint_zip" for x in bag_cr)
+    assert not any(str(x).strip().lower() == "duct_tape" for x in bag_cr)
+    assert not any(str(x).strip().lower() == "scrap_wire" for x in bag_cr)
+
+    # Crafting: ammo-based recipe + skill-gated XP (streetwise).
+    st_am = initialize_state({"name": "CraftAmmo", "location": "london", "year": "2025"}, seed_pack="minimal")
+    freeze_packs_into_state(st_am, pack_ids=["core"])
+    apply_pack_effects(st_am)
+    inv_am = st_am.setdefault("inventory", {})
+    inv_am.setdefault("bag_contents", []).extend(["ammo_9mm", "duct_tape"])
+    st_am.setdefault("skills", {})["streetwise"] = {"level": 2, "xp": 0, "base": 10, "last_used_day": 1, "mastery_streak": 0}
+    sw0 = int(((st_am.get("skills", {}) or {}).get("streetwise", {}) or {}).get("xp", 0) or 0)
+    res_am = craft(st_am, "field_ammo_wrap")
+    assert res_am.get("ok") and str(res_am.get("xp_skill", "") or "") == "streetwise" and int(res_am.get("xp_amount", 0) or 0) == 2
+    assert int(((st_am.get("skills", {}) or {}).get("streetwise", {}) or {}).get("xp", 0) or 0) >= sw0 + 2
+    assert any(str(x).strip().lower() == "field_ammo_roll" for x in (inv_am.get("bag_contents", []) or []))
+
+    # Crafting: ingredients can be consumed from safehouse stash (bag empty; pull from stash).
+    st_ss = initialize_state({"name": "CraftStash", "location": "london", "year": "2025"}, seed_pack="minimal")
+    freeze_packs_into_state(st_ss, pack_ids=["core"])
+    apply_pack_effects(st_ss)
+    st_ss.setdefault("world", {}).setdefault("safehouses", {})["london"] = {
+        "status": "rent",
+        "rent_per_day": 50,
+        "security_level": 1,
+        "stash": [
+            {"item_id": "duct_tape", "kind": "item"},
+            {"item_id": "scrap_wire", "kind": "item"},
+        ],
+        "stash_ammo": {},
+        "delinquent_days": 0,
+    }
+    inv_ss = st_ss.setdefault("inventory", {})
+    inv_ss["bag_contents"] = []
+    assert can_craft(st_ss, "restraint_zip_ties")[0] is True
+    assert craft(st_ss, "restraint_zip_ties").get("ok") is True
+    stash_after = (st_ss.get("world", {}) or {}).get("safehouses", {}).get("london", {}).get("stash") or []
+
+    def _stash_ids(seq):
+        out = []
+        for e in seq:
+            if isinstance(e, dict):
+                out.append(str(e.get("item_id", "") or "").strip().lower())
+            else:
+                out.append(str(e or "").strip().lower())
+        return out
+
+    assert "duct_tape" not in _stash_ids(stash_after) and "scrap_wire" not in _stash_ids(stash_after)
+    assert any(str(x).strip().lower() == "restraint_zip" for x in (inv_ss.get("bag_contents", []) or []))
+
+    # Crafting: skill gate (hacking≥2) for crude_signal_pouch.
+    st_sg = initialize_state({"name": "CraftGate", "location": "london", "year": "2025"}, seed_pack="minimal")
+    freeze_packs_into_state(st_sg, pack_ids=["core"])
+    apply_pack_effects(st_sg)
+    inv_sg = st_sg.setdefault("inventory", {})
+    inv_sg.setdefault("bag_contents", []).extend(["scrap_wire", "scrap_wire", "duct_tape"])
+    st_sg.setdefault("skills", {})["hacking"] = {"level": 1, "xp": 0, "base": 10, "last_used_day": 1, "mastery_streak": 0}
+    assert can_craft(st_sg, "crude_signal_pouch")[1] == "skill_too_low"
+    st_sg["skills"]["hacking"]["level"] = 3
+    assert can_craft(st_sg, "crude_signal_pouch")[0] is True
+    assert craft(st_sg, "crude_signal_pouch").get("ok") is True
+    bag_sg = inv_sg.get("bag_contents", []) or []
+    assert any(str(x).strip().lower() == "signal_pouch_crude" for x in bag_sg)
+
+    # Crafting: cash_cost on phrase_travel_kit.
+    st_pt = initialize_state({"name": "CraftCash", "location": "london", "year": "2025"}, seed_pack="minimal")
+    freeze_packs_into_state(st_pt, pack_ids=["core"])
+    apply_pack_effects(st_pt)
+    inv_pt = st_pt.setdefault("inventory", {})
+    inv_pt.setdefault("bag_contents", []).extend(["phrasebook", "burner_phone", "duct_tape"])
+    st_pt.setdefault("economy", {})["cash"] = 5
+    assert can_craft(st_pt, "phrase_travel_kit")[1] == "not_enough_cash"
+    st_pt["economy"]["cash"] = 100
+    cash0 = int(st_pt["economy"]["cash"])
+    rpt = craft(st_pt, "phrase_travel_kit")
+    assert rpt.get("ok") and int(rpt.get("cash_paid", 0) or 0) == 12
+    assert int(st_pt["economy"]["cash"]) == cash0 - 12
+    bag_pt = inv_pt.get("bag_contents", []) or []
+    assert any(str(x).strip().lower() == "comms_phrase_bundle" for x in bag_pt)
+
+    # Crafting: streetwise≥3 for lock_bypass_snare.
+    st_bw = initialize_state({"name": "CraftSW", "location": "london", "year": "2025"}, seed_pack="minimal")
+    freeze_packs_into_state(st_bw, pack_ids=["core"])
+    apply_pack_effects(st_bw)
+    inv_bw = st_bw.setdefault("inventory", {})
+    inv_bw.setdefault("bag_contents", []).extend(["lockpick_set", "scrap_wire"])
+    st_bw.setdefault("skills", {})["streetwise"] = {"level": 2, "xp": 0, "base": 10, "last_used_day": 1, "mastery_streak": 0}
+    assert can_craft(st_bw, "lock_bypass_snare")[1] == "skill_too_low"
+    st_bw["skills"]["streetwise"]["level"] = 3
+    assert craft(st_bw, "lock_bypass_snare").get("ok") is True
+    assert any(str(x).strip().lower() == "bypass_wire_tool" for x in (inv_bw.get("bag_contents", []) or []))
+
+    # Crafting: chain recipe (craft output used as next ingredient).
+    st_ch = initialize_state({"name": "CraftChain", "location": "london", "year": "2025"}, seed_pack="minimal")
+    freeze_packs_into_state(st_ch, pack_ids=["core"])
+    apply_pack_effects(st_ch)
+    inv_ch = st_ch.setdefault("inventory", {})
+    inv_ch.setdefault("bag_contents", []).extend(["restraint_zip", "scrap_wire"])
+    st_ch.setdefault("skills", {})["streetwise"] = {"level": 2, "xp": 0, "base": 10, "last_used_day": 1, "mastery_streak": 0}
+    assert craft(st_ch, "restraint_reinforced_wrap").get("ok") is True
+    bag_ch = inv_ch.get("bag_contents", []) or []
+    assert any(str(x).strip().lower() == "restraint_reinforced" for x in bag_ch)
+
+    # Crafting: requires_workstation safehouse for final kit assembly.
+    st_ws = initialize_state({"name": "CraftWS", "location": "london", "year": "2025"}, seed_pack="minimal")
+    freeze_packs_into_state(st_ws, pack_ids=["core"])
+    apply_pack_effects(st_ws)
+    assert str((st_ws.get("player", {}) or {}).get("location", "")).strip().lower() == "london"
+    inv_ws = st_ws.setdefault("inventory", {})
+    inv_ws.setdefault("bag_contents", []).extend(["restraint_reinforced", "bypass_wire_tool", "duct_tape"])
+    st_ws.setdefault("skills", {})["stealth"] = {"level": 3, "xp": 0, "base": 10, "last_used_day": 1, "mastery_streak": 0}
+    assert can_craft(st_ws, "tactical_kit_safehouse")[1] == "need_safehouse"
+    st_ws.setdefault("world", {}).setdefault("safehouses", {})["london"] = {"status": "rent"}
+    assert craft(st_ws, "tactical_kit_safehouse").get("ok") is True
+    bag_ws = inv_ws.get("bag_contents", []) or []
+    assert any(str(x).strip().lower() == "tactical_restraint_kit" for x in bag_ws)
+
+    # Crafting: workstation "room" — prepaid stay at current location (accommodation).
+    st_rm = initialize_state({"name": "CraftRoom", "location": "london", "year": "2025"}, seed_pack="minimal")
+    freeze_packs_into_state(st_rm, pack_ids=["core"])
+    apply_pack_effects(st_rm)
+    inv_rm = st_rm.setdefault("inventory", {})
+    inv_rm.setdefault("bag_contents", []).extend(["signal_pouch_crude", "duct_tape", "scrap_wire"])
+    st_rm.setdefault("skills", {})["hacking"] = {"level": 3, "xp": 0, "base": 10, "last_used_day": 1, "mastery_streak": 0}
+    assert can_craft(st_rm, "signal_pouch_tuned_room")[1] == "need_room"
+    st_rm.setdefault("world", {}).setdefault("accommodation", {})["london"] = {
+        "kind": "hotel",
+        "nights_remaining": 2,
+        "checkin_day": 1,
+        "rate_per_night": 80,
+    }
+    assert craft(st_rm, "signal_pouch_tuned_room").get("ok") is True
+    bag_rm = inv_rm.get("bag_contents", []) or []
+    assert any(str(x).strip().lower() == "signal_pouch_tuned" for x in bag_rm)
+
+    # Crafting: OR workstation — safehouse OR room (need_bench if neither).
+    st_fb = initialize_state({"name": "CraftBench", "location": "london", "year": "2025"}, seed_pack="minimal")
+    freeze_packs_into_state(st_fb, pack_ids=["core"])
+    apply_pack_effects(st_fb)
+    inv_fb = st_fb.setdefault("inventory", {})
+    inv_fb.setdefault("bag_contents", []).extend(["comms_phrase_bundle", "scrap_wire", "scrap_wire", "duct_tape"])
+    st_fb.setdefault("economy", {})["cash"] = 200
+    st_fb.setdefault("skills", {})["operations"] = {"level": 2, "xp": 0, "base": 10, "last_used_day": 1, "mastery_streak": 0}
+    assert can_craft(st_fb, "field_coupler_bench")[1] == "need_bench"
+    st_fb.setdefault("world", {}).setdefault("safehouses", {})["london"] = {"status": "rent"}
+    cash_fb0 = int(st_fb["economy"]["cash"])
+    assert craft(st_fb, "field_coupler_bench").get("ok") is True
+    assert int(st_fb["economy"]["cash"]) == cash_fb0 - 18
+    assert any(str(x).strip().lower() == "field_coupler_kit" for x in (inv_fb.get("bag_contents", []) or []))
+    st_fb2 = initialize_state({"name": "CraftBench2", "location": "london", "year": "2025"}, seed_pack="minimal")
+    freeze_packs_into_state(st_fb2, pack_ids=["core"])
+    apply_pack_effects(st_fb2)
+    inv_fb2 = st_fb2.setdefault("inventory", {})
+    inv_fb2.setdefault("bag_contents", []).extend(["comms_phrase_bundle", "scrap_wire", "scrap_wire", "duct_tape"])
+    st_fb2.setdefault("economy", {})["cash"] = 200
+    st_fb2.setdefault("skills", {})["operations"] = {"level": 2, "xp": 0, "base": 10, "last_used_day": 1, "mastery_streak": 0}
+    st_fb2.setdefault("world", {}).setdefault("accommodation", {})["london"] = {
+        "kind": "kos",
+        "nights_remaining": 1,
+        "checkin_day": 1,
+        "rate_per_night": 40,
+    }
+    assert craft(st_fb2, "field_coupler_bench").get("ok") is True
+    assert any(str(x).strip().lower() == "field_coupler_kit" for x in (inv_fb2.get("bag_contents", []) or []))
 
     # Occupation templates: content-driven starter kits (items/skills/languages).
     st_occ = initialize_state(

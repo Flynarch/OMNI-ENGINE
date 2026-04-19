@@ -398,6 +398,15 @@ def compute_roll_package(state: dict[str, Any], action_ctx: dict[str, Any]) -> d
     # 5. Burnout
     if int(bio.get("burnout", 0)) >= 5:
         mods.append(("Burnout", -20))
+    # 6b. W2-13 medical / withdrawal (bounded)
+    try:
+        from engine.player.medical_bio import medical_roll_modifiers
+
+        for label, delta in medical_roll_modifiers(state, str(domain)):
+            if delta:
+                mods.append((label, int(delta)))
+    except Exception:
+        pass
     # 6. Blood loss
     if bio.get("bp_state") == "Low" and domain == "combat":
         mods.append(("Blood loss low", -20))
