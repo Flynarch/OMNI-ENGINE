@@ -366,6 +366,7 @@ def _apply_travel_heuristics(ctx: dict[str, Any], t: str, player_input: str) -> 
         dest_raw = dest_raw.strip(" .,!?:;\"'")
         if dest_raw:
             ctx["travel_destination"] = dest_raw
+
     if not ctx.get("travel_destination"):
         m2 = re.search(r"\b(?:head to|heading to|commute to)\s+([a-zA-Z][a-zA-Z0-9\s\-']{2,40})", t)
         if m2:
@@ -376,6 +377,7 @@ def _apply_travel_heuristics(ctx: dict[str, Any], t: str, player_input: str) -> 
             dest_raw = dest_raw.strip(" .,!?:;\"'")
             if dest_raw:
                 ctx["travel_destination"] = dest_raw
+
     try:
 
         def _contains_term(hay: str, needle: str) -> bool:
