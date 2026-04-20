@@ -228,6 +228,7 @@ For richer intra-city structure (districts + travel), a city can optionally defi
 | `python scripts/migrate_save.py path/to/save.json` | Same, explicit file.                                                                    |
 | `python scripts/trim_feed_archive.py`              | Trim `save/archive.json` for smaller publish artifacts.                                 |
 | `python scripts/feature_gap_export.py`             | Lightweight hints from telemetry + recent notes (no network).                           |
+| `streamlit run scripts/data_editor.py`             | Internal JSON editor for `data/locations/` and `data/packs/` with preview before save. |
 
 ---
 
