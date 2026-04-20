@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
+import os
+from pathlib import Path
 from typing import Any
 
 from engine.core.error_taxonomy import log_swallowed_exception
@@ -31,6 +34,50 @@ def _clamp(v: int, lo: int, hi: int) -> int:
 
 def _norm(s: Any) -> str:
     return str(s or "").strip().lower()
+
+
+def _lod_pack_path() -> Path:
+    return Path(__file__).resolve().parents[2] / "data" / "packs" / "core" / "npc_lod.json"
+
+
+def _load_lod_pack() -> dict[str, Any]:
+    p = _lod_pack_path()
+    if not p.exists():
+        return {}
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = str(os.getenv(name, "") or "").strip()
+    if raw.lstrip("-").isdigit():
+        try:
+            return int(raw)
+        except Exception:
+            return int(default)
+    return int(default)
+
+
+def get_npc_lod_config() -> dict[str, int]:
+    pack = _load_lod_pack()
+    bg_min = int(pack.get("background_tick_min_turns", 5) or 5)
+    bg_max = int(pack.get("background_tick_max_turns", 10) or 10)
+    active_sus = int(pack.get("active_suspicion_gte", 65) or 65)
+    active_alarm = int(pack.get("active_alarm_gte", 70) or 70)
+    cfg = {
+        "background_tick_min_turns": _env_int("NPC_LOD_BG_MIN_TURNS", bg_min),
+        "background_tick_max_turns": _env_int("NPC_LOD_BG_MAX_TURNS", bg_max),
+        "active_suspicion_gte": _env_int("NPC_LOD_ACTIVE_SUSPICION_GTE", active_sus),
+        "active_alarm_gte": _env_int("NPC_LOD_ACTIVE_ALARM_GTE", active_alarm),
+    }
+    cfg["background_tick_min_turns"] = max(1, min(30, int(cfg["background_tick_min_turns"])))
+    cfg["background_tick_max_turns"] = max(int(cfg["background_tick_min_turns"]), min(60, int(cfg["background_tick_max_turns"])))
+    cfg["active_suspicion_gte"] = max(0, min(100, int(cfg["active_suspicion_gte"])))
+    cfg["active_alarm_gte"] = max(0, min(100, int(cfg["active_alarm_gte"])))
+    return cfg
 
 
 def ensure_npc_utility_fields(npc: dict[str, Any], *, name: str, seed: str, day: int) -> dict[str, Any]:
@@ -388,3 +435,36 @@ async def evaluate_npc_goals(state: dict[str, Any], *, batch_size: int = 50) -> 
     state["world"] = world
     stats["actions"] = actions
     return stats
+
+
+def run_active_tick_for_npc_lod(
+    state: dict[str, Any],
+    *,
+    npc_name: str,
+    npc: dict[str, Any],
+    day: int,
+    turn: int,
+) -> dict[str, Any]:
+    """Per-turn full utility pass for active NPC (deterministic, no RNG API calls)."""
+    meta = state.get("meta", {}) or {}
+    seed = str(meta.get("seed_pack", "") or meta.get("world_seed", "") or "default")
+    ensure_npc_utility_fields(npc, name=npc_name, seed=seed, day=day)
+    needs = npc.setdefault("utility_needs", {})
+    if not isinstance(needs, dict):
+        needs = {"financial": 25, "security": 25, "social": 25}
+        npc["utility_needs"] = needs
+
+    _daily_drift(needs, name=npc_name, day=day, seed=seed)
+    _adjust_pressures_from_state(state, npc_name, npc, day=day, seed=seed)
+    act, score = _pick_best_action(needs, name=npc_name, day=day, seed=seed)
+
+    up = npc.setdefault("utility_planner", {})
+    if not isinstance(up, dict):
+        up = {}
+        npc["utility_planner"] = up
+    up["last_active_tick_turn"] = int(turn)
+    up["last_eval_day"] = int(day)
+    up["lod_mode"] = "active"
+    up["lod_last_action"] = str(act)
+    npc["utility_planner"] = up
+    return {"mode": "active", "action": str(act), "score": int(score)}

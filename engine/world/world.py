@@ -6,6 +6,7 @@ from typing import Any
 from engine.core.error_taxonomy import log_swallowed_exception
 from engine.core.errors import record_error
 from engine.core.feed_prune import prune_world_notes_and_news_feed
+from engine.npc.npc_lod import tick_npc_lod
 from engine.npc.npc_sim import tick_npc_sim
 from engine.social.police_check import maybe_schedule_weapon_check
 from engine.social.ripple_queue import enqueue_ripple
@@ -666,6 +667,15 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                         )
     except Exception as _omni_sw_653:
         log_swallowed_exception('engine/world/world.py:653', _omni_sw_653)
+    # NPC LOD tick: active (every turn) + background (5-10 turns).
+    try:
+        tick_npc_lod(state, action_ctx)
+    except Exception as e:
+        log_swallowed_exception('engine/world/world.py:npc_lod', e)
+        try:
+            record_error(state, "world.tick_npc_lod", e)
+        except Exception as _omni_sw_npc_lod:
+            log_swallowed_exception('engine/world/world.py:npc_lod_record', _omni_sw_npc_lod)
     # NPC simulation tick (deterministic utility rules).
     try:
 

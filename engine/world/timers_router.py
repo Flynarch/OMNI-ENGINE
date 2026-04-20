@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from engine.core.error_taxonomy import log_swallowed_exception
+from engine.systems.storyteller_director import StorytellerDirector
 from typing import Any, Callable, Literal
 
 import engine.systems.encounter_router as _encounter_router
@@ -25,6 +26,11 @@ def apply_triggered_events(
         if not isinstance(ev, dict):
             continue
         et = str(ev.get("event_type", "") or "")
+        st_sig = StorytellerDirector().router_signal(state, event_type=et)
+        try:
+            surf_shift = int(st_sig.get("surface_time_shift_min", 0) or 0)
+        except Exception:
+            surf_shift = 0
         payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
         try:
             _encounter_router.audit_casefile_for_event(state, ev)
@@ -50,7 +56,7 @@ def apply_triggered_events(
                         "text": text or et,
                         "triggered_day": day,
                         "surface_day": day,
-                        "surface_time": min(1439, time_min + 2),
+                        "surface_time": min(1439, max(0, time_min + 2 + surf_shift)),
                         "surfaced": False,
                         "propagation": "local_witness",
                         "origin_location": str(routed_fp.get("origin_location", "") or "").strip().lower(),
@@ -60,6 +66,10 @@ def apply_triggered_events(
                         "meta": routed_fp.get("meta") if isinstance(routed_fp.get("meta"), dict) else {},
                     },
                 )
+                if str(st_sig.get("mode", "neutral")) in ("build", "release"):
+                    state.setdefault("world_notes", []).append(
+                        f"[Storyteller] pacing={st_sig.get('mode')} event={et}"
+                    )
             except Exception as _omni_sw_66:
                 log_swallowed_exception('engine/world/timers_router.py:66', _omni_sw_66)
                 state.setdefault("world_notes", []).append(f"[Timers] router-first handler failed for event_type={et}")

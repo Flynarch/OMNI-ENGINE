@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "poor_net_worth_lte": 1200,
+  "wealth_build_gte": 25000,
+  "safe_heat_lte": 28,
+  "release_hp_pct_lte": 35,
+  "safe_turns_for_build": 6,
+  "release_hostile_mult_pct": 55,
+  "build_hostile_mult_pct": 135,
+  "build_router_time_shift_min": -1,
+  "release_router_time_shift_min": 4,
+  "build_investigation_due_min": 2
+}

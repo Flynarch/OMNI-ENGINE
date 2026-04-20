@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "background_tick_min_turns": 5,
+  "background_tick_max_turns": 10,
+  "active_suspicion_gte": 65,
+  "active_alarm_gte": 70
+}

@@ -5,6 +5,7 @@ from typing import Any
 
 from engine.core.error_taxonomy import log_swallowed_exception
 from engine.core.trace import get_trace_tier
+from engine.systems.storyteller_director import StorytellerDirector
 from engine.world.atlas import ensure_country_history_idx, ensure_location_profile
 
 
@@ -102,9 +103,38 @@ def schedule_travel_encounters(state: dict[str, Any], action_ctx: dict[str, Any]
         trace = 0
 
     # Deterministic score -> choose encounter type.
-    score = int(heat * 0.6 + susp * 0.8 + trace * 0.3)
+    score_base = int(heat * 0.6 + susp * 0.8 + trace * 0.3)
+    director = StorytellerDirector()
+    d_sig = director.encounter_signal(state)
+    mult = float(d_sig.get("hostile_weight_mult", 1.0) or 1.0)
+    score = int(round(score_base * mult))
     if score < 55:
-        return {"scheduled": False, "reason": "low_score", "score": score}
+        # Tension build: if player is too safe/wealthy for too long, inject deterministic pressure.
+        if bool(d_sig.get("build_mode")):
+            due_time = min(1439, int(tmin) + int(d_sig.get("build_investigation_due_min", 2) or 2))
+            pe = state.setdefault("pending_events", [])
+            if isinstance(pe, list):
+                pe.append(
+                    {
+                        "event_type": "investigation_sweep",
+                        "title": "Storyteller Pressure — Investigation Sweep",
+                        "due_day": int(day),
+                        "due_time": int(due_time),
+                        "triggered": False,
+                        "payload": {
+                            "location": loc,
+                            "district": did,
+                            "trace_snapshot": int(trace),
+                            "storyteller_mode": "build",
+                        },
+                    }
+                )
+            sched[key] = {"event_type": "investigation_sweep", "due_day": int(day), "due_time": int(due_time)}
+            world["encounter_sched"] = sched
+            world["storyteller_observer"] = director.observer_update(state, hostile_happened=True)
+            return {"scheduled": True, "event_type": "investigation_sweep", "score": score, "score_base": score_base}
+        world["storyteller_observer"] = director.observer_update(state, hostile_happened=False)
+        return {"scheduled": False, "reason": "low_score", "score": score, "score_base": score_base}
 
     # Optional border control override when destination country has strict borders (year-aware).
     dest = str(action_ctx.get("travel_destination", "") or "").strip().lower()
@@ -141,7 +171,8 @@ def schedule_travel_encounters(state: dict[str, Any], action_ctx: dict[str, Any]
         pe.append({"event_type": event_type, "title": f"Travel Encounter — {event_type}", "due_day": int(day), "due_time": int(due_time), "triggered": False, "payload": payload})
     sched[key] = {"event_type": event_type, "due_day": int(day), "due_time": int(due_time)}
     world["encounter_sched"] = sched
-    return {"scheduled": True, "event_type": event_type, "score": score}
+    world["storyteller_observer"] = director.observer_update(state, hostile_happened=True)
+    return {"scheduled": True, "event_type": event_type, "score": score, "score_base": score_base}
 
 
 def evaluate_security_encounters(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[str, Any]:
@@ -189,7 +220,10 @@ def evaluate_security_encounters(state: dict[str, Any], action_ctx: dict[str, An
         return dict(prev)
 
     roll = deterministic_security_roll_percent(state)
-    prob = 10 if tier_id == "Wanted" else 30
+    prob_base = 10 if tier_id == "Wanted" else 30
+    director = StorytellerDirector()
+    d_sig = director.encounter_signal(state)
+    prob = int(max(1, min(95, round(float(prob_base) * float(d_sig.get("hostile_weight_mult", 1.0) or 1.0)))))
     triggered = roll < prob
 
     out: dict[str, Any] = {
@@ -198,11 +232,13 @@ def evaluate_security_encounters(state: dict[str, Any], action_ctx: dict[str, An
         "tier_id": tier_id,
         "roll": int(roll),
         "prob_threshold": int(prob),
+        "prob_base": int(prob_base),
     }
 
     if not triggered:
         sched[key] = out
         world["encounter_sched"] = sched
+        world["storyteller_observer"] = director.observer_update(state, hostile_happened=False)
         return out
 
     loc, did, day_brief, tmin = _brief(state)
@@ -239,5 +275,6 @@ def evaluate_security_encounters(state: dict[str, Any], action_ctx: dict[str, An
     out["scene_type"] = "police_stop"
     sched[key] = out
     world["encounter_sched"] = sched
+    world["storyteller_observer"] = director.observer_update(state, hostile_happened=True)
     return out
 

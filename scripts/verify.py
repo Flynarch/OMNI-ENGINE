@@ -2443,6 +2443,41 @@ def _smoke() -> None:
     assert int(pl.get("lod_bucket", 0) or 0) in (3, 6, 12)
     assert int(pl.get("last_coarse_turn", 0) or 0) == 12
 
+    # NPC LOD: active tick runs every turn, background tick runs 5-10 turns, deterministic.
+    from engine.npc.npc_lod import tick_npc_lod
+
+    st_lod = initialize_state({"name": "NPCLodVerify", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_lod.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60, "turn": 1})
+    st_lod.setdefault("npcs", {})["ActiveOne"] = {
+        "name": "ActiveOne",
+        "home_location": "london",
+        "current_location": "london",
+        "active_status": "investigated",
+        "belief_summary": {"suspicion": 80, "respect": 35},
+    }
+    st_lod.setdefault("npcs", {})["FarOne"] = {
+        "name": "FarOne",
+        "home_location": "jakarta",
+        "current_location": "jakarta",
+        "belief_summary": {"suspicion": 4, "respect": 55},
+    }
+    c_lod = {"active": 0, "background": 0}
+    for t in range(1, 21):
+        st_lod.setdefault("meta", {})["turn"] = t
+        c_lod = tick_npc_lod(st_lod, {"action_type": "instant", "domain": "social"})
+        if int(c_lod.get("background", 0) or 0) >= 1:
+            break
+    assert int(c_lod.get("active", 0) or 0) >= 1
+    assert int(c_lod.get("background", 0) or 0) >= 1
+    # Ensure background economy state exists and survives transition to active.
+    far_econ_before = dict((st_lod.get("npcs", {}).get("FarOne", {}) or {}).get("economy", {}) or {})
+    st_lod.setdefault("npcs", {}).setdefault("FarOne", {})["current_location"] = "london"
+    st_lod.setdefault("meta", {})["turn"] = int((st_lod.get("meta", {}) or {}).get("turn", 1) or 1) + 1
+    c_lod2 = tick_npc_lod(st_lod, {"action_type": "instant", "domain": "social"})
+    assert int(c_lod2.get("active", 0) or 0) >= 1
+    far_econ_after = dict((st_lod.get("npcs", {}).get("FarOne", {}) or {}).get("economy", {}) or {})
+    assert int(far_econ_after.get("cash", 0) or 0) >= int(far_econ_before.get("cash", 0) or 0)
+
     # NPC move_location should change current_location, not home_location.
     st_mv = initialize_state({"name": "MoveLocVerify", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_mv.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60, "turn": 10})
@@ -5878,6 +5913,41 @@ def _smoke() -> None:
     assert "Local AI Network" in _lh.consume_local_fallback_notice()
     _lh._mark_primary_backend_active()
     assert _lh.is_local_fallback_active() is False
+
+    # StorytellerDirector: deterministic pacing signal (observer-style, no direct mutation).
+    from engine.systems.storyteller_director import StorytellerDirector
+    from engine.systems.encounter_scheduler import schedule_travel_encounters
+
+    st_sd = initialize_state({"name": "StoryDir", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_sd.setdefault("meta", {}).update({"day": 6, "turn": 7, "time_min": 9 * 60})
+    st_sd.setdefault("economy", {}).update({"cash": 50000, "bank": 50000})
+    st_sd.setdefault("trace", {})["trace_pct"] = 8
+    st_sd.setdefault("player", {})["location"] = "london"
+    st_sd.setdefault("world", {})["storyteller_observer"] = {"safe_turns": 7}
+    snap_sd = copy.deepcopy(st_sd)
+    dr = StorytellerDirector()
+    sig_sd = dr.encounter_signal(st_sd)
+    assert bool(sig_sd.get("build_mode")) is True
+    assert float(sig_sd.get("hostile_weight_mult", 1.0) or 1.0) >= 1.0
+    # Observer contract: director methods must not mutate state directly.
+    assert st_sd == snap_sd
+
+    # Tension release should lower hostile weight after severe pressure signal.
+    st_rel = initialize_state({"name": "StoryRelease", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_rel.setdefault("player", {})["hp"] = 10
+    st_rel.setdefault("player", {})["hp_max"] = 100
+    sig_rel = StorytellerDirector().encounter_signal(st_rel)
+    assert bool(sig_rel.get("release_mode")) is True
+    assert float(sig_rel.get("hostile_weight_mult", 1.0) or 1.0) < 1.0
+
+    # Scheduler consumes director signals: build mode can inject investigation pressure.
+    st_sched = copy.deepcopy(st_sd)
+    st_sched.setdefault("pending_events", [])
+    st_sched.setdefault("world", {}).setdefault("heat_map", {}).setdefault("london", {"__all__": {"level": 0}})
+    st_sched.setdefault("world", {}).setdefault("suspicion", {}).setdefault("london", {"__all__": {"level": 0}})
+    r_sched = schedule_travel_encounters(st_sched, {"action_type": "travel", "travel_destination": "tokyo"})
+    assert isinstance(r_sched, dict) and bool(r_sched.get("scheduled")) is True
+    assert str(r_sched.get("event_type", "")) in ("investigation_sweep", "traffic_stop", "vehicle_search", "border_control")
 
     assert resolve_roll_primary_stat("stealth", {"intent_note": "", "normalized_input": ""}) == "agility"
     thresholds = _load_base_thresholds()
