@@ -140,6 +140,60 @@ def _record_soft_error(state: dict[str, Any], scope: str, err: Exception) -> Non
         record_error(state, scope, err)
     except Exception as _omni_sw_42:
         log_swallowed_exception('main.py:42', _omni_sw_42)
+
+
+def _in_character_stream_fallback(
+    state: dict[str, Any],
+    *,
+    cmd: str,
+    action_ctx: dict[str, Any] | None = None,
+    brief_mode: bool = False,
+) -> str:
+    """Minimal immersion-safe fallback when LLM stream fails hard."""
+    lang = get_narration_lang(state)
+    player = state.get("player", {}) or {}
+    loc = str(player.get("location", "unknown") or "unknown")
+    mood = str(player.get("mood", "steady") or "steady")
+    meta = state.get("meta", {}) or {}
+    day = int(meta.get("day", 1) or 1)
+    tmin = int(meta.get("time_min", 0) or 0)
+    hh, mm = tmin // 60, tmin % 60
+    trace_pct = int((state.get("trace", {}) or {}).get("trace_pct", 0) or 0)
+    hooks = ((state.get("meta", {}) or {}).get("actionable_hooks", []) or []) if isinstance((state.get("meta", {}) or {}).get("actionable_hooks", []), list) else []
+    hook_txt = str(hooks[0]).strip() if hooks else ""
+    tone_hot = trace_pct >= 50 or bool(hook_txt)
+    cmd_short = str(cmd or "").strip()[:80]
+    if brief_mode:
+        if lang == "en":
+            return (
+                f"London static chews the channel for a beat. You still have the map in your head: Day {day}, {hh:02d}:{mm:02d}, {loc}. "
+                f"Pressure is {'high' if tone_hot else 'manageable'}, mood is {mood}. "
+                f"{'A live thread still hangs: ' + hook_txt if hook_txt else 'No urgent alarm yet, but the city never fully relaxes.'}"
+            )
+        return (
+            f"Saluran sempat dipenuhi statik, tapi peta kota tetap utuh di kepalamu: Day {day}, {hh:02d}:{mm:02d}, {loc}. "
+            f"Tekanan {'tinggi' if tone_hot else 'masih terkendali'}, mood {mood}. "
+            f"{'Masih ada benang aktif: ' + hook_txt if hook_txt else 'Belum ada alarm besar, tapi kota tak pernah benar-benar tenang.'}"
+        )
+    domain = str((action_ctx or {}).get("domain", "") or "").lower()
+    if lang == "en":
+        return (
+            f"The line crackles and drops to static, but your rhythm does not. {loc} still breathes around you at {hh:02d}:{mm:02d}. "
+            f"You push your last intent ({cmd_short}) through instinct, keeping it tight and quiet while the city listens."
+            if not tone_hot
+            else f"The feed tears out mid-sentence; siren-light pressure keeps your pulse sharp. In {loc}, {hh:02d}:{mm:02d}, "
+            f"you hold to your last move ({cmd_short}) and stay one step ahead of attention."
+        )
+    base = (
+        f"Saluran sempat putus jadi statik, tapi ritmemu tidak ikut jatuh. {loc} masih bernapas di sekelilingmu pada {hh:02d}:{mm:02d}. "
+        f"Kamu lanjutkan niat terakhirmu ({cmd_short}) dengan insting yang rapat dan tenang."
+        if not tone_hot
+        else f"Feed robek di tengah kalimat; tekanan sirene bikin nadi tetap tajam. Di {loc}, {hh:02d}:{mm:02d}, "
+        f"kamu pegang niat terakhirmu ({cmd_short}) dan jaga jarak satu langkah dari sorotan."
+    )
+    if domain in ("social", "combat", "hacking"):
+        return base + " Kota membaca bahasa tubuhmu sebelum membaca kata-katamu."
+    return base
 def _load_occupation_templates() -> list[dict[str, Any]]:
     """Boot-time helper: read core occupations templates (optional)."""
     try:
@@ -2627,7 +2681,8 @@ async def game_loop_async(state: dict[str, Any]) -> None:
                 )
             except Exception as _omni_sw_1947:
                 log_swallowed_exception("main.py:world_brief", _omni_sw_1947)
-                console.print("[red]// SIGNAL LOST //[/red]")
+                state.setdefault("world_notes", []).append("[LLM] World brief stream failed; using in-character fallback.")
+                console.print(_in_character_stream_fallback(state, cmd=cmd, brief_mode=True))
             continue
         # Global scene blocker (non-special path).
         up0 = cmd.upper()
@@ -2976,7 +3031,7 @@ async def game_loop_async(state: dict[str, Any]) -> None:
             )
         except Exception as _omni_sw_2897:
             log_swallowed_exception("main.py:2897", _omni_sw_2897)
-            console.print("[red]// SIGNAL LOST //[/red]")
+            state.setdefault("world_notes", []).append("[LLM] Narration stream retry engaged.")
             try:
                 text = await run_narration_stream_with_heartbeat(
                     system_prompt,
@@ -2987,7 +3042,8 @@ async def game_loop_async(state: dict[str, Any]) -> None:
                 )
             except Exception as _omni_sw_2904:
                 log_swallowed_exception("main.py:2904", _omni_sw_2904)
-                console.print("[red]Stream gagal, output parsial disimpan.[/red]")
+                text = _in_character_stream_fallback(state, cmd=cmd, action_ctx=action_ctx, brief_mode=False)
+                console.print(text)
 
         if text:
             text = enforce_stop_sequence_output(text, bool(state.get("flags", {}).get("stop_sequence_active")))

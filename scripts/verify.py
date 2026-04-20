@@ -2697,22 +2697,22 @@ def _smoke() -> None:
     leaked = (
         "<OMNI_MONITOR>visible</OMNI_MONITOR>"
         "<INTERNAL_LOGIC>hide1</INTERNAL_LOGIC>"
-        "<SENSORY_FEED>hide2</SENSORY_FEED>"
+        "<SENSORY_FEED>show2</SENSORY_FEED>"
         "<INTERACTION_NODE>hide3</INTERACTION_NODE>"
         "<EVENT_LOG>hide4</EVENT_LOG>"
         "<MEMORY_HASH>hide5</MEMORY_HASH>"
     )
     fd = filter_narration_for_player_display(leaked)
-    assert "hide" not in fd and "visible" in fd and "<" not in fd
+    assert "hide" not in fd and "visible" in fd and "show2" in fd and "<" not in fd
     # Attribute-bearing open tags must not leak section bodies or angle brackets.
     attr_leak = (
         '<OMNI_MONITOR tone="x">visible</OMNI_MONITOR>'
         '<INTERNAL_LOGIC a="1">hideA</INTERNAL_LOGIC>'
-        '<SENSORY_FEED>hideB</SENSORY_FEED>'
+        '<SENSORY_FEED>showB</SENSORY_FEED>'
         '<INTERACTION_NODE n="1">hideC</INTERACTION_NODE>'
     )
     fd2 = filter_narration_for_player_display(attr_leak)
-    assert "hide" not in fd2 and "visible" in fd2 and "<" not in fd2
+    assert "hide" not in fd2 and "visible" in fd2 and "showB" in fd2 and "<" not in fd2
 
     # Daily burn once per sim day (not only when time_min==0); bank floor 0 after shortfall → debt.
     burn_st = {
@@ -5908,6 +5908,10 @@ def _smoke() -> None:
     assert d2 == "" and done2 is True
     d3, done3 = _lh._extract_sse_delta("event: ping")
     assert d3 == "" and done3 is False
+    d4, done4 = _lh._extract_sse_delta('data: {"choices":[{"delta":{"content":[{"type":"text","text":"Neo"}]}}]}')
+    assert d4 == "Neo" and done4 is False
+    t4 = _lh._extract_text_from_completion({"choices": [{"message": {"content": "City hums."}}]})
+    assert t4 == "City hums."
     _lh._mark_local_fallback("verify")
     assert _lh.is_local_fallback_active() is True
     assert "Local AI Network" in _lh.consume_local_fallback_notice()

@@ -69,7 +69,17 @@ def handle_session(
             console.print()
         except Exception as _omni_sw_64:
             log_swallowed_exception('engine/commands/session.py:64', _omni_sw_64)
-            console.print("[red]// SIGNAL LOST //[/red]")
+            p = state.get("player", {}) or {}
+            loc = str(p.get("location", "unknown") or "unknown")
+            lang = get_narration_lang(state)
+            if lang == "en":
+                console.print(
+                    f"The channel buckles for a moment, but your situational read holds: {loc} remains tense, alive, and listening."
+                )
+            else:
+                console.print(
+                    f"Saluran sempat terganggu, tapi pembacaan situasimu tetap utuh: {loc} masih tegang, hidup, dan mengawasi."
+                )
         return True
     if up == "LANG" or up.startswith("LANG "):
         parts = cmd.split(maxsplit=2)

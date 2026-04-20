@@ -135,10 +135,47 @@ def _extract_sse_delta(line: str) -> tuple[str, bool]:
         return "", True
     try:
         chunk = json.loads(data)
-        delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+        choice0 = (chunk.get("choices", [{}]) or [{}])[0] if isinstance(chunk.get("choices"), list) else {}
+        if not isinstance(choice0, dict):
+            choice0 = {}
+        delta_obj = choice0.get("delta") if isinstance(choice0.get("delta"), dict) else {}
+        delta = delta_obj.get("content", "")
+        if isinstance(delta, list):
+            buf: list[str] = []
+            for part in delta:
+                if isinstance(part, dict):
+                    txt = str(part.get("text", "") or "")
+                    if txt:
+                        buf.append(txt)
+                elif isinstance(part, str):
+                    buf.append(part)
+            delta = "".join(buf)
+        if not delta:
+            # Some providers stream under `text` or send full `message` in a non-standard SSE chunk.
+            delta = choice0.get("text", "")
+            if not delta and isinstance(choice0.get("message"), dict):
+                delta = str((choice0.get("message") or {}).get("content", "") or "")
         return str(delta or ""), False
     except Exception:
         return "", False
+
+
+def _extract_text_from_completion(data: dict[str, Any]) -> str:
+    if not isinstance(data, dict):
+        return ""
+    ch = data.get("choices")
+    if isinstance(ch, list) and ch:
+        c0 = ch[0] if isinstance(ch[0], dict) else {}
+        if isinstance(c0, dict):
+            msg = c0.get("message")
+            if isinstance(msg, dict):
+                txt = str(msg.get("content", "") or "")
+                if txt.strip():
+                    return txt
+            txt2 = str(c0.get("text", "") or "")
+            if txt2.strip():
+                return txt2
+    return ""
 
 
 async def _async_ollama_generate_nonstream(
@@ -326,6 +363,16 @@ async def aiter_sse_narration_chunks(
             raise RuntimeError(f"LLM HTTP {code}: {e}") from e
         except RuntimeError as e:
             last_exc = e
+            # SSE transport can fail while provider non-stream still works.
+            try:
+                data = await async_chat_completion_json(messages=messages, max_tokens=max_tokens, timeout=max(60.0, float(timeout)))
+                txt = _extract_text_from_completion(data)
+                if txt.strip():
+                    _mark_primary_backend_active()
+                    yield txt
+                    return
+            except Exception as _nonstream_exc:
+                last_exc = _nonstream_exc
             if _local_fallback_enabled() and attempt >= fallback_after - 1:
                 _mark_local_fallback("external empty-stream")
                 async for ch in _aiter_ollama_stream(messages=messages, max_tokens=max_tokens, timeout=timeout):

@@ -19,7 +19,6 @@ SECTION_TAGS = [
 # Shown only to the LLM / parser; never echo raw blocks to the player console.
 _PLAYER_HIDDEN_XML_SECTIONS: tuple[str, ...] = (
     "INTERNAL_LOGIC",
-    "SENSORY_FEED",
     "INTERACTION_NODE",
     "EVENT_LOG",
     "MEMORY_HASH",
@@ -48,6 +47,7 @@ def filter_narration_for_player_display(text: str) -> str:
         t = re.sub(_open(tag), "", t, flags=re.IGNORECASE)
     # Visible "main" narration: prose from OMNI_MONITOR without XML delimiters.
     t = re.sub(r"</?OMNI_MONITOR(?:\s[^>]*)?>", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"</?SENSORY_FEED(?:\s[^>]*)?>", "", t, flags=re.IGNORECASE)
     t = re.sub(r"\n{3,}", "\n\n", t.strip())
     return t
 
