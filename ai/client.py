@@ -6,7 +6,9 @@ from ai.llm_http import (
     OPENROUTER_URL,
     GROQ_URL,
     aiter_sse_narration_chunks,
+    consume_local_fallback_notice,
     default_narration_max_tokens,
+    is_local_fallback_active,
     iter_sse_narration_chunks_sync,
 )
 
@@ -16,6 +18,8 @@ __all__ = [
     "stream_response_async",
     "OPENROUTER_URL",
     "GROQ_URL",
+    "consume_local_fallback_notice",
+    "is_local_fallback_active",
 ]
 
 

@@ -16,6 +16,7 @@ from rich.table import Table
 
 from ai.async_llm_ui import run_narration_stream_with_heartbeat
 from ai.client import stream_response  # sync bridge + session handlers
+from ai.llm_http import consume_local_fallback_notice, is_local_fallback_active
 from ai.intent_resolver import resolve_intent_async
 from ai.parser import apply_memory_hash_to_state, enforce_stop_sequence_output, parse_memory_hash, record_ai_parse_health
 from ai.turn_prompt import build_system_prompt, build_turn_package, get_narration_lang
@@ -2583,6 +2584,23 @@ async def game_loop_async(state: dict[str, Any]) -> None:
 
     while True:
         await _process_pending_utility_ai()
+        try:
+            meta = state.setdefault("meta", {})
+            note = consume_local_fallback_notice()
+            if note:
+                meta["llm_backend_notice"] = note
+                meta["llm_backend_notice_ttl"] = 6
+            elif is_local_fallback_active() and not str(meta.get("llm_backend_notice", "") or "").strip():
+                meta["llm_backend_notice"] = "Beralih ke Local AI Network"
+                meta["llm_backend_notice_ttl"] = 2
+            ttl = int(meta.get("llm_backend_notice_ttl", 0) or 0)
+            if ttl > 0:
+                meta["llm_backend_notice_ttl"] = ttl - 1
+            else:
+                meta.pop("llm_backend_notice", None)
+                meta.pop("llm_backend_notice_ttl", None)
+        except Exception as _omni_sw_llm_notice:
+            log_swallowed_exception("main.py:llm_notice", _omni_sw_llm_notice)
         render_monitor(state)
         cmd_raw = _expand_alias(await _ainput_line("> "))
         cmd = sanitize_player_command_text(cmd_raw)

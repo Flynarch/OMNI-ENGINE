@@ -19,6 +19,10 @@ from dotenv import load_dotenv
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+OLLAMA_DEFAULT_URL = "http://localhost:11434/api/generate"
+
+_LOCAL_FALLBACK_ACTIVE = False
+_LOCAL_FALLBACK_NOTICE: str | None = None
 
 
 def resolve_backend() -> tuple[str, dict[str, str], str, str]:
@@ -67,6 +71,116 @@ def _http_retryable(code: int) -> bool:
     return code in (408, 429, 500, 502, 503, 504)
 
 
+def _local_fallback_enabled() -> bool:
+    v = os.getenv("LLM_LOCAL_FALLBACK_ENABLED", "1").strip().lower()
+    return v not in ("0", "false", "no", "off")
+
+
+def _local_fallback_after_attempts() -> int:
+    # "after 2 retries" default
+    raw = os.getenv("LLM_LOCAL_FALLBACK_AFTER_RETRIES", "").strip()
+    n = int(raw) if raw.isdigit() else 2
+    return max(1, min(6, n))
+
+
+def _local_ollama_url() -> str:
+    return os.getenv("LLM_LOCAL_BASE_URL", OLLAMA_DEFAULT_URL).strip() or OLLAMA_DEFAULT_URL
+
+
+def _local_ollama_model() -> str:
+    return os.getenv("LLM_LOCAL_MODEL", "llama3.2:3b").strip() or "llama3.2:3b"
+
+
+def _mark_local_fallback(reason: str) -> None:
+    global _LOCAL_FALLBACK_ACTIVE, _LOCAL_FALLBACK_NOTICE
+    _LOCAL_FALLBACK_ACTIVE = True
+    _LOCAL_FALLBACK_NOTICE = f"Beralih ke Local AI Network ({reason})"
+
+
+def consume_local_fallback_notice() -> str:
+    global _LOCAL_FALLBACK_NOTICE
+    msg = str(_LOCAL_FALLBACK_NOTICE or "").strip()
+    _LOCAL_FALLBACK_NOTICE = None
+    return msg
+
+
+def is_local_fallback_active() -> bool:
+    return bool(_LOCAL_FALLBACK_ACTIVE)
+
+
+def _messages_to_prompt(messages: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for m in messages[:24]:
+        if not isinstance(m, dict):
+            continue
+        role = str(m.get("role", "user") or "user").strip().upper()
+        content = str(m.get("content", "") or "")
+        if content:
+            parts.append(f"{role}:\n{content}")
+    return "\n\n".join(parts).strip()
+
+
+async def _async_ollama_generate_nonstream(
+    *,
+    messages: list[dict[str, Any]],
+    max_tokens: int,
+    timeout: float,
+) -> dict[str, Any]:
+    url = _local_ollama_url()
+    model = _local_ollama_model()
+    payload = {
+        "model": model,
+        "prompt": _messages_to_prompt(messages),
+        "stream": False,
+        "options": {"num_predict": int(max_tokens)},
+    }
+    timeout_cfg = _httpx_timeout(stream=False, timeout_sec=timeout)
+    async with httpx.AsyncClient(timeout=timeout_cfg) as client:
+        resp = await client.post(url, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+    txt = str(data.get("response", "") or "")
+    return {
+        "id": "local-ollama",
+        "object": "chat.completion",
+        "model": model,
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": txt}, "finish_reason": "stop"}],
+    }
+
+
+async def _aiter_ollama_stream(
+    *,
+    messages: list[dict[str, Any]],
+    max_tokens: int,
+    timeout: float,
+) -> AsyncIterator[str]:
+    url = _local_ollama_url()
+    model = _local_ollama_model()
+    payload = {
+        "model": model,
+        "prompt": _messages_to_prompt(messages),
+        "stream": True,
+        "options": {"num_predict": int(max_tokens)},
+    }
+    timeout_cfg = _httpx_timeout(stream=True, timeout_sec=timeout)
+    async with httpx.AsyncClient(timeout=timeout_cfg) as client:
+        async with client.stream("POST", url, json=payload) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                ln = str(line or "").strip()
+                if not ln:
+                    continue
+                try:
+                    obj = json.loads(ln)
+                except Exception:
+                    continue
+                delta = str(obj.get("response", "") or "")
+                if delta:
+                    yield delta
+                if bool(obj.get("done", False)):
+                    return
+
+
 async def async_chat_completion_json(
     *,
     messages: list[dict[str, Any]],
@@ -82,6 +196,7 @@ async def async_chat_completion_json(
         "messages": messages,
     }
     max_retries = _retry_count()
+    fallback_after = _local_fallback_after_attempts()
     timeout_cfg = _httpx_timeout(stream=False, timeout_sec=timeout)
     last_exc: BaseException | None = None
     async with httpx.AsyncClient(timeout=timeout_cfg) as client:
@@ -96,12 +211,18 @@ async def async_chat_completion_json(
             except httpx.HTTPStatusError as e:
                 last_exc = e
                 code = e.response.status_code if e.response is not None else 0
+                if _local_fallback_enabled() and code == 503 and attempt >= fallback_after - 1:
+                    _mark_local_fallback("external 503")
+                    return await _async_ollama_generate_nonstream(messages=messages, max_tokens=max_tokens, timeout=timeout)
                 if _http_retryable(code) and attempt < max_retries - 1:
                     await _async_retry_delay(attempt)
                     continue
                 raise RuntimeError(f"LLM HTTP {code}: {e}") from e
             except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.RemoteProtocolError) as e:
                 last_exc = e
+                if _local_fallback_enabled() and attempt >= fallback_after - 1:
+                    _mark_local_fallback("external timeout")
+                    return await _async_ollama_generate_nonstream(messages=messages, max_tokens=max_tokens, timeout=timeout)
                 if attempt < max_retries - 1:
                     await _async_retry_delay(attempt)
                     continue
@@ -140,6 +261,7 @@ async def aiter_sse_narration_chunks(
         "messages": messages,
     }
     max_retries = _retry_count()
+    fallback_after = _local_fallback_after_attempts()
     timeout_cfg = _httpx_timeout(stream=True, timeout_sec=timeout)
     last_exc: BaseException | None = None
     for attempt in range(max_retries):
@@ -164,12 +286,22 @@ async def aiter_sse_narration_chunks(
         except httpx.HTTPStatusError as e:
             last_exc = e
             code = e.response.status_code if e.response is not None else 0
+            if _local_fallback_enabled() and code == 503 and attempt >= fallback_after - 1:
+                _mark_local_fallback("external 503")
+                async for ch in _aiter_ollama_stream(messages=messages, max_tokens=max_tokens, timeout=timeout):
+                    yield ch
+                return
             if _http_retryable(code) and attempt < max_retries - 1:
                 await _async_retry_delay(attempt)
                 continue
             raise RuntimeError(f"LLM HTTP {code}: {e}") from e
         except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.RemoteProtocolError) as e:
             last_exc = e
+            if _local_fallback_enabled() and attempt >= fallback_after - 1:
+                _mark_local_fallback("external timeout")
+                async for ch in _aiter_ollama_stream(messages=messages, max_tokens=max_tokens, timeout=timeout):
+                    yield ch
+                return
             if attempt < max_retries - 1:
                 await _async_retry_delay(attempt)
                 continue

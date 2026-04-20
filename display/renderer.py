@@ -630,6 +630,10 @@ def _render_monitor_compact(state: dict[str, Any]) -> None:
     if meta.get("registry_hint_mismatch"):
         t.append("[INTENT] ", style="bold yellow")
         t.append("⚠ Parser/registry resolution — LLM registry id hint mismatch\n", style="yellow")
+    llm_notice = str(meta.get("llm_backend_notice", "") or "").strip()
+    if llm_notice:
+        t.append("[AI NET] ", style="bold yellow")
+        t.append(f"{llm_notice}\n", style="yellow")
 
     sc = state.get("active_scene")
     if isinstance(sc, dict) and sc:
@@ -1370,6 +1374,9 @@ def _render_monitor_full(state: dict[str, Any]) -> None:
         )
     else:
         right_suffix.append(f"LastIntent: source={last_source}{reg_mis}\n", style="magenta")
+    llm_notice_f = str(meta.get("llm_backend_notice", "") or "").strip()
+    if llm_notice_f:
+        right_suffix.append(f"AI-NET: {llm_notice_f}\n", style="bold yellow")
 
     right_group = Group(right_prefix, npc_table, right_suffix)
     console.print(
