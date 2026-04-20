@@ -6,6 +6,7 @@ import asyncio
 import difflib
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -194,6 +195,160 @@ def _in_character_stream_fallback(
     if domain in ("social", "combat", "hacking"):
         return base + " Kota membaca bahasa tubuhmu sebelum membaca kata-katamu."
     return base
+
+
+def _pick_default_contact_name(state: dict[str, Any]) -> str:
+    world = state.get("world", {}) or {}
+    contacts = world.get("contacts", {}) or {}
+    if isinstance(contacts, dict) and contacts:
+        keys = [str(k) for k in contacts.keys() if str(k).strip()]
+        if keys:
+            for k in keys:
+                if str(k).strip().lower() == "operator_link":
+                    return "Operator_Link"
+            return sorted(keys, key=lambda x: x.lower())[0]
+    npcs = state.get("npcs", {}) or {}
+    if isinstance(npcs, dict):
+        for k, v in npcs.items():
+            if not isinstance(k, str) or not isinstance(v, dict):
+                continue
+            if bool(v.get("is_contact")):
+                return k
+    return "Operator_Link"
+
+
+def _map_basic_nl_to_command(state: dict[str, Any], cmd: str) -> str:
+    raw = str(cmd or "").strip()
+    if not raw:
+        return raw
+    up = raw.upper()
+    hard_heads = {
+        "HELP", "TALK", "INFORMANTS", "WORLD_BRIEF", "DISTRICTS", "TRAVELTO", "WHEREAMI", "WHO", "NPC",
+        "GIGS", "WORK", "MARKET", "BLACKMARKET", "BUY_DARK", "BANK", "STAY", "SCENE", "HACK", "ATLAS",
+        "COUNTRIES", "CITIES", "LANG", "NARRATION", "MODE", "UNDO", "SAVE", "UI", "PHONE",
+    }
+    head = up.split(maxsplit=1)[0]
+    if head in hard_heads:
+        return raw
+    low = raw.lower()
+    if re.search(r"\b(where am i|aku ada dimana|saya ada dimana|dimana aku|lokasi saya)\b", low):
+        return "WHEREAMI"
+    if re.search(r"\b(kemana sekarang|kemana|where should i go|where to go|ke mana)\b", low):
+        return "DISTRICTS"
+    if re.search(r"\b(cari kerja|mencari kerja|need money|butuh uang|perlu uang|cari uang|cari duit|find work|job)\b", low):
+        return "GIGS"
+    if re.search(r"\b(ngobrol|bicara|berbicara|cari orang|mencari orang|ada orang|talk to|sapa orang|siapa disini)\b", low):
+        return f"TALK {_pick_default_contact_name(state)}"
+    return raw
+
+
+def _compute_day1_next_steps(state: dict[str, Any], *, cmd: str, action_ctx: dict[str, Any] | None = None) -> list[str]:
+    world = state.get("world", {}) or {}
+    meta = state.get("meta", {}) or {}
+    steps: list[str] = []
+    active_scene = state.get("active_scene")
+    if isinstance(active_scene, dict):
+        opts = active_scene.get("next_options") if isinstance(active_scene.get("next_options"), list) else []
+        for op in opts[:3]:
+            if isinstance(op, str) and op.strip():
+                steps.append(f"SCENE {op.strip().upper()}")
+        if steps:
+            return steps[:3]
+    hooks = meta.get("actionable_hooks") if isinstance(meta.get("actionable_hooks"), list) else []
+    hook_blob = " | ".join([str(x) for x in hooks[:6]])
+    if "black market contact offers a deal" in hook_blob.lower():
+        steps.append(f"TALK {_pick_default_contact_name(state)}")
+    econ = state.get("economy", {}) or {}
+    cash = int(econ.get("cash", 0) or 0)
+    burn = int(econ.get("daily_burn", 0) or 0)
+    if cash <= max(200, burn):
+        steps.append("GIGS")
+    dom = str((action_ctx or {}).get("domain", "") or "").lower()
+    if dom in ("social", "other", ""):
+        steps.append("INFORMANTS")
+    steps.append("WORLD_BRIEF")
+    steps.append("DISTRICTS")
+    out: list[str] = []
+    for s in steps:
+        if s not in out:
+            out.append(s)
+        if len(out) >= 3:
+            break
+    _ = cmd
+    return out[:3]
+
+
+def _render_day1_next_steps(state: dict[str, Any], *, cmd: str, action_ctx: dict[str, Any] | None = None) -> None:
+    steps = _compute_day1_next_steps(state, cmd=cmd, action_ctx=action_ctx)
+    if not steps:
+        return
+    lang = get_narration_lang(state)
+    title = "Langkah berikutnya" if lang == "id" else "Next steps"
+    console.print(f"[bold cyan]{title}:[/bold cyan]")
+    for s in steps:
+        console.print(f"- [bold][{s}][/bold]")
+
+
+def _ensure_day1_opening_scene(state: dict[str, Any]) -> None:
+    meta = state.setdefault("meta", {})
+    if int(meta.get("day", 1) or 1) != 1:
+        return
+    if bool(meta.get("day1_opening_done")):
+        return
+    econ = state.get("economy", {}) or {}
+    cash = int(econ.get("cash", 0) or 0)
+    burn = int(econ.get("daily_burn", 0) or 0)
+    tmin = int(meta.get("time_min", 0) or 0)
+    due = min(1439, tmin + 90)
+    hh, mm = due // 60, due % 60
+    loc = str((state.get("player", {}) or {}).get("location", "unknown") or "unknown")
+    msg = (
+        f"Day 1 opens cold in {loc}. Uang tipis ({cash}) melawan burn harian ({burn}/d). "
+        f"Dalam ~90 menit (sekitar {hh:02d}:{mm:02d}), kamu harus punya jalur uang atau tekanan ekonomi mulai menggigit."
+    )
+    console.print(f"[yellow]{msg}[/yellow]")
+    state.setdefault("world_notes", []).append("[Day1] Opening pressure introduced (first-15 guidance).")
+    meta["day1_opening_done"] = True
+    meta["day1_idle_turns"] = 0
+    meta["day1_progress_score"] = 0
+
+
+def _track_day1_progress(state: dict[str, Any], cmd: str) -> None:
+    meta = state.setdefault("meta", {})
+    if int(meta.get("day", 1) or 1) != 1:
+        return
+    up = str(cmd or "").strip().upper()
+    progress = {"GIGS", "WORK", "TALK", "INFORMANTS", "MARKET", "BLACKMARKET", "BUY_DARK", "DISTRICTS", "TRAVELTO"}
+    idle_like = {"HELP", "ATLAS", "UI", "STATUS", "INFO", "SAVE", "LANG", "NARRATION"}
+    head = up.split(maxsplit=1)[0] if up else ""
+    if head in progress:
+        meta["day1_progress_score"] = int(meta.get("day1_progress_score", 0) or 0) + 1
+        meta["day1_idle_turns"] = 0
+    elif head in idle_like or not head:
+        meta["day1_idle_turns"] = int(meta.get("day1_idle_turns", 0) or 0) + 1
+    else:
+        # Unknown/other commands still count as active exploration.
+        meta["day1_idle_turns"] = int(meta.get("day1_idle_turns", 0) or 0) + 1
+
+
+def _maybe_emit_day1_operator_hint(state: dict[str, Any]) -> None:
+    meta = state.setdefault("meta", {})
+    if int(meta.get("day", 1) or 1) != 1:
+        return
+    if bool(meta.get("day1_operator_hint_sent")):
+        return
+    idle = int(meta.get("day1_idle_turns", 0) or 0)
+    progress = int(meta.get("day1_progress_score", 0) or 0)
+    turn = int(meta.get("turn", 0) or 0)
+    if progress > 0 or idle < 3 or turn < 2:
+        return
+    name = _pick_default_contact_name(state)
+    text = (
+        f"Kom-link bergetar: '{name}' kirim ping singkat — \"Kalau perlu cash cepat, mulai dari GIGS atau temui gue sekarang.\""
+    )
+    console.print(f"[cyan]{text}[/cyan]")
+    state.setdefault("world_notes", []).append(f"[Day1 Tutorial] {name} hint injected after idle.")
+    meta["day1_operator_hint_sent"] = True
 def _load_occupation_templates() -> list[dict[str, Any]]:
     """Boot-time helper: read core occupations templates (optional)."""
     try:
@@ -2636,8 +2791,10 @@ async def game_loop_async(state: dict[str, Any]) -> None:
             if int(world.get("pending_utility_ai_day", 0) or 0) == pend_day:
                 world["pending_utility_ai_day"] = 0
 
+    _ensure_day1_opening_scene(state)
     while True:
         await _process_pending_utility_ai()
+        _ensure_day1_opening_scene(state)
         try:
             meta = state.setdefault("meta", {})
             note = consume_local_fallback_notice()
@@ -2655,11 +2812,14 @@ async def game_loop_async(state: dict[str, Any]) -> None:
                 meta.pop("llm_backend_notice_ttl", None)
         except Exception as _omni_sw_llm_notice:
             log_swallowed_exception("main.py:llm_notice", _omni_sw_llm_notice)
+        _maybe_emit_day1_operator_hint(state)
         render_monitor(state)
         cmd_raw = _expand_alias(await _ainput_line("> "))
         cmd = sanitize_player_command_text(cmd_raw)
         if not cmd:
             continue
+        cmd = _map_basic_nl_to_command(state, cmd)
+        _track_day1_progress(state, cmd)
         # WORLD_BRIEF: async stream (same heartbeat as turn narration).
         up_brief = cmd.strip().upper()
         if up_brief == "WORLD_BRIEF":
@@ -2683,6 +2843,7 @@ async def game_loop_async(state: dict[str, Any]) -> None:
                 log_swallowed_exception("main.py:world_brief", _omni_sw_1947)
                 state.setdefault("world_notes", []).append("[LLM] World brief stream failed; using in-character fallback.")
                 console.print(_in_character_stream_fallback(state, cmd=cmd, brief_mode=True))
+            _render_day1_next_steps(state, cmd=cmd, action_ctx=None)
             continue
         # Global scene blocker (non-special path).
         up0 = cmd.upper()
@@ -3050,6 +3211,7 @@ async def game_loop_async(state: dict[str, Any]) -> None:
             record_ai_parse_health(state, text)
             mh = parse_memory_hash(text)
             apply_memory_hash_to_state(state, mh)
+        _render_day1_next_steps(state, cmd=cmd, action_ctx=action_ctx)
 
         # Stop sequence enforcement in UI/runtime contract
         if state.get("flags", {}).get("stop_sequence_active"):

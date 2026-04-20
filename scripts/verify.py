@@ -2443,6 +2443,29 @@ def _smoke() -> None:
     assert int(pl.get("lod_bucket", 0) or 0) in (3, 6, 12)
     assert int(pl.get("last_coarse_turn", 0) or 0) == 12
 
+    # First 15 minutes UX: basic NL mapping + actionable next steps + day1 guide state.
+    from main import (
+        _compute_day1_next_steps,
+        _ensure_day1_opening_scene,
+        _map_basic_nl_to_command,
+        _track_day1_progress,
+    )
+
+    st_fx = initialize_state({"name": "First15", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_fx.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60, "turn": 0})
+    st_fx.setdefault("world", {}).setdefault("contacts", {})["Operator_Link"] = {"name": "Operator_Link", "is_contact": True}
+    assert _map_basic_nl_to_command(st_fx, "butuh uang sekarang") == "GIGS"
+    assert _map_basic_nl_to_command(st_fx, "mencari orang sekitar") == "TALK Operator_Link"
+    assert _map_basic_nl_to_command(st_fx, "kemana sekarang?") == "DISTRICTS"
+    _ensure_day1_opening_scene(st_fx)
+    assert bool((st_fx.get("meta", {}) or {}).get("day1_opening_done")) is True
+    _track_day1_progress(st_fx, "HELP")
+    _track_day1_progress(st_fx, "GIGS")
+    assert int((st_fx.get("meta", {}) or {}).get("day1_progress_score", 0) or 0) >= 1
+    steps_fx = _compute_day1_next_steps(st_fx, cmd="talk", action_ctx={"domain": "social"})
+    assert isinstance(steps_fx, list) and 2 <= len(steps_fx) <= 3
+    assert all(isinstance(x, str) and str(x).strip() for x in steps_fx)
+
     # NPC LOD: active tick runs every turn, background tick runs 5-10 turns, deterministic.
     from engine.npc.npc_lod import tick_npc_lod
 
