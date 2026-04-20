@@ -34,7 +34,7 @@ def resolve_backend() -> tuple[str, dict[str, str], str, str]:
         api_key = os.getenv("GEMINI_API_KEY", "").strip()
         if not api_key:
             raise RuntimeError("GEMINI_API_KEY missing in .env (set LLM_PROVIDER=gemini)")
-        model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash").strip() or "gemini-2.0-flash"
+        model = _normalize_gemini_model_id(os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash")
         url = f"{GEMINI_BASE}/{model}:generateContent?key={api_key}"
         return url, {"Content-Type": "application/json"}, model, provider
     if provider in ("groq", "grok"):
@@ -101,11 +101,35 @@ def _local_ollama_model() -> str:
 
 def _gemini_model_for(purpose: str) -> str:
     purpose_key = "GEMINI_INTENT_MODEL" if purpose == "intent" else "GEMINI_NARRATOR_MODEL"
-    return (
+    raw = (
         os.getenv(purpose_key, "").strip()
-        or os.getenv("GEMINI_MODEL", "gemini-2.0-flash").strip()
-        or "gemini-2.0-flash"
+        or os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+        or "gemini-2.5-flash"
     )
+    return _normalize_gemini_model_id(raw)
+
+
+def _normalize_gemini_model_id(model: str) -> str:
+    m = str(model or "").strip()
+    if m.startswith("models/"):
+        m = m[len("models/") :]
+    return m.strip() or "gemini-2.5-flash"
+
+
+def _gemini_model_candidates(purpose: str) -> list[str]:
+    """Preferred model ids to try (handles deprecations / key-scoped availability)."""
+    cands = [
+        _gemini_model_for(purpose),
+        _normalize_gemini_model_id(os.getenv("GEMINI_MODEL", "").strip()),
+        "gemini-2.5-flash",
+        "gemini-flash-latest",
+    ]
+    out: list[str] = []
+    for c in cands:
+        cc = _normalize_gemini_model_id(c)
+        if cc and cc not in out:
+            out.append(cc)
+    return out[:4]
 
 
 def _mark_local_fallback(reason: str) -> None:
@@ -142,7 +166,12 @@ def _messages_to_prompt(messages: list[dict[str, Any]]) -> str:
     return "\n\n".join(parts).strip()
 
 
-def _messages_to_gemini_payload(messages: list[dict[str, Any]], *, max_tokens: int) -> dict[str, Any]:
+def _messages_to_gemini_payload(
+    messages: list[dict[str, Any]],
+    *,
+    max_tokens: int,
+    response_mime_type: str | None = None,
+) -> dict[str, Any]:
     sys_parts: list[str] = []
     contents: list[dict[str, Any]] = []
     for m in messages[:32]:
@@ -159,10 +188,10 @@ def _messages_to_gemini_payload(messages: list[dict[str, Any]], *, max_tokens: i
         contents.append({"role": gem_role, "parts": [{"text": content}]})
     if not contents:
         contents = [{"role": "user", "parts": [{"text": ""}]}]
-    payload: dict[str, Any] = {
-        "contents": contents,
-        "generationConfig": {"maxOutputTokens": int(max_tokens)},
-    }
+    gen_cfg: dict[str, Any] = {"maxOutputTokens": int(max_tokens)}
+    if response_mime_type:
+        gen_cfg["responseMimeType"] = str(response_mime_type)
+    payload: dict[str, Any] = {"contents": contents, "generationConfig": gen_cfg}
     if sys_parts:
         payload["systemInstruction"] = {"parts": [{"text": "\n\n".join(sys_parts)}]}
     return payload
@@ -323,14 +352,16 @@ async def async_chat_completion_json(
     messages: list[dict[str, Any]],
     max_tokens: int,
     timeout: float = 60.0,
+    response_mime_type: str | None = None,
 ) -> dict[str, Any]:
     """Non-streaming JSON chat completion (intent resolver, tools)."""
     url, headers, model, _prov = resolve_backend()
     if _prov == "gemini":
-        model = _gemini_model_for("intent")
         api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        # Note: model can be deprecated or unavailable for a given key; try a short fallback list.
+        model = _gemini_model_for("intent")
         url = f"{GEMINI_BASE}/{model}:generateContent?key={api_key}"
-        payload = _messages_to_gemini_payload(messages, max_tokens=max_tokens)
+        payload = _messages_to_gemini_payload(messages, max_tokens=max_tokens, response_mime_type=response_mime_type)
     else:
         payload = {
             "model": model,
@@ -358,6 +389,24 @@ async def async_chat_completion_json(
             except httpx.HTTPStatusError as e:
                 last_exc = e
                 code = e.response.status_code if e.response is not None else 0
+                if _prov == "gemini" and code == 404:
+                    # Try alternate model ids (Gemini model deprecations happen).
+                    for m2 in _gemini_model_candidates("intent"):
+                        if m2 == model:
+                            continue
+                        model = m2
+                        url = f"{GEMINI_BASE}/{model}:generateContent?key={os.getenv('GEMINI_API_KEY','').strip()}"
+                        try:
+                            resp2 = await client.post(url, headers=headers, json=payload)
+                            resp2.raise_for_status()
+                            data2 = resp2.json()
+                            if isinstance(data2, dict):
+                                txt2 = _extract_gemini_text_from_obj(data2)
+                                data2 = _wrap_text_as_openai_completion(text=txt2, model=model)
+                                _mark_primary_backend_active()
+                                return data2
+                        except Exception:
+                            continue
                 if _local_fallback_enabled() and code == 503 and attempt >= fallback_after - 1:
                     _mark_local_fallback("external 503")
                     return await _async_ollama_generate_nonstream(messages=messages, max_tokens=max_tokens, timeout=timeout)
@@ -382,12 +431,20 @@ def chat_completion_json(
     messages: list[dict[str, Any]],
     max_tokens: int,
     timeout: float = 60.0,
+    response_mime_type: str | None = None,
 ) -> dict[str, Any]:
     """Sync wrapper for parser / pipeline code paths without an event loop."""
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(async_chat_completion_json(messages=messages, max_tokens=max_tokens, timeout=timeout))
+        return asyncio.run(
+            async_chat_completion_json(
+                messages=messages,
+                max_tokens=max_tokens,
+                timeout=timeout,
+                response_mime_type=response_mime_type,
+            )
+        )
     raise RuntimeError(
         "chat_completion_json() cannot be used inside a running event loop; await async_chat_completion_json() instead."
     )
@@ -408,8 +465,8 @@ async def aiter_sse_narration_chunks(
         "messages": messages,
     }
     if _prov == "gemini":
-        model = _gemini_model_for("narration")
         api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        model = _gemini_model_for("narration")
         url = f"{GEMINI_BASE}/{model}:streamGenerateContent?alt=sse&key={api_key}"
         payload = _messages_to_gemini_payload(messages, max_tokens=max_tokens)
     max_retries = _retry_count()
@@ -461,6 +518,47 @@ async def aiter_sse_narration_chunks(
         except httpx.HTTPStatusError as e:
             last_exc = e
             code = e.response.status_code if e.response is not None else 0
+            if _prov == "gemini" and code == 404:
+                # Retry quickly with alternate Gemini model ids (deprecation / key availability).
+                for m2 in _gemini_model_candidates("narration"):
+                    if m2 == model:
+                        continue
+                    model = m2
+                    api_key2 = os.getenv("GEMINI_API_KEY", "").strip()
+                    url = f"{GEMINI_BASE}/{model}:streamGenerateContent?alt=sse&key={api_key2}"
+                    try:
+                        async with httpx.AsyncClient(timeout=timeout_cfg) as client2:
+                            async with client2.stream("POST", url, headers=headers, json=payload) as response2:
+                                response2.raise_for_status()
+                                yielded2 = False
+                                last_full2 = ""
+                                async for line in response2.aiter_lines():
+                                    ln = str(line or "").strip()
+                                    if not ln.startswith("data:"):
+                                        continue
+                                    raw = ln[5:].strip()
+                                    if not raw:
+                                        continue
+                                    try:
+                                        chunk_obj = json.loads(raw)
+                                    except Exception:
+                                        continue
+                                    full_txt = _extract_gemini_text_from_obj(chunk_obj)
+                                    if full_txt and full_txt.startswith(last_full2):
+                                        delta = full_txt[len(last_full2) :]
+                                        last_full2 = full_txt
+                                    else:
+                                        delta = full_txt
+                                        if full_txt:
+                                            last_full2 = full_txt
+                                    if delta:
+                                        yielded2 = True
+                                        _mark_primary_backend_active()
+                                        yield delta
+                                if yielded2:
+                                    return
+                    except Exception:
+                        continue
             if _local_fallback_enabled() and code == 503 and attempt >= fallback_after - 1:
                 _mark_local_fallback("external 503")
                 async for ch in _aiter_ollama_stream(messages=messages, max_tokens=max_tokens, timeout=timeout):

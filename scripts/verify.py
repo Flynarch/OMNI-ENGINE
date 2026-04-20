@@ -2447,6 +2447,7 @@ def _smoke() -> None:
     from main import (
         _compute_day1_next_steps,
         _ensure_day1_opening_scene,
+        _map_llm_intent_note_to_command,
         _map_basic_nl_to_command,
         _track_day1_progress,
     )
@@ -2459,6 +2460,11 @@ def _smoke() -> None:
     assert _map_basic_nl_to_command(st_fx, "mencari orang sekitar") == "TALK Operator_Link"
     assert _map_basic_nl_to_command(st_fx, "beli mobil sedan") == "BUYVEHICLE car_standard"
     assert _map_basic_nl_to_command(st_fx, "kemana sekarang?") == "DISTRICTS"
+    assert _map_llm_intent_note_to_command(st_fx, {"intent_note": "perform_work"}) == "GIGS"
+    assert _map_llm_intent_note_to_command(st_fx, {"intent_note": "find_work"}) == "GIGS"
+    assert _map_llm_intent_note_to_command(st_fx, {"intent_note": "earn_money"}) == "GIGS"
+    assert _map_llm_intent_note_to_command(st_fx, {"intent_note": "talk_to_npc"}) == "TALK Operator_Link"
+    assert _map_llm_intent_note_to_command(st_fx, {"intent_note": "explore_area"}) == "DISTRICTS"
     _ensure_day1_opening_scene(st_fx)
     assert bool((st_fx.get("meta", {}) or {}).get("day1_opening_done")) is True
     _track_day1_progress(st_fx, "HELP")
@@ -5952,10 +5958,12 @@ def _smoke() -> None:
     os.environ["LLM_PROVIDER"] = "groq"
     os.environ["GEMINI_API_KEY"] = "x"
     os.environ["OMNI_INTENT_PROVIDER"] = "gemini"
+    os.environ["GEMINI_MODEL"] = "gemini-2.0-flash"
     os.environ["GEMINI_INTENT_MODEL"] = "gemini-1.5-flash"
     with _ir._intent_provider_scope():
         assert os.environ.get("LLM_PROVIDER") == "gemini"
-        assert os.environ.get("GEMINI_MODEL") == "gemini-1.5-flash"
+        # Scope should NOT overwrite GEMINI_MODEL; llm_http may need it as a fallback if intent model is deprecated.
+        assert os.environ.get("GEMINI_MODEL") == "gemini-2.0-flash"
     if _old_lp is None:
         os.environ.pop("LLM_PROVIDER", None)
     else:

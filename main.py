@@ -244,6 +244,22 @@ def _map_basic_nl_to_command(state: dict[str, Any], cmd: str) -> str:
     return raw
 
 
+def _map_llm_intent_note_to_command(state: dict[str, Any], action_ctx: dict[str, Any]) -> str | None:
+    """Bridge common LLM intent_note labels to deterministic built-in commands."""
+    if not isinstance(action_ctx, dict):
+        return None
+    note = str(action_ctx.get("intent_note", "") or "").strip().lower()
+    if not note:
+        return None
+    if note in {"perform_work", "find_work", "earn_money"}:
+        return "GIGS"
+    if note == "talk_to_npc":
+        return f"TALK {_pick_default_contact_name(state)}"
+    if note == "explore_area":
+        return "DISTRICTS"
+    return None
+
+
 def _compute_day1_next_steps(state: dict[str, Any], *, cmd: str, action_ctx: dict[str, Any] | None = None) -> list[str]:
     world = state.get("world", {}) or {}
     meta = state.get("meta", {}) or {}
@@ -2818,6 +2834,16 @@ async def game_loop_async(state: dict[str, Any]) -> None:
 
         # 1) Intent resolution: LLM-first when FFCI enabled; meta/special stay fast-path above.
         meta = state.setdefault("meta", {})
+        _intent_dbg = os.getenv("OMNI_INTENT_DEBUG", "0").strip().lower() in ("1", "true", "yes", "on")
+        if _intent_dbg:
+            try:
+                tr = meta.get("intent_trace")
+                if not isinstance(tr, list):
+                    tr = []
+                tr.append(f"cmd={cmd.strip()[:80]}")
+                meta["intent_trace"] = tr[-40:]
+            except Exception:
+                pass
         action_ctx = parse_action_intent(cmd)
         parser_registry_id = str(action_ctx.get("registry_action_id") or "").strip()
         if parser_registry_id:
@@ -2827,8 +2853,19 @@ async def game_loop_async(state: dict[str, Any]) -> None:
         intent = None
         if ffci_enabled() and security_flags_for_intent_input(cmd).get("block_resolver"):
             meta["fallback_reason"] = "security_blocked"
+            if _intent_dbg:
+                try:
+                    meta["intent_trace"] = (meta.get("intent_trace") or [])[-39:] + ["path=security_blocked"]
+                except Exception:
+                    pass
         elif ffci_enabled():
             intent = await resolve_intent_async(state, cmd)
+            if _intent_dbg:
+                try:
+                    ok = bool(intent)
+                    meta["intent_trace"] = (meta.get("intent_trace") or [])[-39:] + [f"path=resolver_return ok={ok}"]
+                except Exception:
+                    pass
 
         if intent and ffci_shadow_only():
             meta["last_intent_source"] = "parser_fallback"
@@ -2889,7 +2926,16 @@ async def game_loop_async(state: dict[str, Any]) -> None:
                 meta["llm_domain_raw"] = ""
                 state.setdefault("world_notes", []).append("[FFCI] High-risk custom intent rate-limited for today; using parser path.")
             else:
-                meta["last_intent_source"] = "llm"
+                # Prefer reporting the actual intent provider if available.
+                prov = "llm"
+                try:
+                    idbg = meta.get("intent_debug") if isinstance(meta.get("intent_debug"), dict) else {}
+                    prov2 = str((idbg or {}).get("intended_provider", "") or "").strip().lower()
+                    if prov2:
+                        prov = prov2
+                except Exception:
+                    prov = "llm"
+                meta["last_intent_source"] = prov
                 meta["last_intent_raw"] = intent
                 meta["fallback_reason"] = None
                 meta["ffci_abuse_blocked"] = False
@@ -2897,6 +2943,11 @@ async def game_loop_async(state: dict[str, Any]) -> None:
                 meta["llm_domain_raw"] = str((intent or {}).get("domain", "") or "").lower()
                 meta["normalized_domain"] = str(action_ctx.get("domain", "") or "").lower()
                 meta["custom_path_used"] = str(action_ctx.get("action_type", "") or "").lower() == "custom"
+                if _intent_dbg:
+                    try:
+                        meta["intent_trace"] = (meta.get("intent_trace") or [])[-39:] + [f"path=merged provider={prov}"]
+                    except Exception:
+                        pass
 
             if meta.get("last_intent_source") == "llm":
                 # Intent v2 plan execution: pick the first valid step by preconditions and overlay it.
@@ -2949,6 +3000,25 @@ async def game_loop_async(state: dict[str, Any]) -> None:
             meta["llm_domain_raw"] = ""
             if not ffci_enabled():
                 meta["ffci_disabled"] = True
+
+        # Deterministic bridge: common LLM intent_note -> existing command surface.
+        # This avoids "custom no-op feel" for high-frequency intents like work/search/talk/explore.
+        try:
+            src = str(meta.get("last_intent_source", "") or "").strip().lower()
+            if src in {"gemini", "llm"}:
+                bridged_cmd = _map_llm_intent_note_to_command(state, action_ctx)
+                if bridged_cmd:
+                    meta["intent_note_command_bridge"] = bridged_cmd
+                    if handle_special(state, bridged_cmd):
+                        if bool(_special_turn_profile(bridged_cmd).get("consume", False)):
+                            _finalize_special_turn(state, bridged_cmd, metrics_before)
+                        continue
+                else:
+                    meta.pop("intent_note_command_bridge", None)
+            else:
+                meta.pop("intent_note_command_bridge", None)
+        except Exception as _omni_sw_intent_bridge:
+            log_swallowed_exception("main.py:intent_note_bridge", _omni_sw_intent_bridge)
 
         try:
             shadow_norm = normalize_action_ctx(action_ctx)

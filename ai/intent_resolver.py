@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ai.async_llm_ui import await_with_heartbeat
 from ai.llm_http import async_chat_completion_json, chat_completion_json
+from dotenv import load_dotenv
 
 from engine.core.action_registry import (
     allowed_registry_action_ids,
@@ -251,6 +252,36 @@ Rules:
 
 Return ONLY the JSON, no explanation, no markdown.
 """
+
+
+def _intent_debug_enabled() -> bool:
+    return os.getenv("OMNI_INTENT_DEBUG", "0").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _intent_debug_set(state: Dict[str, Any], patch: Dict[str, Any]) -> None:
+    """Best-effort debug telemetry for intent resolution (no secrets)."""
+    if not _intent_debug_enabled():
+        return
+    try:
+        meta = state.setdefault("meta", {})
+        if not isinstance(meta, dict):
+            return
+        cur = meta.get("intent_debug")
+        if not isinstance(cur, dict):
+            cur = {}
+        safe: Dict[str, Any] = {}
+        for k, v in list(patch.items())[:40]:
+            ks = str(k)[:80]
+            if isinstance(v, str):
+                safe[ks] = v[:800]
+            elif isinstance(v, (int, float, bool)) or v is None:
+                safe[ks] = v
+            else:
+                safe[ks] = str(v)[:800]
+        cur.update(safe)
+        meta["intent_debug"] = cur
+    except Exception:
+        return
 
 
 def clamp_suggested_dc(val: Any) -> int:
@@ -999,6 +1030,7 @@ def _invoke_llm_for_intent(payload: Dict[str, Any]) -> str:
             ],
             max_tokens=max_tokens,
             timeout=_intent_llm_timeout_sec(),
+            response_mime_type="application/json",
         )
     content = data["choices"][0]["message"]["content"]
     return str(content)
@@ -1019,6 +1051,7 @@ async def _invoke_llm_for_intent_async(payload: Dict[str, Any]) -> str:
             ],
             max_tokens=max_tokens,
             timeout=_intent_llm_timeout_sec(),
+            response_mime_type="application/json",
         )
     content = data["choices"][0]["message"]["content"]
     return str(content)
@@ -1027,32 +1060,23 @@ async def _invoke_llm_for_intent_async(payload: Dict[str, Any]) -> str:
 @contextlib.contextmanager
 def _intent_provider_scope():
     """Gemini-first intent resolver scope (can be disabled via OMNI_INTENT_PROVIDER)."""
+    load_dotenv()
     pref = os.getenv("OMNI_INTENT_PROVIDER", "gemini").strip().lower()
     gem_key = os.getenv("GEMINI_API_KEY", "").strip()
     if pref != "gemini" or not gem_key:
         yield
         return
     old_provider = os.getenv("LLM_PROVIDER")
-    old_model = os.getenv("GEMINI_MODEL")
     try:
         os.environ["LLM_PROVIDER"] = "gemini"
-        # Intent defaults to Gemini Flash unless explicitly set.
-        intent_model = (
-            os.getenv("GEMINI_INTENT_MODEL", "").strip()
-            or os.getenv("GEMINI_MODEL", "").strip()
-            or "gemini-1.5-flash"
-        )
-        os.environ["GEMINI_MODEL"] = intent_model
+        # Do NOT overwrite GEMINI_MODEL here. If GEMINI_INTENT_MODEL is deprecated/invalid,
+        # llm_http has to be able to fall back to GEMINI_MODEL (and other candidates).
         yield
     finally:
         if old_provider is None:
             os.environ.pop("LLM_PROVIDER", None)
         else:
             os.environ["LLM_PROVIDER"] = old_provider
-        if old_model is None:
-            os.environ.pop("GEMINI_MODEL", None)
-        else:
-            os.environ["GEMINI_MODEL"] = old_model
 
 
 def _safe_parse_json_blob(text: str) -> Optional[Dict[str, Any]]:
@@ -1137,6 +1161,7 @@ def _intent_lru_cache_key(state: Dict[str, Any], player_input: str) -> Tuple[Any
 
 async def resolve_intent_async(state: Dict[str, Any], player_input: str) -> Optional[Dict[str, Any]]:
     """Best-effort LLM intent resolution (awaitable; use from asyncio game loop)."""
+    load_dotenv()
     meta = state.get("meta", {}) or {}
     player = state.get("player", {}) or {}
     inv = state.get("inventory", {}) or {}
@@ -1146,6 +1171,16 @@ async def resolve_intent_async(state: Dict[str, Any], player_input: str) -> Opti
     nearby = world.get("nearby_items", []) or []
     nearby_preview = nearby[:12] if isinstance(nearby, list) else []
     clean_input = sanitize_player_input(player_input)
+    _intent_debug_set(
+        state,
+        {
+            "provider_pref": os.getenv("OMNI_INTENT_PROVIDER", "gemini").strip().lower(),
+            "gemini_key_present": bool(os.getenv("GEMINI_API_KEY", "").strip()),
+            "llm_provider_env": os.getenv("LLM_PROVIDER", "").strip().lower(),
+            "gemini_model_env": os.getenv("GEMINI_MODEL", "").strip(),
+            "gemini_intent_model_env": os.getenv("GEMINI_INTENT_MODEL", "").strip(),
+        },
+    )
     summary = (
         f"day={meta.get('day', 1)} time_min={meta.get('time_min', 0)} "
         f"loc={player.get('location', '-')} year={player.get('year', '-')}\n"
@@ -1178,19 +1213,80 @@ async def resolve_intent_async(state: Dict[str, Any], player_input: str) -> Opti
         reg_block = ""
     user = f"[ENGINE_SNAPSHOT]\n{summary}{reg_block}\n[PLAYER_INPUT]\n{clean_input}\n"
     try:
+        pref = os.getenv("OMNI_INTENT_PROVIDER", "gemini").strip().lower()
+        gem_ok = bool(os.getenv("GEMINI_API_KEY", "").strip())
+        intended_provider = "gemini" if (pref == "gemini" and gem_ok) else (os.getenv("LLM_PROVIDER", "").strip().lower() or "default")
+        _intent_debug_set(
+            state,
+            {
+                "intended_provider": intended_provider,
+                "timeout_sec": _intent_llm_timeout_sec(),
+            },
+        )
         raw = await await_with_heartbeat(
             _invoke_llm_for_intent_async({"user": user}),
             label="Intent",
         )
-    except Exception:
+        _intent_debug_set(state, {"llm_call_ok": True, "raw_len": len(str(raw or ""))})
+    except Exception as e:
         record_intent_budget_rollback(state)
+        _intent_debug_set(
+            state,
+            {
+                "llm_call_ok": False,
+                "error_type": type(e).__name__,
+                "error": str(e),
+            },
+        )
         return None
     blob = _safe_parse_json_blob(raw)
     if not blob:
-        return None
+        raw_s = str(raw or "")
+        _intent_debug_set(
+            state,
+            {
+                "parse_ok": False,
+                "parse_reason": "no_json_object",
+                "raw_prefix": raw_s[:400],
+                "raw_len": len(raw_s),
+            },
+        )
+        # Retry once if the model started a JSON object but got truncated.
+        if raw_s.lstrip().startswith("{") and len(raw_s) < 240:
+            try:
+                _intent_debug_set(state, {"retry_truncated_json": True})
+                _mt2 = os.getenv("LLM_INTENT_MAX_TOKENS", "").strip()
+                max_tokens2 = int(_mt2) if _mt2.isdigit() else 512
+                max_tokens2 = max(256, min(1024, int(max_tokens2) + 256))
+                with _intent_provider_scope():
+                    data2 = await async_chat_completion_json(
+                        messages=[
+                            {"role": "system", "content": INTENT_SYSTEM_PROMPT},
+                            {"role": "user", "content": user},
+                            {
+                                "role": "user",
+                                "content": "Your previous response was truncated. Return the COMPLETE JSON object again. Output JSON only.",
+                            },
+                        ],
+                        max_tokens=max_tokens2,
+                        timeout=_intent_llm_timeout_sec(),
+                        response_mime_type="application/json",
+                    )
+                raw2 = str(((data2.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
+                _intent_debug_set(state, {"retry_raw_len": len(raw2), "retry_raw_prefix": raw2[:240]})
+                blob2 = _safe_parse_json_blob(raw2)
+                if isinstance(blob2, dict):
+                    raw = raw2
+                    blob = blob2
+            except Exception as e2:
+                _intent_debug_set(state, {"retry_error": str(e2)})
+        if not blob:
+            return None
     obj = normalize_resolved_intent(blob)
     if not obj:
+        _intent_debug_set(state, {"parse_ok": True, "normalize_ok": False})
         return None
+    _intent_debug_set(state, {"parse_ok": True, "normalize_ok": True, "intent_version": int(obj.get("version", 0) or 0)})
     obj = validate_generated_intent_bounds(obj)
     if int(obj.get("version", 1) or 1) == 2:
         obj = _flatten_intent_v2_for_compat(obj)
