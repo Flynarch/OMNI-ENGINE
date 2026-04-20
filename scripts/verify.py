@@ -3590,7 +3590,8 @@ def _smoke() -> None:
     # Semantic snapshot: core buckets exist on fresh state.
     assert isinstance(st_ij.get("economy"), dict) and "cash" in st_ij["economy"]
 
-    # MEMORY_HASH v2: JSON inside <MEMORY_HASH> should apply npc memories (bounded + clamped).
+    # MEMORY_HASH v2: JSON inside <MEMORY_HASH> is stored for continuity only.
+    # The LLM must not mutate simulation-critical NPC state.
     from ai.parser import apply_memory_hash_to_state, parse_memory_hash
 
     st_mh = initialize_state({"name": "MemHashV2", "location": "london", "year": "2025"}, seed_pack="minimal")
@@ -3608,12 +3609,9 @@ def _smoke() -> None:
     mh = parse_memory_hash(mh_text)
     apply_memory_hash_to_state(st_mh, mh)
     mems = (st_mh.get("npcs", {}) or {}).get("AgentX", {}).get("memories", [])
-    assert isinstance(mems, list) and mems
-    m0 = mems[0]
-    assert isinstance(m0, dict) and m0.get("memory_id") == "m1"
-    assert 0 <= int(m0.get("importance", 0) or 0) <= 100
-    assert -100 <= int(m0.get("valence", 0) or 0) <= 100
-    assert 0.0 <= float(m0.get("confidence", 0.0) or 0.0) <= 1.0
+    assert isinstance(mems, list) and mems == []
+    assert isinstance(st_mh.get("memory_hash", {}), dict)
+    assert "v2" in (st_mh.get("memory_hash", {}) or {})
 
     # NPC memory decay + consolidation: high-importance memories older than 3 days become beliefs.
     from engine.npc.memory import process_memory_decay

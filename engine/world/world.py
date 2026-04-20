@@ -119,8 +119,16 @@ def _add_ripple(
 
 def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
     meta = state.setdefault("meta", {})
-    day = int(meta.get("day", 1))
-    time_min = int(meta.get("time_min", 0))
+    try:
+        day = int(meta.get("day", 1) or 1)
+    except Exception as _omni_sw_day:
+        log_swallowed_exception("engine/world/world.py:meta_day", _omni_sw_day)
+        day = 1
+    try:
+        time_min = int(meta.get("time_min", 0) or 0)
+    except Exception as _omni_sw_time:
+        log_swallowed_exception("engine/world/world.py:meta_time_min", _omni_sw_time)
+        time_min = 0
     try:
 
         prune_world_notes_and_news_feed(state)
@@ -137,7 +145,11 @@ def world_tick(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
             record_error(state, "world.maybe_record_faction_daily_snapshot", e)
         except Exception as _omni_sw_100:
             log_swallowed_exception('engine/world/world.py:100', _omni_sw_100)
-    trace_pct = int(state.get("trace", {}).get("trace_pct", 0))
+    try:
+        trace_pct = int((state.get("trace", {}) or {}).get("trace_pct", 0) or 0)
+    except Exception as _omni_sw_trace:
+        log_swallowed_exception("engine/world/world.py:trace_pct", _omni_sw_trace)
+        trace_pct = 0
     # Weather refresh (deterministic per day+location).
     try:
 

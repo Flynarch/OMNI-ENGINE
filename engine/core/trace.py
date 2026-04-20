@@ -106,10 +106,21 @@ def apply_npc_snitch_report_trace(state: dict[str, Any], npc_id: str) -> int:
 
 def update_trace(state: dict, action_ctx: dict) -> None:
     tr = state.setdefault("trace", {})
-    pct = int(tr.get("trace_pct", 0))
-    year = int(state.get("player", {}).get("year", 2025) or 2025)
+    try:
+        pct = int((tr or {}).get("trace_pct", 0) or 0)
+    except Exception as _omni_sw_pct:
+        log_swallowed_exception("engine/core/trace.py:update_trace_pct", _omni_sw_pct)
+        pct = 0
+    try:
+        year = int((state.get("player", {}) or {}).get("year", 2025) or 2025)
+    except Exception as _omni_sw_year:
+        log_swallowed_exception("engine/core/trace.py:update_trace_year", _omni_sw_year)
+        year = 2025
     if year < 1990:
-        inactive_days = int(action_ctx.get("inactive_days", 0))
+        try:
+            inactive_days = int(action_ctx.get("inactive_days", 0) or 0)
+        except Exception:
+            inactive_days = 0
         pct = max(0, pct - (inactive_days // 7) * 5)
     if action_ctx.get("alias_cross_context"):
         pct += 8

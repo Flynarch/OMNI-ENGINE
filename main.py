@@ -247,6 +247,9 @@ def _map_basic_nl_to_command(state: dict[str, Any], cmd: str) -> str:
 def _compute_day1_next_steps(state: dict[str, Any], *, cmd: str, action_ctx: dict[str, Any] | None = None) -> list[str]:
     world = state.get("world", {}) or {}
     meta = state.get("meta", {}) or {}
+    if int(meta.get("day", 1) or 1) != 1:
+        _ = (world, cmd, action_ctx)
+        return []
     steps: list[str] = []
     active_scene = state.get("active_scene")
     if isinstance(active_scene, dict):
@@ -281,6 +284,9 @@ def _compute_day1_next_steps(state: dict[str, Any], *, cmd: str, action_ctx: dic
 
 
 def _render_day1_next_steps(state: dict[str, Any], *, cmd: str, action_ctx: dict[str, Any] | None = None) -> None:
+    meta = state.get("meta", {}) or {}
+    if int(meta.get("day", 1) or 1) != 1:
+        return
     steps = _compute_day1_next_steps(state, cmd=cmd, action_ctx=action_ctx)
     if not steps:
         return
@@ -339,7 +345,7 @@ def _track_day1_progress(state: dict[str, Any], cmd: str) -> None:
         meta["day1_idle_turns"] = int(meta.get("day1_idle_turns", 0) or 0) + 1
     else:
         # Unknown/other commands still count as active exploration.
-        meta["day1_idle_turns"] = int(meta.get("day1_idle_turns", 0) or 0) + 1
+        meta["day1_idle_turns"] = 0
 
 
 def _maybe_emit_day1_operator_hint(state: dict[str, Any]) -> None:
@@ -2771,6 +2777,14 @@ async def game_loop_async(state: dict[str, Any]) -> None:
             continue
         cmd = _map_basic_nl_to_command(state, cmd)
         _track_day1_progress(state, cmd)
+        # Global scene blocker (ONE place). Applies to *all* commands, including WORLD_BRIEF.
+        up0 = cmd.upper()
+        if _scene_blocks_command(state, up0):
+            if up0 == "EAT" or up0.startswith("EAT "):
+                console.print("[yellow]Situasi tidak memungkinkan untuk makan sekarang.[/yellow]")
+                continue
+            console.print("[yellow]Scene active. Use: SCENE | SCENE OPTIONS | SCENE <action>[/yellow]")
+            continue
         # WORLD_BRIEF: async stream (same heartbeat as turn narration).
         up_brief = cmd.strip().upper()
         if up_brief == "WORLD_BRIEF":
@@ -2795,14 +2809,6 @@ async def game_loop_async(state: dict[str, Any]) -> None:
                 state.setdefault("world_notes", []).append("[LLM] World brief stream failed; using in-character fallback.")
                 console.print(_in_character_stream_fallback(state, cmd=cmd, brief_mode=True))
             _render_day1_next_steps(state, cmd=cmd, action_ctx=None)
-            continue
-        # Global scene blocker (non-special path).
-        up0 = cmd.upper()
-        if _scene_blocks_command(state, up0):
-            if up0 == "EAT" or up0.startswith("EAT "):
-                console.print("[yellow]Situasi tidak memungkinkan untuk makan sekarang.[/yellow]")
-                continue
-            console.print("[yellow]Scene active. Use: SCENE | SCENE OPTIONS | SCENE <action>[/yellow]")
             continue
         metrics_before = _snapshot_metrics(state)
         if handle_special(state, cmd):

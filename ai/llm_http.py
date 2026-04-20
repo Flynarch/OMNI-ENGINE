@@ -519,10 +519,28 @@ def iter_sse_narration_chunks_sync(
     a shared loop; the game loop stays sequential and does not touch ``state``
     until each chunk is yielded.
     """
+    try:
+        asyncio.get_running_loop()
+        raise RuntimeError(
+            "iter_sse_narration_chunks_sync() cannot be used inside a running event loop; use aiter_sse_narration_chunks() instead."
+        )
+    except RuntimeError as e:
+        # get_running_loop() raises RuntimeError when no loop is running: that's our normal sync case.
+        if "cannot be used inside a running event loop" in str(e):
+            raise
+
     agen = aiter_sse_narration_chunks(messages=messages, max_tokens=max_tokens, timeout=timeout)
     ait = agen.__aiter__()
     loop = asyncio.new_event_loop()
+    prev_loop: asyncio.AbstractEventLoop | None = None
+    had_prev = False
     try:
+        try:
+            prev_loop = asyncio.get_event_loop()
+            had_prev = True
+        except Exception:
+            prev_loop = None
+            had_prev = False
         asyncio.set_event_loop(loop)
         while True:
             try:
@@ -537,5 +555,9 @@ def iter_sse_narration_chunks_sync(
             pass
         try:
             loop.close()
+        except Exception:
+            pass
+        try:
+            asyncio.set_event_loop(prev_loop if had_prev else None)
         except Exception:
             pass

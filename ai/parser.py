@@ -144,51 +144,20 @@ def validate_memory_hash_nonempty(text: str) -> list[str]:
 
 
 def apply_memory_hash_to_state(state: dict[str, Any], mh: dict[str, Any]) -> None:
-    state.setdefault("memory_hash", {}).update(mh)
-    state.setdefault("meta", {})["memory_hash_raw"] = mh.get("raw", "")
-    # NPC label sync: "Name [Label]"
-    npc_line = mh.get("npc_status", "")
-    pairs = re.findall(r"([^,\[]+)\s*\[([A-Za-z]+)\]", npc_line)
-    midpoint = {"Devoted": 95, "Friendly": 80, "Neutral": 60, "Cold": 40, "Hostile": 20, "Enemy": 5}
-    for name, label in pairs:
-        n = state.setdefault("npcs", {}).setdefault(name.strip(), {})
-        n["disposition_label"] = label
-        n["disposition_score"] = midpoint.get(label, n.get("disposition_score", 50))
+    """Store AI continuity data WITHOUT mutating mechanical state.
 
-    # New ripples from 🌊 section
-    ripple_line = str(mh.get("active_ripples", "")).strip()
-    if ripple_line and ripple_line != "-":
-        cur_day = int(state.get("meta", {}).get("day", 1))
-        origin_loc = str(state.get("player", {}).get("location", "") or "").strip().lower()
-        for raw in [x.strip() for x in ripple_line.split("|") if x.strip()]:
-            state.setdefault("active_ripples", []).append(
-                {
-                    "text": raw,
-                    "triggered_day": cur_day,
-                    "surface_day": cur_day + 1,
-                    "surface_time": 8 * 60,
-                    "surfaced": False,
-                    # Default: local witness/rumor unless engine explicitly sets broader scope.
-                    "propagation": "local_witness",
-                    "visibility": "local",
-                    "origin_location": origin_loc,
-                    "witnesses": [],
-                    "surface_attempts": 0,
-                }
-            )
-
-    # v2: NPC memory deltas (bounded, fail-safe, logged).
-    v2 = mh.get("v2")
-    if isinstance(v2, dict) and int(v2.get("version", 0) or 0) == 2:
-        try:
-            deltas = v2.get("npc_memory_deltas", [])
-            if isinstance(deltas, list) and deltas:
-                _apply_npc_memory_deltas(state, deltas)
-        except Exception as e:
-            try:
-                record_error(state, "ai.memory_hash_v2", e)
-            except Exception:
-                pass
+    CRITICAL ARCHITECTURE: The LLM is a narrator. It must not directly mutate
+    simulation-critical state like NPC disposition, memories, or world queues.
+    """
+    mh2 = dict(mh) if isinstance(mh, dict) else {"raw": str(mh)}
+    state.setdefault("memory_hash", {}).update(mh2)
+    try:
+        state.setdefault("meta", {})["memory_hash_raw"] = mh2.get("raw", "")
+    except Exception:
+        state.setdefault("meta", {})["memory_hash_raw"] = ""
+    # For auditability only; never drive mechanics directly.
+    if any(k in mh2 for k in ("npc_status", "active_ripples", "v2")):
+        state.setdefault("world_notes", []).append("[AI] memory_hash received (read-only; no state mutation applied).")
 
 
 def _clamp_int(v: Any, lo: int, hi: int, default: int) -> int:
