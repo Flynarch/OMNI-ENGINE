@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 OLLAMA_DEFAULT_URL = "http://localhost:11434/api/generate"
+GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
 _LOCAL_FALLBACK_ACTIVE = False
 _LOCAL_FALLBACK_NOTICE: str | None = None
@@ -29,6 +30,13 @@ def resolve_backend() -> tuple[str, dict[str, str], str, str]:
     """Return (url, headers, model, provider_key). Raises if API key missing."""
     load_dotenv()
     provider = os.getenv("LLM_PROVIDER", "openrouter").strip().lower()
+    if provider == "gemini":
+        api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY missing in .env (set LLM_PROVIDER=gemini)")
+        model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash").strip() or "gemini-2.0-flash"
+        url = f"{GEMINI_BASE}/{model}:generateContent?key={api_key}"
+        return url, {"Content-Type": "application/json"}, model, provider
     if provider in ("groq", "grok"):
         api_key = os.getenv("GROQ_API_KEY", "").strip()
         if not api_key:
@@ -91,6 +99,15 @@ def _local_ollama_model() -> str:
     return os.getenv("LLM_LOCAL_MODEL", "llama3.2:3b").strip() or "llama3.2:3b"
 
 
+def _gemini_model_for(purpose: str) -> str:
+    purpose_key = "GEMINI_INTENT_MODEL" if purpose == "intent" else "GEMINI_NARRATOR_MODEL"
+    return (
+        os.getenv(purpose_key, "").strip()
+        or os.getenv("GEMINI_MODEL", "gemini-2.0-flash").strip()
+        or "gemini-2.0-flash"
+    )
+
+
 def _mark_local_fallback(reason: str) -> None:
     global _LOCAL_FALLBACK_ACTIVE, _LOCAL_FALLBACK_NOTICE
     _LOCAL_FALLBACK_ACTIVE = True
@@ -123,6 +140,62 @@ def _messages_to_prompt(messages: list[dict[str, Any]]) -> str:
         if content:
             parts.append(f"{role}:\n{content}")
     return "\n\n".join(parts).strip()
+
+
+def _messages_to_gemini_payload(messages: list[dict[str, Any]], *, max_tokens: int) -> dict[str, Any]:
+    sys_parts: list[str] = []
+    contents: list[dict[str, Any]] = []
+    for m in messages[:32]:
+        if not isinstance(m, dict):
+            continue
+        role = str(m.get("role", "user") or "user").strip().lower()
+        content = str(m.get("content", "") or "")
+        if not content:
+            continue
+        if role == "system":
+            sys_parts.append(content)
+            continue
+        gem_role = "model" if role == "assistant" else "user"
+        contents.append({"role": gem_role, "parts": [{"text": content}]})
+    if not contents:
+        contents = [{"role": "user", "parts": [{"text": ""}]}]
+    payload: dict[str, Any] = {
+        "contents": contents,
+        "generationConfig": {"maxOutputTokens": int(max_tokens)},
+    }
+    if sys_parts:
+        payload["systemInstruction"] = {"parts": [{"text": "\n\n".join(sys_parts)}]}
+    return payload
+
+
+def _extract_gemini_text_from_obj(obj: dict[str, Any]) -> str:
+    if not isinstance(obj, dict):
+        return ""
+    cands = obj.get("candidates")
+    if not isinstance(cands, list) or not cands:
+        return ""
+    c0 = cands[0] if isinstance(cands[0], dict) else {}
+    if not isinstance(c0, dict):
+        return ""
+    content = c0.get("content") if isinstance(c0.get("content"), dict) else {}
+    parts = content.get("parts") if isinstance(content.get("parts"), list) else []
+    out: list[str] = []
+    for p in parts:
+        if not isinstance(p, dict):
+            continue
+        txt = str(p.get("text", "") or "")
+        if txt:
+            out.append(txt)
+    return "".join(out)
+
+
+def _wrap_text_as_openai_completion(*, text: str, model: str) -> dict[str, Any]:
+    return {
+        "id": "gemini-bridge",
+        "object": "chat.completion",
+        "model": model,
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": str(text or "")}, "finish_reason": "stop"}],
+    }
 
 
 def _extract_sse_delta(line: str) -> tuple[str, bool]:
@@ -253,12 +326,18 @@ async def async_chat_completion_json(
 ) -> dict[str, Any]:
     """Non-streaming JSON chat completion (intent resolver, tools)."""
     url, headers, model, _prov = resolve_backend()
-    payload: dict[str, Any] = {
-        "model": model,
-        "max_tokens": max_tokens,
-        "stream": False,
-        "messages": messages,
-    }
+    if _prov == "gemini":
+        model = _gemini_model_for("intent")
+        api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        url = f"{GEMINI_BASE}/{model}:generateContent?key={api_key}"
+        payload = _messages_to_gemini_payload(messages, max_tokens=max_tokens)
+    else:
+        payload = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "stream": False,
+            "messages": messages,
+        }
     max_retries = _retry_count()
     fallback_after = _local_fallback_after_attempts()
     timeout_cfg = _httpx_timeout(stream=False, timeout_sec=timeout)
@@ -271,6 +350,9 @@ async def async_chat_completion_json(
                 data = resp.json()
                 if not isinstance(data, dict):
                     raise RuntimeError("LLM returned non-object JSON")
+                if _prov == "gemini":
+                    txt = _extract_gemini_text_from_obj(data)
+                    data = _wrap_text_as_openai_completion(text=txt, model=model)
                 _mark_primary_backend_active()
                 return data
             except httpx.HTTPStatusError as e:
@@ -325,6 +407,11 @@ async def aiter_sse_narration_chunks(
         "stream": True,
         "messages": messages,
     }
+    if _prov == "gemini":
+        model = _gemini_model_for("narration")
+        api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        url = f"{GEMINI_BASE}/{model}:streamGenerateContent?alt=sse&key={api_key}"
+        payload = _messages_to_gemini_payload(messages, max_tokens=max_tokens)
     max_retries = _retry_count()
     fallback_after = _local_fallback_after_attempts()
     timeout_cfg = _httpx_timeout(stream=True, timeout_sec=timeout)
@@ -335,8 +422,30 @@ async def aiter_sse_narration_chunks(
             async with httpx.AsyncClient(timeout=timeout_cfg) as client:
                 async with client.stream("POST", url, headers=headers, json=payload) as response:
                     response.raise_for_status()
+                    last_full = ""
                     async for line in response.aiter_lines():
-                        delta, done = _extract_sse_delta(str(line or ""))
+                        if _prov == "gemini":
+                            ln = str(line or "").strip()
+                            if not ln.startswith("data:"):
+                                continue
+                            raw = ln[5:].strip()
+                            if not raw:
+                                continue
+                            try:
+                                chunk_obj = json.loads(raw)
+                            except Exception:
+                                continue
+                            full_txt = _extract_gemini_text_from_obj(chunk_obj)
+                            if full_txt and full_txt.startswith(last_full):
+                                delta = full_txt[len(last_full):]
+                                last_full = full_txt
+                            else:
+                                delta = full_txt
+                                if full_txt:
+                                    last_full = full_txt
+                            done = False
+                        else:
+                            delta, done = _extract_sse_delta(str(line or ""))
                         if delta:
                             yielded = True
                             yield str(delta)

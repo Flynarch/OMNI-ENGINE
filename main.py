@@ -235,8 +235,10 @@ def _map_basic_nl_to_command(state: dict[str, Any], cmd: str) -> str:
         return "WHEREAMI"
     if re.search(r"\b(kemana sekarang|kemana|where should i go|where to go|ke mana)\b", low):
         return "DISTRICTS"
-    if re.search(r"\b(cari kerja|mencari kerja|need money|butuh uang|perlu uang|cari uang|cari duit|find work|job)\b", low):
+    if re.search(r"\b(cari kerja|mencari kerja|mencari pekerjaan|cari pekerjaan|need money|butuh uang|perlu uang|cari uang|cari duit|find work|job)\b", low):
         return "GIGS"
+    if re.search(r"\b(beli|buy)\b.*\b(mobil|car|sedan)\b", low):
+        return "BUYVEHICLE car_standard"
     if re.search(r"\b(ngobrol|bicara|berbicara|cari orang|mencari orang|ada orang|talk to|sapa orang|siapa disini)\b", low):
         return f"TALK {_pick_default_contact_name(state)}"
     return raw
@@ -283,10 +285,19 @@ def _render_day1_next_steps(state: dict[str, Any], *, cmd: str, action_ctx: dict
     if not steps:
         return
     lang = get_narration_lang(state)
-    title = "Langkah berikutnya" if lang == "id" else "Next steps"
+    title = "Saran aksi berikutnya" if lang == "id" else "Suggested next actions"
     console.print(f"[bold cyan]{title}:[/bold cyan]")
+    humanize_id = {
+        "TALK": "Ngobrol dengan kontak yang tersedia" if lang == "id" else "Talk to an available contact",
+        "GIGS": "Cari kontrak kerja cepat" if lang == "id" else "Look for quick paid gigs",
+        "INFORMANTS": "Cari intel lewat jaringan lokal" if lang == "id" else "Pull local intel from informants",
+        "WORLD_BRIEF": "Minta ringkasan kondisi kota" if lang == "id" else "Ask for a quick world situation brief",
+        "DISTRICTS": "Pilih distrik tujuan berikutnya" if lang == "id" else "Choose your next district move",
+    }
     for s in steps:
-        console.print(f"- [bold][{s}][/bold]")
+        head = str(s).split(maxsplit=1)[0].upper()
+        pretty = humanize_id.get(head, s)
+        console.print(f"- {pretty}")
 
 
 def _ensure_day1_opening_scene(state: dict[str, Any]) -> None:
@@ -1263,77 +1274,17 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
         return True
 
     if up == "HELP":
-        console.print("[bold cyan]Mulai cepat[/bold cyan]")
-        console.print(
-            "[dim]Ketik bebas bahasa alami (game akan parse) atau perintah keras: "
-            "`TALK <nama>` ngobrol, `INFORMANTS` jaringan informan, `WORLD_BRIEF` ringkasan dunia, "
-            "`DISTRICTS` daftar distrik kota, `UI FULL` stat lebar. "
-            "Nama seperti Operator_Link = ID kontak di engine, bukan error.[/dim]"
-        )
+        console.print("[bold cyan]Bantuan ringkas (tanpa sintaks teknis)[/bold cyan]")
+        console.print("[dim]Cukup ketik niatmu dengan bahasa biasa. Contoh:[/dim]")
+        console.print("- \"aku mau cari kerja\"")
+        console.print("- \"aku butuh uang cepat\"")
+        console.print("- \"aku mau ngobrol sama kontak\"")
+        console.print("- \"aku mau pindah distrik\"")
+        console.print("- \"beli mobil sedan\"")
+        console.print("- \"ringkasin situasi kota\"")
         console.print("")
-        console.print("[bold]HELP — Commands[/bold]")
-        console.print("[dim]Core[/dim]")
-        console.print("- HELP")
-        console.print("- UI COMPACT | UI FULL (HUD ringkas vs lebar; default env OMNI_MONITOR_MODE=compact)")
-        console.print("- STATUS | INFO  (ringkasan kondisi harian: gigs cap + neural fatigue)")
-        console.print("- SCENE | SCENE OPTIONS | SCENE <action>  (contextual; see SCENE OPTIONS)")
-        console.print("- QUEST")
-        console.print("- ATLAS [country]")
-        console.print("- COUNTRIES")
-        console.print("- CITIES [country]")
-        console.print("- LANGS")
-        console.print("- LEARN_LANG <code> [class|book|immersion]")
-        console.print("- LANG id|en")
-        console.print("- NARRATION compact|cinematic")
-        console.print("- MODE NORMAL|IRONMAN")
-        console.print("- UNDO  (Normal only)")
-        console.print("- SAVE STATE")
-        console.print("- SHOWER | HYGIENE | MANDI  (reset hygiene clock, ~15m)")
-        console.print("- RELOAD  (fill active firearm mag from reserve ammo)")
-        console.print("- WORLD_BRIEF")
-        console.print("- INTENT_DEBUG")
-        console.print("")
-        console.print("[dim]Intel & tools[/dim]")
-        console.print("- NPC <name>")
-        console.print("- WHO")
-        console.print("- HEAT")
-        console.print("- OFFERS [role]   (contoh: OFFERS fixer)")
-        console.print("- MARKET            (legal market snapshot)")
-        console.print("- BLACKMARKET       (night-only underground market)")
-        console.print("- MARKET BM         (alias for BLACKMARKET)")
-        console.print("- BUY_DARK <item_id>  (buy from Black Market; cash only)")
-        console.print("- SAFEHOUSE stash putammo <ammo_id> <rounds> | stash takeammo <ammo_id> <rounds>")
-        console.print("- SAFEHOUSE raid comply|hide|bribe <amt>|flee|negotiate|show_permit  (respon saat ada pending raid)")
-        console.print("- SAFEHOUSE burn  (abandon safehouse, clear stash)")
-        console.print("- BANK status|deposit <n>|withdraw <n>")
-        console.print("- STAY status|hotel|boarding|suite <nights>")
-        console.print("- GIGS | JOBS       (list freelance contracts)")
-        console.print("- WORK <gig_id>     (spend hours to complete a gig)")
-        console.print("- CAREER | CAREER PROMOTE [track] | CAREER TRACK <id> | CAREER BREAK ON|OFF")
-        console.print("- PROPERTY (assets) | PROPERTY PRICES <city> | PROPERTY BUY APARTMENT|HOUSE|BUSINESS <city>")
-        console.print("- PROPERTY RENT APARTMENT <city> | PROPERTY SELL <asset_id> | PROPERTY BUY VEHICLE <vehicle_id>")
-        console.print("[dim]  boarding = budget/shared room (Indonesian: kost); aliases: kos kost dorm hostel guesthouse[/dim]")
-        console.print("- NPCSIM_STATS")
-        console.print("- WHEREAMI")
-        console.print("")
-        console.print("[dim]Districts & Intra-city[/dim]")
-        console.print("- DISTRICTS        (list districts in current city)")
-        console.print("- TRAVELTO <id>    (travel to a district within the city)")
-        console.print("")
-        console.print("[dim]Vehicles[/dim]")
-        console.print("- MYCAR            (list owned vehicles)")
-        console.print("- BUYVEHICLE <type> (bicycle|motorcycle|car_standard|car_sports|car_van)")
-        console.print("- SELLVEHICLE <type>")
-        console.print("- USEVEHICLE <type>|OFF   (set active vehicle for TRAVEL)")
-        console.print("- DRIVE <dest> [type]     (travel using vehicle; uses active if omitted)")
-        console.print("- REFUEL <type> [amount]")
-        console.print("- REPAIR <type> [amount]")
-        console.print("- STEALVEHICLE <type>  (illegal!)")
-        console.print("")
-        console.print("[dim]Aliases[/dim]")
-        console.print("- T <dest>  => travel <dest>")
-        console.print("- H <text>  => hack <text>")
-        console.print("- S <text>  => talk <text>")
+        console.print("[dim]Sistem akan menerjemahkan niatmu ke aksi engine secara otomatis.[/dim]")
+        _render_day1_next_steps(state, cmd="help", action_ctx={"domain": "other"})
         return True
     if up in ("SHOWER", "HYGIENE", "MANDI"):
         try:

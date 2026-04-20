@@ -2455,7 +2455,9 @@ def _smoke() -> None:
     st_fx.setdefault("meta", {}).update({"day": 1, "time_min": 8 * 60, "turn": 0})
     st_fx.setdefault("world", {}).setdefault("contacts", {})["Operator_Link"] = {"name": "Operator_Link", "is_contact": True}
     assert _map_basic_nl_to_command(st_fx, "butuh uang sekarang") == "GIGS"
+    assert _map_basic_nl_to_command(st_fx, "aku ingin mencari pekerjaan") == "GIGS"
     assert _map_basic_nl_to_command(st_fx, "mencari orang sekitar") == "TALK Operator_Link"
+    assert _map_basic_nl_to_command(st_fx, "beli mobil sedan") == "BUYVEHICLE car_standard"
     assert _map_basic_nl_to_command(st_fx, "kemana sekarang?") == "DISTRICTS"
     _ensure_day1_opening_scene(st_fx)
     assert bool((st_fx.get("meta", {}) or {}).get("day1_opening_done")) is True
@@ -5935,6 +5937,47 @@ def _smoke() -> None:
     assert d4 == "Neo" and done4 is False
     t4 = _lh._extract_text_from_completion({"choices": [{"message": {"content": "City hums."}}]})
     assert t4 == "City hums."
+    g_payload = _lh._messages_to_gemini_payload(
+        [{"role": "system", "content": "S"}, {"role": "user", "content": "U"}, {"role": "assistant", "content": "A"}],
+        max_tokens=111,
+    )
+    assert isinstance(g_payload, dict) and int((((g_payload.get("generationConfig") or {}).get("maxOutputTokens", 0) or 0)) == 111)
+    assert isinstance(g_payload.get("systemInstruction"), dict)
+    g_txt = _lh._extract_gemini_text_from_obj({"candidates": [{"content": {"parts": [{"text": "Neon"}]}}]})
+    assert g_txt == "Neon"
+    import ai.intent_resolver as _ir
+    _old_lp = os.environ.get("LLM_PROVIDER")
+    _old_gk = os.environ.get("GEMINI_API_KEY")
+    _old_ip = os.environ.get("OMNI_INTENT_PROVIDER")
+    _old_gm = os.environ.get("GEMINI_MODEL")
+    _old_gim = os.environ.get("GEMINI_INTENT_MODEL")
+    os.environ["LLM_PROVIDER"] = "groq"
+    os.environ["GEMINI_API_KEY"] = "x"
+    os.environ["OMNI_INTENT_PROVIDER"] = "gemini"
+    os.environ["GEMINI_INTENT_MODEL"] = "gemini-1.5-flash"
+    with _ir._intent_provider_scope():
+        assert os.environ.get("LLM_PROVIDER") == "gemini"
+        assert os.environ.get("GEMINI_MODEL") == "gemini-1.5-flash"
+    if _old_lp is None:
+        os.environ.pop("LLM_PROVIDER", None)
+    else:
+        os.environ["LLM_PROVIDER"] = _old_lp
+    if _old_gk is None:
+        os.environ.pop("GEMINI_API_KEY", None)
+    else:
+        os.environ["GEMINI_API_KEY"] = _old_gk
+    if _old_ip is None:
+        os.environ.pop("OMNI_INTENT_PROVIDER", None)
+    else:
+        os.environ["OMNI_INTENT_PROVIDER"] = _old_ip
+    if _old_gm is None:
+        os.environ.pop("GEMINI_MODEL", None)
+    else:
+        os.environ["GEMINI_MODEL"] = _old_gm
+    if _old_gim is None:
+        os.environ.pop("GEMINI_INTENT_MODEL", None)
+    else:
+        os.environ["GEMINI_INTENT_MODEL"] = _old_gim
     _lh._mark_local_fallback("verify")
     assert _lh.is_local_fallback_active() is True
     assert "Local AI Network" in _lh.consume_local_fallback_notice()

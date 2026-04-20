@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import math
 import os
@@ -990,14 +991,15 @@ def _invoke_llm_for_intent(payload: Dict[str, Any]) -> str:
     else:
         max_tokens = 512
 
-    data = chat_completion_json(
-        messages=[
-            {"role": "system", "content": INTENT_SYSTEM_PROMPT},
-            {"role": "user", "content": payload["user"]},
-        ],
-        max_tokens=max_tokens,
-        timeout=_intent_llm_timeout_sec(),
-    )
+    with _intent_provider_scope():
+        data = chat_completion_json(
+            messages=[
+                {"role": "system", "content": INTENT_SYSTEM_PROMPT},
+                {"role": "user", "content": payload["user"]},
+            ],
+            max_tokens=max_tokens,
+            timeout=_intent_llm_timeout_sec(),
+        )
     content = data["choices"][0]["message"]["content"]
     return str(content)
 
@@ -1009,16 +1011,48 @@ async def _invoke_llm_for_intent_async(payload: Dict[str, Any]) -> str:
     else:
         max_tokens = 512
 
-    data = await async_chat_completion_json(
-        messages=[
-            {"role": "system", "content": INTENT_SYSTEM_PROMPT},
-            {"role": "user", "content": payload["user"]},
-        ],
-        max_tokens=max_tokens,
-        timeout=_intent_llm_timeout_sec(),
-    )
+    with _intent_provider_scope():
+        data = await async_chat_completion_json(
+            messages=[
+                {"role": "system", "content": INTENT_SYSTEM_PROMPT},
+                {"role": "user", "content": payload["user"]},
+            ],
+            max_tokens=max_tokens,
+            timeout=_intent_llm_timeout_sec(),
+        )
     content = data["choices"][0]["message"]["content"]
     return str(content)
+
+
+@contextlib.contextmanager
+def _intent_provider_scope():
+    """Gemini-first intent resolver scope (can be disabled via OMNI_INTENT_PROVIDER)."""
+    pref = os.getenv("OMNI_INTENT_PROVIDER", "gemini").strip().lower()
+    gem_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if pref != "gemini" or not gem_key:
+        yield
+        return
+    old_provider = os.getenv("LLM_PROVIDER")
+    old_model = os.getenv("GEMINI_MODEL")
+    try:
+        os.environ["LLM_PROVIDER"] = "gemini"
+        # Intent defaults to Gemini Flash unless explicitly set.
+        intent_model = (
+            os.getenv("GEMINI_INTENT_MODEL", "").strip()
+            or os.getenv("GEMINI_MODEL", "").strip()
+            or "gemini-1.5-flash"
+        )
+        os.environ["GEMINI_MODEL"] = intent_model
+        yield
+    finally:
+        if old_provider is None:
+            os.environ.pop("LLM_PROVIDER", None)
+        else:
+            os.environ["LLM_PROVIDER"] = old_provider
+        if old_model is None:
+            os.environ.pop("GEMINI_MODEL", None)
+        else:
+            os.environ["GEMINI_MODEL"] = old_model
 
 
 def _safe_parse_json_blob(text: str) -> Optional[Dict[str, Any]]:
