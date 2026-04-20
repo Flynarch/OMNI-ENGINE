@@ -122,3 +122,17 @@ def block_travel_if_incarcerated(state: dict[str, Any]) -> str | None:
     if is_incarcerated(state):
         return "Travel blocked: you are serving a sentence / in custody."
     return None
+
+
+def block_action_if_incarcerated(state: dict[str, Any], *, surface: str) -> str | None:
+    """Central incarceration policy for command surfaces."""
+    if not is_incarcerated(state):
+        return None
+    s = str(surface or "").strip().lower()
+    if s == "underworld":
+        return "Underworld action blocked: you are serving a sentence / in custody."
+    if s == "economy":
+        return "Economy action blocked: you are serving a sentence / in custody."
+    if s == "scene":
+        return "Scene action blocked: you are serving a sentence / in custody."
+    return "Action blocked: you are serving a sentence / in custody."

@@ -25,7 +25,6 @@ from engine.systems.smartphone import apply_smartphone_pipeline
 from engine.world.districts import _h32, district_path_ids, district_travel_minutes, get_current_district, get_district
 from engine.world.heat import bump_heat
 from engine.world.timers import update_timers
-from engine.world.weather import travel_minutes_modifier
 from engine.world.world import world_tick
 
 # #region agent log
@@ -89,16 +88,7 @@ def _roll_travelto(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[st
         {"city": city, "from": cur_id, "to": target, "travel_minutes": int(travel_minutes)},
     )
 
-    try:
-        meta = state.get("meta", {}) or {}
-        day = int(meta.get("day", 1) or 1)
-        weather_slot = (state.get("world", {}).get("locations", {}) or {}).get(city) or {}
-        weather = weather_slot.get("weather", {}) or {}
-        weather_kind = str(weather.get("kind", "clear") or "clear")
-        travel_minutes += int(travel_minutes_modifier(weather_kind) or 0)
-        _ = day
-    except Exception as _omni_sw_65:
-        log_swallowed_exception('engine/core/pipeline.py:65', _omni_sw_65)
+    # Travel duration modifiers are centralized in update_timers.
     danger = int(to.get("crime_risk", 3) or 3)
     if isinstance(to.get("danger_level"), (int, float)):
         try:

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from engine.core.error_taxonomy import log_swallowed_exception
 from engine.world.atlas import resolve_place
-from engine.world.weather import travel_minutes_modifier
 import hashlib
 import heapq
 import json
@@ -581,19 +580,8 @@ def travel_within_city(state: dict[str, Any], target_district_id: str) -> dict[s
     if base_time < 5:
         base_time = max(5, base_time)
     
-    # Weather affects travel time
-    try:
-        loc = str(state.get("player", {}).get("location", "") or "").strip().lower()
-        meta = state.get("meta", {}) or {}
-        day = int(meta.get("day", 1) or 1)
-        weather_slot = (state.get("world", {}).get("locations", {}) or {}).get(loc) or {}
-        weather = weather_slot.get("weather", {}) or {}
-        weather_kind = str(weather.get("kind", "clear") or "clear")
-        weather_mod = travel_minutes_modifier(weather_kind)
-        base_time += weather_mod
-    except Exception as _omni_sw_292:
-        log_swallowed_exception('engine/world/districts.py:292', _omni_sw_292)
-    # Apply time to state (trace tier friction is applied inside update_timers for all travel).
+    # Apply time to state. Shared travel modifiers (weather/restrictions/trace)
+    # are centralized in update_timers for deterministic sequencing.
     ctx = {
         "action_type": "travel",
         "domain": "evasion",

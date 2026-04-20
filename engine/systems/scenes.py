@@ -10,7 +10,7 @@ from engine.systems.scene_roll import _now, _player_loc, _seed_key, scene_rng
 from engine.systems.scenes_sting import dispatch_sting_advance, dispatch_sting_auto
 
 from engine.core.errors import record_error
-from engine.core.factions import sync_faction_statuses_from_trace
+from engine.core.trace import bump_trace_pct_synced
 from engine.player.inventory_ops import apply_inventory_ops
 from engine.social.police_check import (
     _firearm_policy_for_country,
@@ -976,20 +976,10 @@ def _advance_checkpoint_sweep(state: dict[str, Any], sc: dict[str, Any], action_
 
 
 def _bump_trace(state: dict[str, Any], delta: int) -> int:
-    tr = state.setdefault("trace", {})
     try:
-        tp = int((tr or {}).get("trace_pct", 0) or 0)
+        return int(bump_trace_pct_synced(state, int(delta)))
     except Exception:
-        tp = 0
-    before = tp
-    tp = max(0, min(100, tp + int(delta)))
-    tr["trace_pct"] = tp
-    try:
-
-        sync_faction_statuses_from_trace(state)
-    except Exception:
-        pass
-    return int(tp - before)
+        return 0
 
 
 def _confiscate_items(state: dict[str, Any], item_ids: list[str]) -> dict[str, Any]:

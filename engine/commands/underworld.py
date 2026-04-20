@@ -4,6 +4,8 @@ from typing import Any, Callable
 
 from display.renderer import console, format_data_table
 from engine.core.error_taxonomy import log_swallowed_exception
+from engine.core.trace import bump_trace_pct_synced
+from engine.systems.judicial import block_action_if_incarcerated
 from engine.systems.black_market import (
     black_market_accessible,
     buy_black_market_item,
@@ -21,6 +23,10 @@ def handle_underworld(
     ui_err: Callable[[str, str], None],
 ) -> bool:
     up = cmd.upper()
+    blocked = block_action_if_incarcerated(state, surface="underworld")
+    if blocked and (up.startswith("BUY_DARK ") or up.startswith("BM_BUY ") or up.startswith("HACK ") or up.startswith("WORK ")):
+        ui_err("BLOCKED", blocked)
+        return True
     if up in ("BLACKMARKET", "DARKNET") or up == "MARKET BLACK" or up == "MARKET BM":
         try:
             if not black_market_accessible(state):
@@ -175,13 +181,7 @@ def handle_underworld(
                 console.print(f"[green]WORK success[/green] +${payout} ({tmin}m)")
             else:
                 if trace_delta > 0:
-                    tr = state.setdefault("trace", {})
-                    try:
-                        tp = int(tr.get("trace_pct", 0) or 0)
-                    except Exception as _omni_sw_178:
-                        log_swallowed_exception('engine/commands/underworld.py:178', _omni_sw_178)
-                        tp = 0
-                    tr["trace_pct"] = max(0, min(100, tp + int(trace_delta)))
+                    bump_trace_pct_synced(state, int(trace_delta))
                     state.setdefault("world_notes", []).append(
                         f"[Economy] Failed gig '{title}'. The botched job left a digital trail, increasing your Trace."
                     )

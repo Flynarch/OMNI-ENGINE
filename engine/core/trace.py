@@ -58,6 +58,36 @@ def fmt_trace_monitor_ui(state: dict[str, Any]) -> str:
     return f"{int(t.get('trace_pct', 0) or 0)}% [{t.get('tier_id', 'Ghost')}]"
 
 
+def set_trace_pct_synced(state: dict[str, Any], pct: int) -> int:
+    """Set trace pct, derive status, and sync faction statuses."""
+    tr = state.setdefault("trace", {})
+    if not isinstance(tr, dict):
+        tr = {}
+        state["trace"] = tr
+    v = max(0, min(100, int(pct)))
+    tr["trace_pct"] = v
+    tr["trace_status"] = "Ghost" if v <= 25 else "Flagged" if v <= 50 else "Investigated" if v <= 75 else "Manhunt"
+    try:
+        sync_faction_statuses_from_trace(state)
+    except Exception as _omni_sw_sync:
+        log_swallowed_exception("engine/core/trace.py:set_trace_pct_synced", _omni_sw_sync)
+    return int(v)
+
+
+def bump_trace_pct_synced(state: dict[str, Any], delta: int) -> int:
+    """Bump trace and keep trace/faction statuses coherent. Returns applied delta."""
+    tr = state.setdefault("trace", {})
+    if not isinstance(tr, dict):
+        tr = {}
+        state["trace"] = tr
+    try:
+        cur = int(tr.get("trace_pct", 0) or 0)
+    except Exception:
+        cur = 0
+    nxt = set_trace_pct_synced(state, cur + int(delta))
+    return int(nxt - cur)
+
+
 def apply_npc_snitch_report_trace(state: dict[str, Any], npc_id: str) -> int:
     """Raise trace after an NPC files a report with authorities (deterministic).
 
@@ -67,21 +97,10 @@ def apply_npc_snitch_report_trace(state: dict[str, Any], npc_id: str) -> int:
     Returns the delta applied (after clamp).
     """
     _ = npc_id  # reserved for future per-NPC modifiers / news attribution
-    tr = state.setdefault("trace", {})
-    if not isinstance(tr, dict):
-        tr = {}
-        state["trace"] = tr
-    pct = int(tr.get("trace_pct", 0) or 0)
     d = ensure_disguise(state)
     active = bool(d.get("active"))
     delta = 5 if active else 20
-    pct = max(0, min(100, pct + int(delta)))
-    tr["trace_pct"] = pct
-    tr["trace_status"] = "Ghost" if pct <= 25 else "Flagged" if pct <= 50 else "Investigated" if pct <= 75 else "Manhunt"
-    try:
-        sync_faction_statuses_from_trace(state)
-    except Exception as _omni_sw_82:
-        log_swallowed_exception('engine/core/trace.py:82', _omni_sw_82)
+    bump_trace_pct_synced(state, delta)
     return int(delta)
 
 
@@ -95,11 +114,4 @@ def update_trace(state: dict, action_ctx: dict) -> None:
     if action_ctx.get("alias_cross_context"):
         pct += 8
     pct = max(0, min(100, pct))
-    tr["trace_pct"] = pct
-    tr["trace_status"] = "Ghost" if pct <= 25 else "Flagged" if pct <= 50 else "Investigated" if pct <= 75 else "Manhunt"
-
-    # Mirror trace tiers into faction attention tiers.
-    try:
-        sync_faction_statuses_from_trace(state)
-    except Exception as _omni_sw_105:
-        log_swallowed_exception('engine/core/trace.py:105', _omni_sw_105)
+    set_trace_pct_synced(state, pct)

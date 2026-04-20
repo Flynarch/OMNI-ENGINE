@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from engine.core.error_taxonomy import log_swallowed_exception
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 import engine.systems.encounter_router as _encounter_router
 
@@ -12,7 +12,7 @@ def apply_triggered_events(
     *,
     push_news: Callable[..., None],
     queue_ripple: Callable[..., None],
-    dispatch_registered_event_handler: Callable[..., bool],
+    dispatch_registered_event_handler: Callable[..., Literal["handled", "miss", "failed"]],
     handle_event_legacy_by_type: Callable[..., bool],
     event_handlers: dict[str, Any],
 ) -> None:
@@ -64,10 +64,11 @@ def apply_triggered_events(
                 log_swallowed_exception('engine/world/timers_router.py:66', _omni_sw_66)
                 state.setdefault("world_notes", []).append(f"[Timers] router-first handler failed for event_type={et}")
             continue
-        handled_by_registry = dispatch_registered_event_handler(state, ev, day=day, time_min=time_min)
-        if handled_by_registry:
+        reg_disp = dispatch_registered_event_handler(state, ev, day=day, time_min=time_min)
+        if reg_disp == "handled":
             continue
-        if et in event_handlers:
-            state.setdefault("world_notes", []).append(f"[Timers] registered handler failed for event_type={et}")
-            continue
+        if reg_disp == "failed":
+            state.setdefault("world_notes", []).append(
+                f"[Timers] event handler fault for {et}; deterministic legacy fallback engaged."
+            )
         handle_event_legacy_by_type(state, et=et, payload=payload, day=day, time_min=time_min)

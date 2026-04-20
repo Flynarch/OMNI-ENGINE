@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from engine.core.error_taxonomy import log_swallowed_exception
-from typing import Any
+from typing import Any, Literal
 import hashlib
 
 from engine.world.timers_bus import can_surface_ripple as _bus_can_surface_ripple
@@ -102,27 +102,37 @@ EventHandler = Any
 EVENT_HANDLERS: dict[str, EventHandler] = {}
 
 
+EventHandlerDispatch = Literal["handled", "miss", "failed"]
+
+
 def _dispatch_registered_event_handler(
     state: dict[str, Any],
     ev: dict[str, Any],
     *,
     day: int,
     time_min: int,
-) -> bool:
-    """Registry hook for incremental event-handler refactors."""
+) -> EventHandlerDispatch:
+    """Registry hook for incremental event-handler refactors.
+
+    Returns:
+        ``handled`` — modular handler ran and reported success.
+        ``miss`` — no modular handler registered for ``event_type`` (use legacy).
+        ``failed`` — handler raised or returned falsy; caller may run deterministic legacy fallback.
+    """
     et = str(ev.get("event_type", "") or "")
     h = EVENT_HANDLERS.get(et)
     if not callable(h):
-        return False
+        return "miss"
     try:
-        return bool(h(state, ev, day=day, time_min=time_min))
+        ok = bool(h(state, ev, day=day, time_min=time_min))
+        return "handled" if ok else "failed"
     except Exception as e:
         log_swallowed_exception('engine/world/timers.py:68', e)
         try:
             record_error(state, f"timers.event_handler.{et}", e)
         except Exception as _omni_sw_73:
             log_swallowed_exception('engine/world/timers.py:73', _omni_sw_73)
-        return False
+        return "failed"
 
 
 def _handle_event_legacy_by_type(

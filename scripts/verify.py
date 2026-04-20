@@ -350,6 +350,10 @@ def _smoke() -> None:
     assert isinstance(un, dict) and "financial" in un
     u1 = asyncio.run(evaluate_npc_goals(st_ut))
     assert int(u1.get("skipped", 0) or 0) == 1
+    st_ut.setdefault("world", {}).pop("last_utility_ai_day", None)
+    st_ut.setdefault("meta", {})["day"] = 10
+    u_bs = asyncio.run(evaluate_npc_goals(st_ut, batch_size=0))
+    assert isinstance(u_bs, dict) and int(u_bs.get("evaluated", 0) or 0) >= 1
 
     st_job = initialize_state({"name": "UjUtil", "location": "london", "year": "2025"}, seed_pack="minimal")
     dd_j = default_district_for_city(st_job, "london") or "downtown"
@@ -4095,7 +4099,7 @@ def _smoke() -> None:
     assert len(st_dual_a.get("pending_events", []) or []) == len(st_dual_b.get("pending_events", []) or [])
     assert len(st_dual_a.get("active_ripples", []) or []) == len(st_dual_b.get("active_ripples", []) or [])
 
-    # Guard path: registered handler failure should not fall through and double-apply legacy side effects.
+    # Registry handler raises: one deterministic legacy application (no silent drop of scheduled mechanics).
     from engine.world import timers as timers_mod
 
     saved_h = timers_mod.EVENT_HANDLERS.get("debt_collection_ping")
@@ -4109,10 +4113,10 @@ def _smoke() -> None:
             {"event_type": "debt_collection_ping", "due_day": 1, "due_time": 8 * 60, "triggered": False, "payload": {"debt": 100}}
         ]
         update_timers(st_guard, {"action_type": "instant", "instant_minutes": 0})
-        assert int((st_guard.get("economy", {}) or {}).get("daily_burn", 0) or 0) == 5
-        assert int((st_guard.get("trace", {}) or {}).get("trace_pct", 0) or 0) == 20
+        assert int((st_guard.get("economy", {}) or {}).get("daily_burn", 0) or 0) == 6
+        assert int((st_guard.get("trace", {}) or {}).get("trace_pct", 0) or 0) == 21
         assert any(
-            "registered handler failed for event_type=debt_collection_ping" in _world_note_plain(n)
+            "legacy fallback engaged" in _world_note_plain(n).lower()
             for n in (st_guard.get("world_notes", []) or [])
         )
     finally:
@@ -4655,6 +4659,7 @@ def _smoke() -> None:
     )
     assert "Skills (engine):" in _tp or "Skill (engine):" in _tp
     assert "Weather (engine)" in _tp or "Cuaca (engine)" in _tp
+    assert "<MEMORY_RECALL>" in _tp and "</MEMORY_RECALL>" in _tp
     _tp_combat = build_turn_package(
         st_nc2,
         "test",
@@ -4848,6 +4853,58 @@ def _smoke() -> None:
     )
     _h_after = float((st_eat_fail.get("bio", {}) or {}).get("hunger", 0.0) or 0.0)
     assert abs(_h_before - _h_after) < 0.0001
+    # Incarceration policy: economy mutations are blocked consistently.
+    st_econ_blk = initialize_state({"name": "EconBlocked", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_econ_blk.setdefault("judicial", {})["phase"] = "incarcerated"
+    st_econ_blk.setdefault("world", {})["content_index"] = {"items": {"meal_box": {"name": "Meal Box", "base_price": 120, "tags": ["food", "meal"]}}}
+    st_econ_blk.setdefault("inventory", {}).setdefault("pocket_contents", []).append("meal_box")
+    h0_blk = float((st_econ_blk.get("bio", {}) or {}).get("hunger", 0.0) or 0.0)
+    handle_commerce(
+        st_econ_blk,
+        "EAT meal_box",
+        console=_cons,
+        table_cls=Table,
+        list_shop_quotes=list_shop_quotes,
+        buy_item=buy_item,
+        sell_item=sell_item,
+        sell_item_all=sell_item_all,
+        sell_item_n=sell_item_n,
+        quote_item=quote_item,
+        get_capacity_status=get_capacity_status,
+        run_pipeline=_rp_stub,
+    )
+    h1_blk = float((st_econ_blk.get("bio", {}) or {}).get("hunger", 0.0) or 0.0)
+    assert abs(h0_blk - h1_blk) < 0.0001
+    assert "meal_box" in ((st_econ_blk.get("inventory", {}) or {}).get("pocket_contents", []) or [])
+
+    # Incarceration policy: underworld mutating actions are blocked.
+    from engine.commands.underworld import handle_underworld
+
+    st_ud_blk = initialize_state({"name": "UnderworldBlocked", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_ud_blk.setdefault("judicial", {})["phase"] = "incarcerated"
+    errs_ud: list[tuple[str, str]] = []
+    assert handle_underworld(
+        st_ud_blk,
+        "WORK gig_x",
+        run_pipeline=lambda *_a, **_k: {"outcome": "N/A"},
+        ui_err=lambda t, m: errs_ud.append((str(t), str(m))),
+    )
+    assert errs_ud and "serving a sentence" in errs_ud[-1][1].lower()
+
+    # Incarceration policy: scene action commands are blocked.
+    from engine.commands.scene import handle_scene_commands
+
+    st_sc_blk = initialize_state({"name": "SceneBlocked", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_sc_blk.setdefault("judicial", {})["phase"] = "incarcerated"
+    st_sc_blk["active_scene"] = {"scene_type": "drop_pickup", "phase": "approach", "next_options": ["SCENE WAIT"]}
+    assert handle_scene_commands(
+        st_sc_blk,
+        "SCENE WAIT",
+        run_pipeline=lambda *_a, **_k: {"outcome": "N/A"},
+        scene_blocks_command=lambda *_a, **_k: False,
+    ) is True
+    assert str((st_sc_blk.get("active_scene", {}) or {}).get("phase", "")) == "approach"
+
     # WORK hunger-critical should not mutate mood score directly in execute_gig.
     from engine.systems.jobs import execute_gig, generate_gigs
 
@@ -4926,6 +4983,16 @@ def _smoke() -> None:
     assert bool(rdt.get("ok"))
     after_tm = int((st_d.get("meta", {}) or {}).get("time_min", 0) or 0)
     assert after_tm > before_tm
+    # District graph pathing should be deterministic and return connected route in London pack.
+    from engine.world.districts import district_path_ids, district_travel_minutes
+
+    st_lg = initialize_state({"name": "LondonGraph", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_lg.setdefault("player", {})["district"] = "west_end"
+    ensure_city_districts(st_lg, "london")
+    p_lg = district_path_ids(st_lg, "london", "west_end", "canary_wharf")
+    m_lg = int(district_travel_minutes(st_lg, "london", "west_end", "canary_wharf") or 0)
+    assert isinstance(p_lg, list) and p_lg and p_lg[0] == "west_end" and p_lg[-1] == "canary_wharf"
+    assert m_lg >= 30  # shortest path should be > direct downtown edges in london_districts graph
 
     # HACK command should pass domain=hacking into pipeline (not other).
     from engine.commands.underworld import handle_underworld
@@ -5041,6 +5108,32 @@ def _smoke() -> None:
     tokyo_rf = locs_rf.get("tokyo", {}) if isinstance(locs_rf, dict) else {}
     restr_rf = (tokyo_rf.get("restrictions", {}) if isinstance(tokyo_rf, dict) else {}) or {}
     assert int(restr_rf.get("police_sweep_until_day", 0) or 0) == 0
+
+    # Modular timer handler raises: non-silent note + deterministic legacy fallback still applies mechanics.
+    import engine.world.timers as _timers_mod_fb
+    from engine.world.timers import _apply_triggered_events as _apply_ev_fb
+
+    st_fb = initialize_state({"name": "TimerRegFallback", "location": "tokyo", "year": "2025"}, seed_pack="minimal")
+    st_fb.setdefault("trace", {})["trace_pct"] = 10
+    st_fb.setdefault("meta", {})["day"] = 1
+    st_fb.setdefault("meta", {})["time_min"] = 480
+    st_fb.setdefault("player", {})["location"] = "tokyo"
+    ev_fb = {
+        "event_type": "npc_report",
+        "due_day": 1,
+        "due_time": 480,
+        "triggered": True,
+        "payload": {"reporter": "r1", "affiliation": "street", "suspicion": 80, "origin_location": "tokyo"},
+    }
+    _orig_nr_fb = _timers_mod_fb.EVENT_HANDLERS["npc_report"]
+    _timers_mod_fb.EVENT_HANDLERS["npc_report"] = lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("registry boom"))
+    try:
+        _apply_ev_fb(st_fb, [ev_fb])
+    finally:
+        _timers_mod_fb.EVENT_HANDLERS["npc_report"] = _orig_nr_fb
+    assert int((st_fb.get("trace", {}) or {}).get("trace_pct", 0) or 0) > 10
+    notes_fb = st_fb.get("world_notes", []) or []
+    assert any("legacy fallback engaged" in _world_note_plain(x).lower() for x in notes_fb)
 
     # Trace sync guard: vehicles + quests mutations should keep trace_status/faction_statuses consistent.
     from engine.systems.vehicles import steal_vehicle
@@ -5726,6 +5819,8 @@ def _smoke() -> None:
         _hits_fb = recall_archive_memories("scanner canary wharf", archive_path=_ap_fb, limit=3)
         assert isinstance(_hits_fb, list) and _hits_fb
         assert any("Canary Wharf" in str(h.get("text", "")) or "scanner" in str(h.get("text", "")).lower() for h in _hits_fb)
+        assert recall_archive_memories("", archive_path=_ap_fb, limit=3) == []
+        assert recall_archive_memories("anything", archive_path=(Path(_rag_fb_dir) / "missing_archive.json"), limit=3) == []
 
     # trim_feed_archive.py CLI (publish / housekeeping)
     with tempfile.TemporaryDirectory() as _trim_dir:
@@ -5768,6 +5863,21 @@ def _smoke() -> None:
         assert len(trimmed.get("news_feed") or []) == 7
         assert "last_pruned_meta_day" not in trimmed
         assert "archive_trimmed_at_utc" in trimmed
+
+    # LLM transport robustness: SSE parser + fallback lifecycle semantics.
+    import ai.llm_http as _lh
+
+    d1, done1 = _lh._extract_sse_delta('data: {"choices":[{"delta":{"content":"Hi"}}]}')
+    assert d1 == "Hi" and done1 is False
+    d2, done2 = _lh._extract_sse_delta("data:[DONE]")
+    assert d2 == "" and done2 is True
+    d3, done3 = _lh._extract_sse_delta("event: ping")
+    assert d3 == "" and done3 is False
+    _lh._mark_local_fallback("verify")
+    assert _lh.is_local_fallback_active() is True
+    assert "Local AI Network" in _lh.consume_local_fallback_notice()
+    _lh._mark_primary_backend_active()
+    assert _lh.is_local_fallback_active() is False
 
     assert resolve_roll_primary_stat("stealth", {"intent_note": "", "normalized_input": ""}) == "agility"
     thresholds = _load_base_thresholds()

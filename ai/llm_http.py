@@ -97,6 +97,11 @@ def _mark_local_fallback(reason: str) -> None:
     _LOCAL_FALLBACK_NOTICE = f"Beralih ke Local AI Network ({reason})"
 
 
+def _mark_primary_backend_active() -> None:
+    global _LOCAL_FALLBACK_ACTIVE
+    _LOCAL_FALLBACK_ACTIVE = False
+
+
 def consume_local_fallback_notice() -> str:
     global _LOCAL_FALLBACK_NOTICE
     msg = str(_LOCAL_FALLBACK_NOTICE or "").strip()
@@ -118,6 +123,22 @@ def _messages_to_prompt(messages: list[dict[str, Any]]) -> str:
         if content:
             parts.append(f"{role}:\n{content}")
     return "\n\n".join(parts).strip()
+
+
+def _extract_sse_delta(line: str) -> tuple[str, bool]:
+    """Parse OpenAI-compatible SSE line into (delta, done)."""
+    ln = str(line or "").strip()
+    if not ln.startswith("data:"):
+        return "", False
+    data = ln[5:].strip()
+    if data == "[DONE]":
+        return "", True
+    try:
+        chunk = json.loads(data)
+        delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+        return str(delta or ""), False
+    except Exception:
+        return "", False
 
 
 async def _async_ollama_generate_nonstream(
@@ -163,6 +184,7 @@ async def _aiter_ollama_stream(
         "options": {"num_predict": int(max_tokens)},
     }
     timeout_cfg = _httpx_timeout(stream=True, timeout_sec=timeout)
+    yielded = False
     async with httpx.AsyncClient(timeout=timeout_cfg) as client:
         async with client.stream("POST", url, json=payload) as response:
             response.raise_for_status()
@@ -176,9 +198,14 @@ async def _aiter_ollama_stream(
                     continue
                 delta = str(obj.get("response", "") or "")
                 if delta:
+                    yielded = True
                     yield delta
                 if bool(obj.get("done", False)):
+                    if not yielded:
+                        raise RuntimeError("Local LLM stream returned no content chunks")
                     return
+    if not yielded:
+        raise RuntimeError("Local LLM stream ended without content")
 
 
 async def async_chat_completion_json(
@@ -207,6 +234,7 @@ async def async_chat_completion_json(
                 data = resp.json()
                 if not isinstance(data, dict):
                     raise RuntimeError("LLM returned non-object JSON")
+                _mark_primary_backend_active()
                 return data
             except httpx.HTTPStatusError as e:
                 last_exc = e
@@ -266,23 +294,24 @@ async def aiter_sse_narration_chunks(
     last_exc: BaseException | None = None
     for attempt in range(max_retries):
         try:
+            yielded = False
             async with httpx.AsyncClient(timeout=timeout_cfg) as client:
                 async with client.stream("POST", url, headers=headers, json=payload) as response:
                     response.raise_for_status()
                     async for line in response.aiter_lines():
-                        if not line or not line.startswith("data: "):
-                            continue
-                        data = line[6:]
-                        if data.strip() == "[DONE]":
+                        delta, done = _extract_sse_delta(str(line or ""))
+                        if delta:
+                            yielded = True
+                            yield str(delta)
+                        if done:
+                            if not yielded:
+                                raise RuntimeError("LLM stream completed without any content chunk")
+                            _mark_primary_backend_active()
                             return
-                        try:
-                            chunk = json.loads(data)
-                            delta = chunk["choices"][0]["delta"].get("content", "")
-                            if delta:
-                                yield str(delta)
-                        except Exception:
-                            continue
-            return
+            if yielded:
+                _mark_primary_backend_active()
+                return
+            raise RuntimeError("LLM stream ended without any content chunk")
         except httpx.HTTPStatusError as e:
             last_exc = e
             code = e.response.status_code if e.response is not None else 0
@@ -295,6 +324,17 @@ async def aiter_sse_narration_chunks(
                 await _async_retry_delay(attempt)
                 continue
             raise RuntimeError(f"LLM HTTP {code}: {e}") from e
+        except RuntimeError as e:
+            last_exc = e
+            if _local_fallback_enabled() and attempt >= fallback_after - 1:
+                _mark_local_fallback("external empty-stream")
+                async for ch in _aiter_ollama_stream(messages=messages, max_tokens=max_tokens, timeout=timeout):
+                    yield ch
+                return
+            if attempt < max_retries - 1:
+                await _async_retry_delay(attempt)
+                continue
+            raise
         except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.RemoteProtocolError) as e:
             last_exc = e
             if _local_fallback_enabled() and attempt >= fallback_after - 1:

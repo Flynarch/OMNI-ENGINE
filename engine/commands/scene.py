@@ -4,6 +4,7 @@ from engine.core.error_taxonomy import log_swallowed_exception
 from typing import Any, Callable
 
 from display.renderer import console
+from engine.systems.judicial import block_action_if_incarcerated
 from engine.systems.scenes import advance_scene
 
 
@@ -71,6 +72,11 @@ def handle_scene_commands(
             for o in opts[:12]:
                 if isinstance(o, str):
                     console.print(f"- {o}")
+            return True
+
+        blocked = block_action_if_incarcerated(state, surface="scene")
+        if blocked:
+            console.print(f"[yellow]{blocked}[/yellow]")
             return True
 
         act = sub

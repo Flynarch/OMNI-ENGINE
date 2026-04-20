@@ -4,6 +4,7 @@ from typing import Any, Callable
 
 from display.renderer import format_data_table
 from engine.core.error_taxonomy import log_swallowed_exception
+from engine.systems.judicial import block_action_if_incarcerated
 
 _EDIBLE_TAGS = {"food", "ration", "snack", "meal", "drink", "water"}
 
@@ -122,6 +123,10 @@ def handle_commerce(
     run_pipeline: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]] | None = None,
 ) -> bool:
     up = cmd.upper()
+    blocked = block_action_if_incarcerated(state, surface="economy")
+    if blocked and (up == "EAT" or up.startswith("EAT ") or up == "BUY" or up.startswith("BUY ") or up == "SELL" or up.startswith("SELL ")):
+        console.print(f"[yellow]{blocked}[/yellow]")
+        return True
     if up == "EAT" or up.startswith("EAT "):
         parts = cmd.split(maxsplit=1)
         want_iid = parts[1].strip() if len(parts) >= 2 else ""
