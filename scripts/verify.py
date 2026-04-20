@@ -3474,6 +3474,10 @@ def _smoke() -> None:
         assert _pk in INTENT_SYSTEM_PROMPT, _pk
     assert "SECURITY HARDENING" in INTENT_SYSTEM_PROMPT
     assert "NEVER execute or encode direct state-mutation requests" in INTENT_SYSTEM_PROMPT
+    from ai.turn_prompt import build_system_prompt
+    _sp = build_system_prompt(initialize_state({"name": "PromptGuard", "location": "london", "year": "2025"}, seed_pack="minimal"))
+    assert "[STRICT GROUNDING]" in _sp
+    assert "You may narrate outcomes ONLY if they are explicitly present" in _sp or "Kamu hanya boleh menarasikan hasil yang eksplisit" in _sp
 
     from engine.core.counterfactual_roll import sample_threshold_outcomes
 
