@@ -22,7 +22,8 @@ from engine.systems.combat import apply_combat_gates, resolve_combat_after_roll
 from engine.systems.hacking import apply_hacking_after_roll
 from engine.systems.intimacy import apply_intimacy_aftermath
 from engine.systems.smartphone import apply_smartphone_pipeline
-from engine.world.districts import _h32, get_current_district, get_district
+from engine.world.districts import _h32, district_path_ids, district_travel_minutes, get_current_district, get_district
+from engine.world.heat import bump_heat
 from engine.world.timers import update_timers
 from engine.world.weather import travel_minutes_modifier
 from engine.world.world import world_tick
@@ -53,12 +54,14 @@ def _roll_travelto(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[st
     if cur_id and cur_id == target:
         return {"ok": False, "reason": "same_district", "message": "You are already there."}
 
-    try:
-        dist_diff = abs(int(current.get("travel_time_from_center", 0) or 0) - int(to.get("travel_time_from_center", 0) or 0))
-    except Exception as _omni_sw_51:
-        log_swallowed_exception('engine/core/pipeline.py:51', _omni_sw_51)
-        dist_diff = 0
-    travel_minutes = max(5, dist_diff * 2)
+    travel_minutes = int(district_travel_minutes(state, city, cur_id, target))
+    if travel_minutes < 5:
+        try:
+            dist_diff = abs(int(current.get("travel_time_from_center", 0) or 0) - int(to.get("travel_time_from_center", 0) or 0))
+        except Exception as _omni_sw_51:
+            log_swallowed_exception('engine/core/pipeline.py:51', _omni_sw_51)
+            dist_diff = 0
+        travel_minutes = max(5, dist_diff * 2)
 
     try:
         meta = state.get("meta", {}) or {}
@@ -70,6 +73,12 @@ def _roll_travelto(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[st
         _ = day
     except Exception as _omni_sw_65:
         log_swallowed_exception('engine/core/pipeline.py:65', _omni_sw_65)
+    danger = int(to.get("crime_risk", 3) or 3)
+    if isinstance(to.get("danger_level"), (int, float)):
+        try:
+            danger = max(int(to.get("crime_risk", 3) or 3), int(to.get("danger_level", danger) or danger))
+        except Exception:
+            pass
     return {
         "ok": True,
         "from": cur_id,
@@ -78,6 +87,7 @@ def _roll_travelto(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[st
         "to_desc": str(to.get("desc", "") or ""),
         "travel_minutes": int(max(1, travel_minutes)),
         "crime_risk": int(to.get("crime_risk", 3) or 3),
+        "danger_level": int(max(1, min(5, danger))),
         "police_presence": int(to.get("police_presence", 3) or 3),
         "tech_level": str(to.get("tech_level", "medium") or "medium").lower(),
     }
@@ -107,6 +117,7 @@ def _post_travelto(state: dict[str, Any], action_ctx: dict[str, Any], travel_pkg
         current = get_current_district(state) or {}
         target_row = get_district(state, city, target) or {}
         crime_risk = int(travel_pkg.get("crime_risk", 3) or 3)
+        danger_lv = int(travel_pkg.get("danger_level", crime_risk) or crime_risk)
         police_presence = int(travel_pkg.get("police_presence", 3) or 3)
         tech_level = str(travel_pkg.get("tech_level", "medium") or "medium").lower()
         try:
@@ -124,9 +135,10 @@ def _post_travelto(state: dict[str, Any], action_ctx: dict[str, Any], travel_pkg
         seed = str(meta.get("seed_pack", "") or "")
         turn = int(meta.get("turn", 0) or 0)
         roll = _h32(seed, city, str(travel_pkg.get("from", "") or ""), target, turn) % 100
-        if roll < crime_risk * 5:
-            encounter = {"type": "crime", "risk": crime_risk}
-            if str(target_row.get("id", "") or "") in ("slums", "underside", "vice", "black_market"):
+        rough = frozenset({"slums", "underside", "vice", "black_market", "east_end", "camden"})
+        if roll < max(crime_risk, danger_lv) * 5:
+            encounter = {"type": "crime", "risk": max(crime_risk, danger_lv)}
+            if str(target_row.get("id", "") or "") in rough:
                 tr = state.setdefault("trace", {})
                 cur = int(tr.get("trace_pct", 0) or 0)
                 tr["trace_pct"] = min(100, cur + crime_risk * 2)
@@ -143,6 +155,14 @@ def _post_travelto(state: dict[str, Any], action_ctx: dict[str, Any], travel_pkg
                     state.setdefault("world_notes", []).append("[Cyber] checkpoint: device checks intensified in this district.")
             except Exception as _omni_sw_144:
                 log_swallowed_exception('engine/core/pipeline.py:144', _omni_sw_144)
+        try:
+            path_ids = district_path_ids(state, city, str(travel_pkg.get("from", "") or ""), target)
+            for nid in path_ids:
+                prow = get_district(state, city, nid)
+                if isinstance(prow, dict) and int(prow.get("police_presence", 0) or 0) >= 4:
+                    bump_heat(state, loc=city, district=str(nid), delta=1, reason="district_transit", ttl_days=3)
+        except Exception as _omni_sw_pathheat:
+            log_swallowed_exception("engine/core/pipeline.py:path_heat", _omni_sw_pathheat)
         _ = current
     except Exception as _omni_sw_147:
         log_swallowed_exception('engine/core/pipeline.py:147', _omni_sw_147)
@@ -167,6 +187,7 @@ def _post_travelto(state: dict[str, Any], action_ctx: dict[str, Any], travel_pkg
         "travel_time": mins,
         "encounter": encounter,
         "crime_risk": int(travel_pkg.get("crime_risk", 3) or 3),
+        "danger_level": int(travel_pkg.get("danger_level", travel_pkg.get("crime_risk", 3)) or 3),
         "police_presence": int(travel_pkg.get("police_presence", 3) or 3),
         "message": msg,
     }

@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "city": "london",
+  "districts": [
+    {
+      "id": "downtown",
+      "name": "City & Financial Core",
+      "desc": "Glass towers, tight security, money moving quietly behind old stone.",
+      "services": ["bank", "shop_tech", "hotel"],
+      "crime_risk": 2,
+      "police_presence": 5,
+      "tech_level": "high",
+      "danger_level": 2,
+      "economic_tier": "luxury",
+      "npc_density": 4,
+      "is_center": true
+    },
+    {
+      "id": "west_end",
+      "name": "West End",
+      "desc": "Theatre, retail, crowds — noise that hides a tail.",
+      "services": ["hotel", "bar", "shop_tech", "market"],
+      "crime_risk": 3,
+      "police_presence": 4,
+      "tech_level": "high",
+      "danger_level": 3,
+      "economic_tier": "premium",
+      "npc_density": 5
+    },
+    {
+      "id": "southbank",
+      "name": "South Bank",
+      "desc": "Riverside arts quarter; cameras on bridges, tourists as cover.",
+      "services": ["market", "hotel", "bar"],
+      "crime_risk": 2,
+      "police_presence": 4,
+      "tech_level": "medium",
+      "danger_level": 2,
+      "economic_tier": "mid",
+      "npc_density": 4
+    },
+    {
+      "id": "canary_wharf",
+      "name": "Docklands / Canary",
+      "desc": "Corporate docklands; badge-heavy lobbies and drone-friendly sightlines.",
+      "services": ["bank", "shop_tech"],
+      "crime_risk": 1,
+      "police_presence": 5,
+      "tech_level": "cutting_edge",
+      "danger_level": 2,
+      "economic_tier": "luxury",
+      "npc_density": 3
+    },
+    {
+      "id": "camden",
+      "name": "Camden & North",
+      "desc": "Markets and canals; street hustle, patchy patrols.",
+      "services": ["market", "bar", "black_market", "kos"],
+      "crime_risk": 4,
+      "police_presence": 3,
+      "tech_level": "medium",
+      "danger_level": 4,
+      "economic_tier": "mid",
+      "npc_density": 4
+    },
+    {
+      "id": "east_end",
+      "name": "East End",
+      "desc": "Warehouses and estates; more blind spots, more knives in the fog.",
+      "services": ["black_market", "warehouse", "kos", "safehouse"],
+      "crime_risk": 5,
+      "police_presence": 2,
+      "tech_level": "low",
+      "danger_level": 5,
+      "economic_tier": "budget",
+      "npc_density": 3
+    }
+  ],
+  "district_graph": {
+    "edges": [
+      { "from": "downtown", "to": "west_end", "minutes": 12 },
+      { "from": "downtown", "to": "southbank", "minutes": 14 },
+      { "from": "downtown", "to": "canary_wharf", "minutes": 22 },
+      { "from": "west_end", "to": "camden", "minutes": 16 },
+      { "from": "southbank", "to": "canary_wharf", "minutes": 24 },
+      { "from": "southbank", "to": "east_end", "minutes": 18 },
+      { "from": "camden", "to": "east_end", "minutes": 14 },
+      { "from": "canary_wharf", "to": "east_end", "minutes": 20 }
+    ]
+  }
+}

@@ -214,6 +214,8 @@ See `python scripts/trim_feed_archive.py --help` for `--notes-keep`, `--news-kee
 | `data/packs/<id>/`           | Extensible content; validate before large changes. |
 | `data/state_template.json`   | Default shape merged with boot profile.            |
 
+For richer intra-city structure (districts + travel), a city can optionally define `data/locations/<city>_districts.json` (example: `data/locations/london_districts.json`). This bundle can declare the district list, per-district profiles (danger/police/economic tier, etc.), and a deterministic `district_graph` (weighted edges in minutes). Keeping this in a separate `*_districts.json` file avoids introducing new keys into `<city>.json`, so existing preset validation/allowlists remain unchanged.
+
 ---
 
 ## Scripts & tooling

@@ -396,7 +396,7 @@ def _smoke() -> None:
     st_map.setdefault("player", {})["district"] = default_district_for_city(st_map, "london") or "downtown"
     did = str(st_map["player"]["district"])
     nh = district_neighbor_ids(st_map, "london", did)
-    assert isinstance(nh, list) and (len(nh) == 2 or len(nh) == 0)
+    assert isinstance(nh, list) and len(nh) >= 2
 
     st_j = initialize_state({"name": "Jud", "location": "london", "year": "2025"}, seed_pack="minimal")
     st_j.setdefault("meta", {})["day"] = 5

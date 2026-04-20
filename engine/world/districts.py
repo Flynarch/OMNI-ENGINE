@@ -12,7 +12,12 @@ from engine.core.error_taxonomy import log_swallowed_exception
 from engine.world.atlas import resolve_place
 from engine.world.weather import travel_minutes_modifier
 import hashlib
+import heapq
+import json
+from pathlib import Path
 from typing import Any
+
+_LOC_DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "locations"
 
 
 def travel_is_district_mode(action_ctx: dict[str, Any]) -> bool:
@@ -32,6 +37,210 @@ def _pick(r: int, items: list[str]) -> str:
     if not items:
         return "-"
     return items[r % len(items)]
+
+
+def _build_adjacency_from_edges(edges: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    """Undirected weighted graph: id -> {neighbor: minutes}."""
+    adj: dict[str, dict[str, int]] = {}
+    for e in edges[:128]:
+        if not isinstance(e, dict):
+            continue
+        a = str(e.get("from", "") or "").strip().lower()
+        b = str(e.get("to", "") or "").strip().lower()
+        try:
+            w = int(e.get("minutes", 0) or 0)
+        except Exception:
+            w = 0
+        if not a or not b or w <= 0:
+            continue
+        adj.setdefault(a, {})[b] = w
+        adj.setdefault(b, {})[a] = w
+    return adj
+
+
+def _shortest_path_minutes(
+    adj: dict[str, dict[str, int]], start: str, end: str
+) -> tuple[list[str], int] | None:
+    """Dijkstra; returns (path node ids, total minutes) or None."""
+    if start == end:
+        return [start], 0
+    if start not in adj or end not in adj:
+        return None
+    inf = 10**9
+    dist: dict[str, int] = {start: 0}
+    prev: dict[str, str | None] = {start: None}
+    pq: list[tuple[int, str]] = [(0, start)]
+    while pq:
+        d, u = heapq.heappop(pq)
+        if d > int(dist.get(u, inf)):
+            continue
+        if u == end:
+            path: list[str] = []
+            cur: str | None = end
+            while cur is not None:
+                path.append(cur)
+                cur = prev.get(cur)
+            path.reverse()
+            return path, d
+        for v, w in (adj.get(u) or {}).items():
+            nd = d + int(w)
+            if nd < int(dist.get(v, inf)):
+                dist[v] = nd
+                prev[v] = u
+                heapq.heappush(pq, (nd, str(v)))
+    return None
+
+
+def _travel_times_from_center(adj: dict[str, dict[str, int]], center_id: str, all_ids: list[str]) -> dict[str, int]:
+    """Minutes from center along graph (fallback 0 for unreachable)."""
+    out: dict[str, int] = {}
+    cid = str(center_id or "").strip().lower()
+    for did in all_ids:
+        dk = str(did or "").strip().lower()
+        if dk == cid:
+            out[dk] = 0
+            continue
+        sp = _shortest_path_minutes(adj, cid, dk) if cid in adj and dk in adj else None
+        out[dk] = int(sp[1]) if sp else 0
+    return out
+
+
+def _load_district_override_bundle(city_key: str) -> tuple[list[dict[str, Any]], dict[str, dict[str, int]]] | None:
+    """Load optional ``data/locations/<city>_districts.json`` (data-driven graph + profiles)."""
+    ck = str(city_key or "").strip().lower()
+    if not ck:
+        return None
+    path = _LOC_DATA_DIR / f"{ck}_districts.json"
+    if not path.exists():
+        return None
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        log_swallowed_exception("engine/world/districts.py:load_override", e)
+        return None
+    if not isinstance(doc, dict):
+        return None
+    raw_ds = doc.get("districts")
+    if not isinstance(raw_ds, list) or not raw_ds:
+        return None
+    districts: list[dict[str, Any]] = []
+    for row in raw_ds[:24]:
+        if not isinstance(row, dict):
+            continue
+        did = str(row.get("id", "") or "").strip().lower()
+        if not did:
+            continue
+        d: dict[str, Any] = {
+            "id": did,
+            "name": str(row.get("name", did) or did),
+            "desc": str(row.get("desc", "") or ""),
+            "services": [str(x) for x in (row.get("services") or []) if isinstance(x, str)][:16],
+            "crime_risk": int(row.get("crime_risk", 3) or 3),
+            "police_presence": int(row.get("police_presence", 3) or 3),
+            "tech_level": str(row.get("tech_level", "medium") or "medium"),
+            "travel_time_from_center": int(row.get("travel_time_from_center", 0) or 0),
+        }
+        if "danger_level" in row:
+            try:
+                d["danger_level"] = max(1, min(5, int(row.get("danger_level", 3) or 3)))
+            except Exception:
+                d["danger_level"] = max(1, min(5, int(d.get("crime_risk", 3) or 3)))
+        if "economic_tier" in row:
+            d["economic_tier"] = str(row.get("economic_tier", "mid") or "mid")
+        if "npc_density" in row:
+            try:
+                d["npc_density"] = max(1, min(5, int(row.get("npc_density", 3) or 3)))
+            except Exception:
+                d["npc_density"] = 3
+        if bool(row.get("is_center")):
+            d["is_center"] = True
+        districts.append(d)
+
+    if not districts:
+        return None
+    # Exactly one center; else first is_center or first row
+    centers = [x for x in districts if isinstance(x, dict) and x.get("is_center")]
+    if len(centers) != 1:
+        for x in districts:
+            x.pop("is_center", None)
+        districts[0]["is_center"] = True
+
+    gdoc = doc.get("district_graph") if isinstance(doc.get("district_graph"), dict) else {}
+    edges = gdoc.get("edges") if isinstance(gdoc.get("edges"), list) else []
+    adj = _build_adjacency_from_edges([e for e in edges if isinstance(e, dict)])
+    ids = [str(d.get("id", "")) for d in districts if isinstance(d, dict) and d.get("id")]
+    center_id = ""
+    for d in districts:
+        if d.get("is_center"):
+            center_id = str(d.get("id", "") or "").strip().lower()
+            break
+    if not center_id and ids:
+        center_id = str(ids[0]).strip().lower()
+    if adj and center_id:
+        tmap = _travel_times_from_center(adj, center_id, ids)
+        for d in districts:
+            di = str(d.get("id", "") or "").strip().lower()
+            if di in tmap:
+                d["travel_time_from_center"] = int(tmap[di])
+    for d in districts:
+        dk = str(d.get("id", "") or "").strip().lower()
+        if dk:
+            adj.setdefault(dk, {})
+    # Deterministic npc_density / event_chance if missing
+    meta_seed = str(doc.get("version", "1") or "1")
+    for d in districts:
+        if "npc_density" not in d:
+            r = _h32(meta_seed, ck, d.get("id"))
+            d["npc_density"] = max(1, min(5, 3 + (r % 5) - 2))
+        if "event_chance" not in d:
+            r2 = _h32(meta_seed, ck, d.get("id"), "ev")
+            d["event_chance"] = max(1, min(10, (r2 >> 4) % 10))
+    return districts, adj
+
+
+def _get_adjacency_for_city(state: dict[str, Any], city_key: str) -> dict[str, dict[str, int]]:
+    ck = str(city_key or "").strip().lower()
+    world = state.get("world", {}) or {}
+    graphs = world.get("district_graphs") if isinstance(world.get("district_graphs"), dict) else {}
+    g = graphs.get(ck) if isinstance(graphs, dict) else None
+    return g if isinstance(g, dict) else {}
+
+
+def district_travel_minutes(state: dict[str, Any], city: str, from_id: str, to_id: str) -> int:
+    """Deterministic travel minutes between districts (graph path or legacy radial fallback)."""
+    fk = str(city or "").strip().lower()
+    a = str(from_id or "").strip().lower()
+    b = str(to_id or "").strip().lower()
+    if not fk or not a or not b or a == b:
+        return max(0, 0 if a == b else 5)
+    adj = _get_adjacency_for_city(state, fk)
+    if adj and a in adj and b in adj:
+        sp = _shortest_path_minutes(adj, a, b)
+        if sp:
+            return max(1, int(sp[1]))
+    fa = get_district(state, fk, a)
+    fb = get_district(state, fk, b)
+    try:
+        dfa = int((fa or {}).get("travel_time_from_center", 0) or 0)
+        dfb = int((fb or {}).get("travel_time_from_center", 0) or 0)
+    except Exception:
+        dfa, dfb = 0, 0
+    return max(5, abs(dfa - dfb) * 2)
+
+
+def district_path_ids(state: dict[str, Any], city: str, from_id: str, to_id: str) -> list[str]:
+    """Ordered district ids along shortest path (including endpoints)."""
+    fk = str(city or "").strip().lower()
+    a = str(from_id or "").strip().lower()
+    b = str(to_id or "").strip().lower()
+    if not fk or not a or not b or a == b:
+        return [a] if a else []
+    adj = _get_adjacency_for_city(state, fk)
+    if adj and a in adj and b in adj:
+        sp = _shortest_path_minutes(adj, a, b)
+        if sp:
+            return list(sp[0])
+    return [a, b]
 
 
 # Default district templates per city archetype
@@ -122,6 +331,19 @@ def ensure_city_districts(state: dict[str, Any], city: str, country: str | None 
     if city_key in districts_store and isinstance(districts_store[city_key], list):
         return districts_store[city_key]
 
+    bundle = _load_district_override_bundle(city_key)
+    if bundle is not None:
+        districts_ov, adj_ov = bundle
+        if districts_ov:
+            districts_store[city_key] = districts_ov
+            if adj_ov:
+                wg = world.setdefault("district_graphs", {})
+                if not isinstance(wg, dict):
+                    wg = {}
+                    world["district_graphs"] = wg
+                wg[city_key] = adj_ov
+            return districts_ov
+
     meta = state.get("meta", {}) or {}
     seed = str(meta.get("seed_pack", "") or "")
     
@@ -180,9 +402,12 @@ def list_districts(state: dict[str, Any], city: str) -> list[dict[str, Any]]:
 
 
 def district_neighbor_ids(state: dict[str, Any], city: str, district_id: str) -> list[str]:
-    """W2-4: deterministic ring neighbors on ordered district list (no geo pathfinding)."""
+    """Neighbors: explicit graph edges if loaded; else ring on ordered district list."""
     cid = str(city or "").strip().lower()
     did = str(district_id or "").strip().lower()
+    adj = _get_adjacency_for_city(state, cid)
+    if adj and did in adj:
+        return sorted([str(k) for k in adj[did].keys()])
     dists = list_districts(state, cid)
     if not dists:
         return []
@@ -277,9 +502,11 @@ def travel_within_city(state: dict[str, Any], target_district_id: str) -> dict[s
     if current.get("id") == target_district_id:
         return {"ok": False, "reason": "same_district", "message": "You are already there."}
     
-    # Calculate travel time based on distance and transport mode
-    dist_diff = abs(current.get("travel_time_from_center", 0) - target.get("travel_time_from_center", 0))
-    base_time = max(5, dist_diff * 2)  # minimum 5 minutes, scales with distance
+    cur_id = str(current.get("id", "") or "").strip().lower()
+    tgt_id = str(target.get("id", "") or "").strip().lower()
+    base_time = district_travel_minutes(state, city, cur_id, tgt_id)
+    if base_time < 5:
+        base_time = max(5, base_time)
     
     # Weather affects travel time
     try:
@@ -310,8 +537,20 @@ def travel_within_city(state: dict[str, Any], target_district_id: str) -> dict[s
     state["player"]["district"] = target_district_id
     
     # Crime risk during travel
-    crime_risk = target.get("crime_risk", 3)
-    police_presence = target.get("police_presence", 3)
+    try:
+        crime_risk = int(target.get("crime_risk", 3) or 3)
+    except Exception:
+        crime_risk = 3
+    danger_lv = crime_risk
+    if isinstance(target.get("danger_level"), (int, float)):
+        try:
+            danger_lv = max(crime_risk, int(target.get("danger_level", crime_risk) or crime_risk))
+        except Exception:
+            danger_lv = crime_risk
+    try:
+        police_presence = int(target.get("police_presence", 3) or 3)
+    except Exception:
+        police_presence = 3
     tech_level = str(target.get("tech_level", "medium") or "medium").lower()
     # Cyber crackdown can add extra police presence in high-tech districts.
     try:
@@ -333,11 +572,12 @@ def travel_within_city(state: dict[str, Any], target_district_id: str) -> dict[s
     roll = _h32(seed, city, current.get("id"), target_district_id, turn) % 100
     
     encounter = None
-    if roll < crime_risk * 5:  # Crime encounter chance
-        encounter = {"type": "crime", "risk": crime_risk}
+    rough_ids = frozenset({"slums", "underside", "vice", "black_market", "east_end", "camden"})
+    if roll < max(crime_risk, danger_lv) * 5:  # Crime encounter chance
+        encounter = {"type": "crime", "risk": max(crime_risk, danger_lv)}
         # Apply trace if caught in illegal area
-        if target.get("id") in ("slums", "underside", "vice", "black_market"):
-            trace_inc = crime_risk * 2
+        if str(target.get("id", "") or "") in rough_ids:
+            trace_inc = max(crime_risk, danger_lv) * 2
             try:
                 tr = state.setdefault("trace", {})
                 current_trace = int(tr.get("trace_pct", 0) or 0)
