@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from engine.core.error_taxonomy import log_swallowed_exception
+from engine.core.memory_rag import append_archived_entries_to_index
 
 ROOT = Path(__file__).resolve().parents[2]
 SAVE_DIR = ROOT / "save"
@@ -205,5 +206,7 @@ def prune_world_notes_and_news_feed(state: dict[str, Any], *, archive_path: Path
         arch["last_pruned_meta_day"] = int(current_day)
         arch["last_pruned_at_utc"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
         _write_archive(path, arch)
+        # Keep lightweight retrieval index in sync with newly archived entries.
+        append_archived_entries_to_index(path, archived_notes, archived_news)
     except Exception as _omni_sw_186:
         log_swallowed_exception("engine/core/feed_prune.py:186", _omni_sw_186)

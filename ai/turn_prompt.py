@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any, NamedTuple
 
 from dotenv import load_dotenv
 
 from engine.systems.combat import get_active_weapon
+from engine.core.memory_rag import recall_archive_memories
 
 
 def get_narration_lang(state: dict[str, Any]) -> str:
@@ -761,6 +763,30 @@ def _fmt_world_notes(state: dict[str, Any]) -> str:
         return "(empty)"
     tail = notes[-6:] if isinstance(notes, list) else []
     return "\n".join(f"- {world_note_plain(n)}" for n in tail)
+
+
+def _fmt_memory_recall(player_input: str, lang: str) -> str:
+    """Recall up to 3 semantically relevant snippets from archived narrative memory."""
+    try:
+        root = Path(__file__).resolve().parents[1]
+        archive_path = root / "save" / "archive.json"
+        rows = recall_archive_memories(player_input, archive_path=archive_path, limit=3)
+        if not rows:
+            return "<MEMORY_RECALL>(none)</MEMORY_RECALL>"
+        lines: list[str] = []
+        for r in rows[:3]:
+            d = int(r.get("day", 1) or 1)
+            src = str(r.get("source", "archive") or "archive")
+            txt = str(r.get("text", "") or "").strip().replace("\n", " ")
+            if len(txt) > 180:
+                txt = txt[:177] + "..."
+            if lang == "en":
+                lines.append(f"- day {d} [{src}] {txt}")
+            else:
+                lines.append(f"- hari {d} [{src}] {txt}")
+        return "<MEMORY_RECALL>\n" + "\n".join(lines) + "\n</MEMORY_RECALL>"
+    except Exception:
+        return "<MEMORY_RECALL>(none)</MEMORY_RECALL>"
 
 
 def _fmt_economy_detail(state: dict[str, Any], lang: str) -> str:
@@ -1598,6 +1624,7 @@ def build_turn_package(
 {lang_label} (code={lang})
 [PLAYER INPUT]
 {player_input}
+{_fmt_memory_recall(player_input, lang)}
 {_fmt_narrative_thread(state, lang)}
 {_fmt_narrative_safety(lang)}
 {act_title}

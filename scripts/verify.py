@@ -5660,6 +5660,7 @@ def _smoke() -> None:
 
     # world_notes / news_feed: age + cap pruning with merge into save/archive.json
     from engine.core.feed_prune import effective_prune_limits, prune_world_notes_and_news_feed
+    from engine.core.memory_rag import recall_archive_memories
 
     _, max_ent, _ = effective_prune_limits()
     st_fp = initialize_state({"name": "FeedPrune", "location": "london", "year": "2025"}, seed_pack="minimal")
@@ -5677,8 +5678,13 @@ def _smoke() -> None:
         prune_world_notes_and_news_feed(st_fp, archive_path=_ap)
         assert _ap.exists()
         arch = json.loads(_ap.read_text(encoding="utf-8"))
+        idxp = Path(_fp_dir) / "archive_memory_index.json"
+        assert idxp.exists()
         assert any(_world_note_plain(x) == "[Test] ancient note" for x in arch.get("world_notes", []))
         assert any(isinstance(x, dict) and x.get("text") == "old headline" for x in arch.get("news_feed", []))
+        mem_hits = recall_archive_memories("ancient headline", archive_path=_ap, limit=3)
+        assert isinstance(mem_hits, list)
+        assert any("ancient note" in str(h.get("text", "")) or "headline" in str(h.get("text", "")) for h in mem_hits)
         wn = st_fp.get("world_notes") or []
         nf = (st_fp.get("world", {}) or {}).get("news_feed") or []
         assert len(wn) <= max_ent and len(nf) <= max_ent
@@ -5695,6 +5701,26 @@ def _smoke() -> None:
         arch2 = json.loads(_ap2.read_text(encoding="utf-8"))
         assert len(arch2.get("world_notes", [])) >= 8
         assert arch2.get("last_pruned_at_utc", "").startswith("20")
+    # memory_rag fallback path: works even when index sidecar is absent/corrupt.
+    with tempfile.TemporaryDirectory() as _rag_fb_dir:
+        _ap_fb = Path(_rag_fb_dir) / "archive.json"
+        _ap_fb.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "world_notes": [
+                        {"day": 3, "text": "You bribed the dock guard at midnight."},
+                        {"day": 22, "text": "Canary Wharf server breach exposed your alias."},
+                    ],
+                    "news_feed": [{"day": 23, "text": "Police deploy extra scanners near Canary Wharf", "source": "broadcast"}],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        _hits_fb = recall_archive_memories("scanner canary wharf", archive_path=_ap_fb, limit=3)
+        assert isinstance(_hits_fb, list) and _hits_fb
+        assert any("Canary Wharf" in str(h.get("text", "")) or "scanner" in str(h.get("text", "")).lower() for h in _hits_fb)
 
     # trim_feed_archive.py CLI (publish / housekeeping)
     with tempfile.TemporaryDirectory() as _trim_dir:
