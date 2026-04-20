@@ -31,6 +31,7 @@ from engine.core.ffci import (
     update_ffci_custom_streak,
 )
 from engine.core.pipeline import run_pipeline
+from engine.npc.npc_utility_ai import evaluate_npc_goals
 from engine.player.boot_economy import format_boot_economy_preview
 from engine.core.seeds import list_seed_names
 from engine.core.main_cli_imports import (
@@ -2562,7 +2563,26 @@ def main() -> None:
 
 
 async def game_loop_async(state: dict[str, Any]) -> None:
+    async def _process_pending_utility_ai() -> None:
+        world = state.setdefault("world", {})
+        if not isinstance(world, dict):
+            return
+        try:
+            pend_day = int(world.get("pending_utility_ai_day", 0) or 0)
+        except Exception:
+            pend_day = 0
+        if pend_day <= 0:
+            return
+        try:
+            await evaluate_npc_goals(state, batch_size=50)
+        except Exception as _omni_sw_utility_ai_async:
+            log_swallowed_exception("main.py:utility_ai_async", _omni_sw_utility_ai_async)
+        finally:
+            if int(world.get("pending_utility_ai_day", 0) or 0) == pend_day:
+                world["pending_utility_ai_day"] = 0
+
     while True:
+        await _process_pending_utility_ai()
         render_monitor(state)
         cmd_raw = _expand_alias(await _ainput_line("> "))
         cmd = sanitize_player_command_text(cmd_raw)

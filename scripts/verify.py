@@ -4,6 +4,7 @@ Smoke + compile check. Run from repo root: python scripts/verify.py
 
 from __future__ import annotations
 
+import asyncio
 import compileall
 import copy
 import hashlib
@@ -343,11 +344,11 @@ def _smoke() -> None:
         "surprise": 10,
     }
     st_ut.setdefault("meta", {})["day"] = 9
-    u0 = evaluate_npc_goals(st_ut)
+    u0 = asyncio.run(evaluate_npc_goals(st_ut))
     assert isinstance(u0, dict) and int(u0.get("evaluated", 0) or 0) >= 1
     un = (st_ut.get("npcs", {}).get("UtilNPC", {}) or {}).get("utility_needs")
     assert isinstance(un, dict) and "financial" in un
-    u1 = evaluate_npc_goals(st_ut)
+    u1 = asyncio.run(evaluate_npc_goals(st_ut))
     assert int(u1.get("skipped", 0) or 0) == 1
 
     st_job = initialize_state({"name": "UjUtil", "location": "london", "year": "2025"}, seed_pack="minimal")
@@ -367,7 +368,7 @@ def _smoke() -> None:
         "utility_needs": {"financial": 93, "security": 8, "social": 9},
     }
     st_job.setdefault("world", {}).pop("last_utility_ai_day", None)
-    u_job = evaluate_npc_goals(st_job)
+    u_job = asyncio.run(evaluate_npc_goals(st_job))
     assert int(u_job.get("seek_job", 0) or 0) >= 1
     ag_j = (st_job.get("npcs", {}).get("JobNPC", {}) or {}).get("w2_agenda", {})
     assert isinstance(ag_j, dict) and str(ag_j.get("daily_goal", "") or "") == "earn_money"

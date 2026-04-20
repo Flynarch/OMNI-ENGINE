@@ -17,7 +17,6 @@ from engine.core.trace import apply_trace_travel_friction, get_trace_tier
 from engine.npc.dead_npc import cleanup_dead_npcs
 from engine.npc.memory import process_memory_decay
 from engine.npc.npc_agenda import tick_npc_agendas_daily
-from engine.npc.npc_utility_ai import evaluate_npc_goals
 from engine.npc.npcs import apply_beliefs_from_ripple
 from engine.player.medical_bio import tick_medical_daily
 from engine.social.informants import maybe_queue_informant_tip
@@ -1141,10 +1140,10 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                 except Exception as _omni_sw_1109:
                     log_swallowed_exception('engine/world/timers.py:1109', _omni_sw_1109)
                 try:
-
-                    evaluate_npc_goals(state)
+                    # Utility AI evaluation is async/batched; mark pending and let async main loop process it.
+                    world["pending_utility_ai_day"] = int(cur_day)
                 except Exception as _omni_sw_utility_ai:
-                    log_swallowed_exception("engine/world/timers.py:utility_ai", _omni_sw_utility_ai)
+                    log_swallowed_exception("engine/world/timers.py:utility_ai_pending", _omni_sw_utility_ai)
                 try:
 
                     tick_medical_daily(state, day=int(cur_day))

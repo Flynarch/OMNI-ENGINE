@@ -7,6 +7,7 @@ existing ripples + world_notes (no LLM).
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from typing import Any
 
@@ -297,8 +298,8 @@ def _apply_action_contact_player(
     )
 
 
-def evaluate_npc_goals(state: dict[str, Any]) -> dict[str, int]:
-    """Run once per calendar day (from timers). Independent NPC goal resolution."""
+async def evaluate_npc_goals(state: dict[str, Any], *, batch_size: int = 50) -> dict[str, int]:
+    """Run once per calendar day. Batched + cooperative to avoid blocking the async game loop."""
     world = state.setdefault("world", {})
     meta = state.get("meta", {}) or {}
     day = int(meta.get("day", 1) or 1)
@@ -329,8 +330,10 @@ def evaluate_npc_goals(state: dict[str, Any]) -> dict[str, int]:
     actions = 0
 
     names = sorted([str(n) for n in npcs.keys() if isinstance(n, str)])[:96]
+    bs = max(1, int(batch_size or 50))
+    processed = 0
 
-    for nm in names:
+    for i, nm in enumerate(names):
         npc = npcs.get(nm)
         if not isinstance(npc, dict):
             continue
@@ -350,33 +353,36 @@ def evaluate_npc_goals(state: dict[str, Any]) -> dict[str, int]:
         up = npc.get("utility_planner") or {}
         if int(up.get("cooldown_until_day", 0) or 0) > int(day):
             stats["evaluated"] += 1
+            processed += 1
+            if processed % bs == 0:
+                await asyncio.sleep(0)
             continue
 
         act, _score = _pick_best_action(needs, name=nm, day=day, seed=seed)
         stats["evaluated"] += 1
 
-        if act == "none" or actions >= max_actions:
-            continue
-
-        try:
-            if act == "seek_job":
-                _apply_action_seek_job(state, nm, npc, needs, day=day)
-                stats["seek_job"] += 1
-            elif act == "move_district":
-                _apply_action_move_district(state, nm, npc, needs, day=day, seed=seed)
-                stats["move_district"] += 1
-            elif act == "contact_player":
-                _apply_action_contact_player(state, nm, npc, needs, day=day)
-                stats["contact_player"] += 1
-        except Exception as e:
-            log_swallowed_exception("engine/npc/npc_utility_ai.py:action", e)
-            continue
-
-        actions += 1
-        up = npc.setdefault("utility_planner", {})
-        up["cooldown_until_day"] = int(day) + 1 + (_h("cd", seed, nm, day) % 2)
-        up["last_eval_day"] = int(day)
-        npcs[nm] = npc
+        if act != "none" and actions < max_actions:
+            try:
+                if act == "seek_job":
+                    _apply_action_seek_job(state, nm, npc, needs, day=day)
+                    stats["seek_job"] += 1
+                elif act == "move_district":
+                    _apply_action_move_district(state, nm, npc, needs, day=day, seed=seed)
+                    stats["move_district"] += 1
+                elif act == "contact_player":
+                    _apply_action_contact_player(state, nm, npc, needs, day=day)
+                    stats["contact_player"] += 1
+            except Exception as e:
+                log_swallowed_exception("engine/npc/npc_utility_ai.py:action", e)
+            else:
+                actions += 1
+                up = npc.setdefault("utility_planner", {})
+                up["cooldown_until_day"] = int(day) + 1 + (_h("cd", seed, nm, day) % 2)
+                up["last_eval_day"] = int(day)
+                npcs[nm] = npc
+        processed += 1
+        if (i + 1) % bs == 0:
+            await asyncio.sleep(0)
 
     state["npcs"] = npcs
     state["world"] = world
