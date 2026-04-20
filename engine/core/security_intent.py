@@ -16,12 +16,36 @@ _INJECTION_PATTERNS = (
     re.compile(r"jailbreak", re.I),
 )
 
+_INJECTION_NEUTRALIZE_RULES = (
+    # Prompt-role tags and obvious instruction override phrases.
+    (re.compile(r"(?i)\[\s*(system|developer|assistant|user)\s*\]"), "[role_redacted]"),
+    (re.compile(r"(?i)<\s*/?\s*(system|assistant|developer|user|instruction|prompt)\s*>"), " "),
+    (re.compile(r"(?i)\bignore\s+(all\s+)?(previous|prior)\s+instructions?\b"), "[instruction_override_redacted]"),
+    (re.compile(r"(?i)\babaikan\s+instruksi\s+sebelumnya\b"), "[instruction_override_redacted]"),
+    # Direct state manipulation requests commonly used in prompt injection.
+    (re.compile(r"(?i)\b(set|grant|give|add|inject)\s+(me\s+)?(\$|rp|idr|usd|money|cash|bank|credits?)\b"), "[economy_mutation_redacted]"),
+    (re.compile(r"(?i)\b(set|max|boost|increase)\s+(my\s+)?(stat|stats|hp|health|trace|heat|reputation|xp|level)\b"), "[stat_mutation_redacted]"),
+)
+
 
 def sanitize_player_command_text(cmd: str) -> str:
-    t = str(cmd or "").replace("\x00", "")
+    return sanitize_player_input(cmd)
+
+
+def sanitize_player_input(text: str) -> str:
+    """Best-effort prompt-injection neutralizer for player text before LLM intent resolution."""
+    t = str(text or "").replace("\x00", "")
     if len(t) > 8000:
         t = t[:8000]
-    return t.strip()
+    t = t.strip()
+    for pat, repl in _INJECTION_NEUTRALIZE_RULES:
+        try:
+            t = pat.sub(repl, t)
+        except Exception:
+            continue
+    # Collapse repeated whitespace after replacements so parser paths remain stable.
+    t = re.sub(r"\s{2,}", " ", t).strip()
+    return t
 
 
 def security_flags_for_intent_input(player_input: str) -> Dict[str, Any]:
