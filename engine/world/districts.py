@@ -19,6 +19,25 @@ from typing import Any
 
 _LOC_DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "locations"
 
+# #region agent log
+def _dbg(hypothesisId: str, location: str, message: str, data: dict[str, Any] | None = None, runId: str = "pre-fix") -> None:
+    try:
+        payload = {
+            "sessionId": "014e33",
+            "runId": str(runId),
+            "hypothesisId": str(hypothesisId),
+            "location": str(location),
+            "message": str(message),
+            "data": data or {},
+            "timestamp": __import__("time").time_ns() // 1_000_000,
+        }
+        with open("debug-014e33.log", "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        return
+
+# #endregion
+
 
 def travel_is_district_mode(action_ctx: dict[str, Any]) -> bool:
     """True for TRAVELTO-style moves; W2-8 intercity gates use natural travel only."""
@@ -113,10 +132,22 @@ def _load_district_override_bundle(city_key: str) -> tuple[list[dict[str, Any]],
     path = _LOC_DATA_DIR / f"{ck}_districts.json"
     if not path.exists():
         return None
+    _dbg(
+        "A",
+        "engine/world/districts.py:_load_district_override_bundle",
+        "override bundle found",
+        {"city_key": ck, "path": str(path)},
+    )
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
     except Exception as e:
         log_swallowed_exception("engine/world/districts.py:load_override", e)
+        _dbg(
+            "A",
+            "engine/world/districts.py:_load_district_override_bundle",
+            "override bundle json load failed",
+            {"city_key": ck, "path": str(path), "err": repr(e)},
+        )
         return None
     if not isinstance(doc, dict):
         return None
@@ -217,7 +248,19 @@ def district_travel_minutes(state: dict[str, Any], city: str, from_id: str, to_i
     if adj and a in adj and b in adj:
         sp = _shortest_path_minutes(adj, a, b)
         if sp:
+            _dbg(
+                "C",
+                "engine/world/districts.py:district_travel_minutes",
+                "graph shortest path used",
+                {"city": fk, "from": a, "to": b, "minutes": int(sp[1]), "path": sp[0], "adj_nodes": len(adj)},
+            )
             return max(1, int(sp[1]))
+        _dbg(
+            "C",
+            "engine/world/districts.py:district_travel_minutes",
+            "graph present but no path",
+            {"city": fk, "from": a, "to": b, "adj_nodes": len(adj)},
+        )
     fa = get_district(state, fk, a)
     fb = get_district(state, fk, b)
     try:
@@ -225,6 +268,12 @@ def district_travel_minutes(state: dict[str, Any], city: str, from_id: str, to_i
         dfb = int((fb or {}).get("travel_time_from_center", 0) or 0)
     except Exception:
         dfa, dfb = 0, 0
+    _dbg(
+        "C",
+        "engine/world/districts.py:district_travel_minutes",
+        "fallback radial diff used",
+        {"city": fk, "from": a, "to": b, "dfa": dfa, "dfb": dfb, "minutes": max(5, abs(dfa - dfb) * 2), "adj_nodes": len(adj) if isinstance(adj, dict) else 0},
+    )
     return max(5, abs(dfa - dfb) * 2)
 
 
@@ -239,7 +288,25 @@ def district_path_ids(state: dict[str, Any], city: str, from_id: str, to_id: str
     if adj and a in adj and b in adj:
         sp = _shortest_path_minutes(adj, a, b)
         if sp:
+            _dbg(
+                "D",
+                "engine/world/districts.py:district_path_ids",
+                "graph path used",
+                {"city": fk, "from": a, "to": b, "path": sp[0], "minutes": int(sp[1])},
+            )
             return list(sp[0])
+        _dbg(
+            "D",
+            "engine/world/districts.py:district_path_ids",
+            "graph present but no path",
+            {"city": fk, "from": a, "to": b, "adj_nodes": len(adj)},
+        )
+    _dbg(
+        "D",
+        "engine/world/districts.py:district_path_ids",
+        "fallback direct path used",
+        {"city": fk, "from": a, "to": b, "adj_nodes": len(adj) if isinstance(adj, dict) else 0},
+    )
     return [a, b]
 
 
@@ -342,6 +409,12 @@ def ensure_city_districts(state: dict[str, Any], city: str, country: str | None 
                     wg = {}
                     world["district_graphs"] = wg
                 wg[city_key] = adj_ov
+            _dbg(
+                "B",
+                "engine/world/districts.py:ensure_city_districts",
+                "override bundle applied",
+                {"city_key": city_key, "districts": len(districts_ov), "adj_nodes": len(adj_ov) if isinstance(adj_ov, dict) else 0},
+            )
             return districts_ov
 
     meta = state.get("meta", {}) or {}

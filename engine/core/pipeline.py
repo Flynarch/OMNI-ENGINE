@@ -28,6 +28,26 @@ from engine.world.timers import update_timers
 from engine.world.weather import travel_minutes_modifier
 from engine.world.world import world_tick
 
+# #region agent log
+def _dbg(hypothesisId: str, location: str, message: str, data: dict[str, Any] | None = None, runId: str = "pre-fix") -> None:
+    try:
+        import json as _json
+        payload = {
+            "sessionId": "014e33",
+            "runId": str(runId),
+            "hypothesisId": str(hypothesisId),
+            "location": str(location),
+            "message": str(message),
+            "data": data or {},
+            "timestamp": __import__("time").time_ns() // 1_000_000,
+        }
+        with open("debug-014e33.log", "a", encoding="utf-8") as f:
+            f.write(_json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        return
+
+# #endregion
+
 
 def _is_travelto_ctx(action_ctx: dict[str, Any]) -> bool:
     if not isinstance(action_ctx, dict):
@@ -62,6 +82,12 @@ def _roll_travelto(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[st
             log_swallowed_exception('engine/core/pipeline.py:51', _omni_sw_51)
             dist_diff = 0
         travel_minutes = max(5, dist_diff * 2)
+    _dbg(
+        "C",
+        "engine/core/pipeline.py:_roll_travelto",
+        "computed travel minutes",
+        {"city": city, "from": cur_id, "to": target, "travel_minutes": int(travel_minutes)},
+    )
 
     try:
         meta = state.get("meta", {}) or {}
@@ -79,6 +105,12 @@ def _roll_travelto(state: dict[str, Any], action_ctx: dict[str, Any]) -> dict[st
             danger = max(int(to.get("crime_risk", 3) or 3), int(to.get("danger_level", danger) or danger))
         except Exception:
             pass
+    _dbg(
+        "E",
+        "engine/core/pipeline.py:_roll_travelto",
+        "computed danger level",
+        {"city": city, "to": target, "crime_risk": int(to.get("crime_risk", 3) or 3), "danger_level": int(max(1, min(5, danger)))},
+    )
     return {
         "ok": True,
         "from": cur_id,
@@ -157,10 +189,18 @@ def _post_travelto(state: dict[str, Any], action_ctx: dict[str, Any], travel_pkg
                 log_swallowed_exception('engine/core/pipeline.py:144', _omni_sw_144)
         try:
             path_ids = district_path_ids(state, city, str(travel_pkg.get("from", "") or ""), target)
+            bump_count = 0
             for nid in path_ids:
                 prow = get_district(state, city, nid)
                 if isinstance(prow, dict) and int(prow.get("police_presence", 0) or 0) >= 4:
                     bump_heat(state, loc=city, district=str(nid), delta=1, reason="district_transit", ttl_days=3)
+                    bump_count += 1
+            _dbg(
+                "F",
+                "engine/core/pipeline.py:_post_travelto",
+                "route heat bumps applied",
+                {"city": city, "from": str(travel_pkg.get("from", "") or ""), "to": target, "path": path_ids, "bump_count": int(bump_count)},
+            )
         except Exception as _omni_sw_pathheat:
             log_swallowed_exception("engine/core/pipeline.py:path_heat", _omni_sw_pathheat)
         _ = current
