@@ -45,6 +45,7 @@ def test_master_e2e_pipeline() -> None:
 
 def _smoke() -> None:
     from ai.parser import (
+        filter_narration_for_player_display,
         SECTION_TAGS,
         parse_memory_hash,
         validate_ai_sections,
@@ -326,6 +327,70 @@ def _smoke() -> None:
     ag0 = (st_ag.get("npcs", {}).get("AgNPC", {}) or {}).get("w2_agenda", {})
     assert isinstance(ag0, dict) and str(ag0.get("daily_goal", "") or "") in ("earn_money", "spread_influence", "reduce_heat")
 
+    from engine.npc.npc_utility_ai import evaluate_npc_goals
+
+    st_ut = initialize_state({"name": "NPCUtil", "location": "london", "year": "2025"}, seed_pack="minimal")
+    dd0 = default_district_for_city(st_ut, "london") or "downtown"
+    st_ut.setdefault("player", {})["district"] = dd0
+    st_ut.setdefault("npcs", {})["UtilNPC"] = {
+        "alive": True,
+        "current_location": "london",
+        "home_location": "london",
+        "district": dd0,
+        "role": "civilian",
+        "belief_summary": {"suspicion": 72, "respect": 28},
+        "fear": 55,
+        "surprise": 10,
+    }
+    st_ut.setdefault("meta", {})["day"] = 9
+    u0 = evaluate_npc_goals(st_ut)
+    assert isinstance(u0, dict) and int(u0.get("evaluated", 0) or 0) >= 1
+    un = (st_ut.get("npcs", {}).get("UtilNPC", {}) or {}).get("utility_needs")
+    assert isinstance(un, dict) and "financial" in un
+    u1 = evaluate_npc_goals(st_ut)
+    assert int(u1.get("skipped", 0) or 0) == 1
+
+    st_job = initialize_state({"name": "UjUtil", "location": "london", "year": "2025"}, seed_pack="minimal")
+    dd_j = default_district_for_city(st_job, "london") or "downtown"
+    st_job.setdefault("meta", {})["day"] = 4
+    st_job.setdefault("player", {})["district"] = dd_j
+    st_job.setdefault("npcs", {})["JobNPC"] = {
+        "alive": True,
+        "name": "Job Test",
+        "current_location": "london",
+        "home_location": "london",
+        "district": dd_j,
+        "role": "civilian",
+        "belief_summary": {"suspicion": 5, "respect": 50},
+        "fear": 5,
+        "surprise": 0,
+        "utility_needs": {"financial": 93, "security": 8, "social": 9},
+    }
+    st_job.setdefault("world", {}).pop("last_utility_ai_day", None)
+    u_job = evaluate_npc_goals(st_job)
+    assert int(u_job.get("seek_job", 0) or 0) >= 1
+    ag_j = (st_job.get("npcs", {}).get("JobNPC", {}) or {}).get("w2_agenda", {})
+    assert isinstance(ag_j, dict) and str(ag_j.get("daily_goal", "") or "") == "earn_money"
+
+    from engine.systems.smartphone import ensure_smartphone, notify_npc_utility_contact_surfaced
+
+    st_n = initialize_state({"name": "PhMsg", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_n.setdefault("npcs", {})["PingNPC"] = {"alive": True, "name": "Ping", "current_location": "london"}
+    ensure_smartphone(st_n)
+    n_before = len((st_n.get("player", {}).get("smartphone", {}) or {}).get("messages", []) or [])
+    notify_npc_utility_contact_surfaced(
+        st_n,
+        {"kind": "npc_utility_contact", "meta": {"npc": "PingNPC"}, "dropped_by_propagation": False},
+    )
+    msgs_n = (st_n.get("player", {}).get("smartphone", {}) or {}).get("messages", []) or []
+    assert len(msgs_n) == n_before + 1
+    assert str(msgs_n[-1].get("kind", "") or "") == "npc_utility_contact"
+    notify_npc_utility_contact_surfaced(
+        st_n,
+        {"kind": "npc_utility_contact", "meta": {"npc": "PingNPC"}, "dropped_by_propagation": True},
+    )
+    assert len((st_n.get("player", {}).get("smartphone", {}) or {}).get("messages", []) or []) == n_before + 1
+
     st_map = initialize_state({"name": "MapW4", "location": "london", "year": "2025"}, seed_pack="minimal")
     ensure_city_districts(st_map, "london")
     st_map.setdefault("player", {})["district"] = default_district_for_city(st_map, "london") or "downtown"
@@ -529,6 +594,25 @@ def _smoke() -> None:
     st_tr_off.setdefault("economy", {})["last_economic_cycle_day"] = 3
     update_economy(st_tr_off, {})
     assert int(st_tr_off["trace"]["trace_pct"]) == pct_off
+
+    st_ps = initialize_state({"name": "PhoneStatus", "location": "jakarta", "year": "2025"}, seed_pack="minimal")
+    from engine.systems.smartphone import notify_npc_utility_contact_surfaced
+    ensure_smartphone(st_ps)
+    st_ps.setdefault("npcs", {})["CallerNPC"] = {"alive": True, "name": "Caller"}
+    notify_npc_utility_contact_surfaced(
+        st_ps,
+        {"kind": "npc_utility_contact", "meta": {"npc": "CallerNPC"}, "dropped_by_propagation": False},
+    )
+    ctx_status = {
+        "smartphone_op": {"op": "power", "value": "status"},
+        "normalized_input": "phone status",
+        "action_type": "instant",
+        "domain": "other",
+        "intent_note": "smartphone",
+    }
+    run_pipeline(st_ps, ctx_status)
+    sr_status = ctx_status.get("smartphone_result") or {}
+    assert "contact:Caller" in str(sr_status.get("msg", "") or "")
 
     # Sleep intent detection (default and explicit hours).
     ctx_sleep_def = parse_action_intent("aku mau tidur")
@@ -2558,6 +2642,25 @@ def _smoke() -> None:
     assert not validate_memory_hash_delimiters(valid)
     mh = parse_memory_hash(valid)
     assert "raw" in mh
+    leaked = (
+        "<OMNI_MONITOR>visible</OMNI_MONITOR>"
+        "<INTERNAL_LOGIC>hide1</INTERNAL_LOGIC>"
+        "<SENSORY_FEED>hide2</SENSORY_FEED>"
+        "<INTERACTION_NODE>hide3</INTERACTION_NODE>"
+        "<EVENT_LOG>hide4</EVENT_LOG>"
+        "<MEMORY_HASH>hide5</MEMORY_HASH>"
+    )
+    fd = filter_narration_for_player_display(leaked)
+    assert "hide" not in fd and "visible" in fd and "<" not in fd
+    # Attribute-bearing open tags must not leak section bodies or angle brackets.
+    attr_leak = (
+        '<OMNI_MONITOR tone="x">visible</OMNI_MONITOR>'
+        '<INTERNAL_LOGIC a="1">hideA</INTERNAL_LOGIC>'
+        '<SENSORY_FEED>hideB</SENSORY_FEED>'
+        '<INTERACTION_NODE n="1">hideC</INTERACTION_NODE>'
+    )
+    fd2 = filter_narration_for_player_display(attr_leak)
+    assert "hide" not in fd2 and "visible" in fd2 and "<" not in fd2
 
     # Daily burn once per sim day (not only when time_min==0); bank floor 0 after shortfall → debt.
     burn_st = {
@@ -2730,6 +2833,45 @@ def _smoke() -> None:
     update_timers(st_sd, {"action_type": "instant", "instant_minutes": 1})
     # No new hops should have been queued.
     assert not any(isinstance(e, dict) and e.get("event_type") == "social_diffusion_hop" and not bool(e.get("triggered")) for e in (st_sd.get("pending_events") or []))
+
+    # NPC-to-NPC rumor diffusion uses location/faction neighbors (not player-edge stubs).
+    from engine.social.social_diffusion import npc_social_neighbor_ids, propagate_rumor, record_player_info
+
+    st_nnd = initialize_state({"name": "NpcDiff", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_nnd.setdefault("meta", {}).update({"day": 3, "time_min": 10 * 60, "turn": 5})
+    st_nnd.setdefault("npcs", {})["Ax"] = {
+        "name": "Ax",
+        "alive": True,
+        "hp": 100,
+        "current_location": "london",
+        "home_location": "london",
+        "affiliation": "corp",
+    }
+    st_nnd.setdefault("npcs", {})["Bx"] = {
+        "name": "Bx",
+        "alive": True,
+        "hp": 100,
+        "current_location": "london",
+        "home_location": "london",
+        "affiliation": "freelance",
+    }
+    st_nnd.setdefault("npcs", {})["Cx"] = {
+        "name": "Cx",
+        "alive": True,
+        "hp": 100,
+        "current_location": "paris",
+        "home_location": "paris",
+        "affiliation": "corp",
+    }
+    nbr = npc_social_neighbor_ids(st_nnd, "Ax")
+    assert "Bx" in nbr and "Cx" in nbr
+    record_player_info(st_nnd, "Ax", "hack", "breach node quiet", confidence=0.88, apply_trust_delta=True)
+    hops = propagate_rumor(st_nnd, "Ax", "breach node quiet", "hack", hop=0)
+    assert len(hops) == 2
+    tos = {h["to"] for h in hops}
+    assert tos == {"Bx", "Cx"}
+    conf_b = (st_nnd.get("world", {}).get("social_memory", {}).get("Bx", {}).get("known_categories", {}).get("hack", {}) or {}).get("confidence")
+    assert conf_b is not None and float(conf_b) < 0.88
 
     # Ripple contacts gate: contacts + origin_faction should eventually surface (indirect leak) rather than drop.
     st_rp = initialize_state({"name": "RippleGate", "location": "london", "year": "2025"}, seed_pack="minimal")
@@ -3751,6 +3893,162 @@ def _smoke() -> None:
     surf = st_order.get("surfacing_ripples_this_turn", []) or []
     assert any(isinstance(rp, dict) and str(rp.get("kind", "")) == "test_order" for rp in surf)
 
+    # Surfaced ripple follow-ups: utility contact -> npc_offer, police pressure -> trace quest, corp lockdown -> corp quest.
+    st_rf = initialize_state({"name": "RippleFollow", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_rf.setdefault("meta", {}).update({"day": 2, "time_min": 8 * 60})
+    st_rf.setdefault("trace", {})["trace_pct"] = 44
+    st_rf.setdefault("npcs", {})["HookNPC"] = {
+        "alive": True,
+        "name": "HookNPC",
+        "role": "fixer",
+        "current_location": "london",
+        "home_location": "london",
+    }
+    st_rf["active_ripples"] = [
+        {
+            "kind": "npc_utility_contact",
+            "text": "HookNPC tries to contact you.",
+            "triggered_day": 2,
+            "surface_day": 2,
+            "surface_time": 8 * 60,
+            "surfaced": False,
+            "propagation": "local_witness",
+            "origin_location": "london",
+            "origin_faction": "civilian",
+            "witnesses": [],
+            "surface_attempts": 0,
+            "meta": {"npc": "HookNPC"},
+        },
+        {
+            "kind": "npc_report",
+            "text": "Someone filed a report.",
+            "triggered_day": 2,
+            "surface_day": 2,
+            "surface_time": 8 * 60,
+            "surfaced": False,
+            "propagation": "broadcast",
+            "origin_location": "london",
+            "origin_faction": "police",
+            "witnesses": [],
+            "surface_attempts": 0,
+            "impact": {"trace_delta": 2},
+        },
+        {
+            "kind": "corporate_lockdown",
+            "text": "Corporate access is tightening.",
+            "triggered_day": 2,
+            "surface_day": 2,
+            "surface_time": 8 * 60,
+            "surfaced": False,
+            "propagation": "broadcast",
+            "origin_location": "london",
+            "origin_faction": "corporate",
+            "witnesses": [],
+            "surface_attempts": 0,
+            "meta": {"location": "london"},
+        },
+        {
+            "kind": "quest_offer",
+            "text": "A black market courier job is circulating.",
+            "triggered_day": 2,
+            "surface_day": 2,
+            "surface_time": 8 * 60,
+            "surfaced": False,
+            "propagation": "local_witness",
+            "origin_location": "london",
+            "origin_faction": "black_market",
+            "witnesses": [],
+            "surface_attempts": 0,
+            "meta": {"bm_power": 72, "bm_stability": 48},
+            "tags": ["quest_hook", "black_market"],
+        },
+    ]
+    update_timers(st_rf, {"action_type": "instant", "instant_minutes": 0})
+    pe_rf = st_rf.get("pending_events", []) or []
+    assert any(
+        isinstance(ev, dict)
+        and str(ev.get("event_type", "") or "") == "npc_offer"
+        and str(((ev.get("payload") if isinstance(ev.get("payload"), dict) else {}) or {}).get("npc", "") or "") == "HookNPC"
+        for ev in pe_rf
+    )
+    q_rf = st_rf.get("quests", {}) or {}
+    qa_rf = q_rf.get("active", []) if isinstance(q_rf, dict) else []
+    assert any(isinstance(q, dict) and str(q.get("kind", "") or "") == "trace_cleanup" for q in qa_rf)
+    assert any(isinstance(q, dict) and str(q.get("kind", "") or "") == "corp_infiltration" for q in qa_rf)
+
+    st_rf_bm = initialize_state({"name": "RippleFollowBM", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_rf_bm.setdefault("meta", {}).update({"day": 2, "time_min": 8 * 60})
+    st_rf_bm["active_ripples"] = [
+        {
+            "kind": "quest_offer",
+            "text": "A black market courier job is circulating.",
+            "triggered_day": 2,
+            "surface_day": 2,
+            "surface_time": 8 * 60,
+            "surfaced": False,
+            "propagation": "local_witness",
+            "origin_location": "london",
+            "origin_faction": "black_market",
+            "witnesses": [],
+            "surface_attempts": 0,
+            "meta": {"bm_power": 72, "bm_stability": 48},
+            "tags": ["quest_hook", "black_market"],
+        }
+    ]
+    update_timers(st_rf_bm, {"action_type": "instant", "instant_minutes": 0})
+    q_bm = st_rf_bm.get("quests", {}) or {}
+    qa_bm = q_bm.get("active", []) if isinstance(q_bm, dict) else []
+    assert any(isinstance(q, dict) and str(q.get("kind", "") or "") == "bm_delivery" for q in qa_bm)
+
+    # Pack schema guard: ripple followup rules require id/actions/matcher.
+    from engine.social.ripple_followups import validate_followup_rules_doc
+    from engine.systems.campaign_arcs import evaluate_arc_campaign_daily
+    from engine.systems.campaign_arcs import validate_campaign_pack
+
+    pack_rf = ROOT / "data" / "packs" / "core" / "ripple_followups.json"
+    doc_rf = json.loads(pack_rf.read_text(encoding="utf-8"))
+    errs_rf = validate_followup_rules_doc(doc_rf)
+    assert errs_rf == []
+    bad_rf = {
+        "followup_rules": [
+            {"id": "", "actions": ["quest_trace_cleanup"]},  # no id + no matcher
+            {"id": "x", "actions": []},  # empty actions
+            {"id": "ok", "actions": ["quest_corp_infiltration"], "match_kind": "corporate_lockdown"},
+        ]
+    }
+    errs_bad = validate_followup_rules_doc(bad_rf)
+    assert len(errs_bad) >= 2
+
+    # Arc campaign layer: deterministic milestones + soft ending, no hard lock.
+    st_arc = initialize_state({"name": "ArcTest", "location": "london", "year": "2025"}, seed_pack="minimal")
+    st_arc.setdefault("meta", {}).update({"day": 7, "time_min": 9 * 60})
+    st_arc.setdefault("economy", {})["cash"] = 4200
+    st_arc["economy"]["bank"] = 1300
+    st_arc.setdefault("trace", {})["trace_pct"] = 35
+    st_arc.setdefault("world", {}).setdefault("faction_statuses", {})["police"] = "aware"
+    st_arc["world"].setdefault("factions", {})["corporate"] = {"power": 62, "stability": 44}
+    st_arc["world"].setdefault("ripple_tag_seen", {})["economy"] = 6
+    r_arc = evaluate_arc_campaign_daily(st_arc, day=7)
+    assert isinstance(r_arc, dict)
+    ac = (st_arc.get("world", {}) or {}).get("arc_campaign", {}) or {}
+    ms = ac.get("milestones", {}) if isinstance(ac, dict) else {}
+    assert isinstance(ms, dict)
+    assert all(
+        isinstance(ms.get(k), dict) and bool((ms.get(k) or {}).get("completed"))
+        for k in ("capital_buffer", "heat_window", "faction_leverage")
+    )
+    assert str(ac.get("ending_state", "") or "") in ("clean_ascendancy", "balanced_operator", "hotshot_survivor")
+    sup = ac.get("ripple_tag_suppress", {}) if isinstance(ac, dict) else {}
+    assert isinstance(sup, dict) and int(sup.get("quest_hook", 0) or 0) >= 7
+    q_arc = st_arc.get("quests", {}) or {}
+    qa_arc = q_arc.get("active", []) if isinstance(q_arc, dict) else []
+    assert any(isinstance(q, dict) and str(q.get("kind", "") or "") == "trace_cleanup" for q in qa_arc)
+    r_arc2 = evaluate_arc_campaign_daily(st_arc, day=7)
+    assert int(r_arc2.get("skipped", 0) or 0) == 1
+
+    doc_arc = json.loads((ROOT / "data" / "packs" / "core" / "campaign_arcs.json").read_text(encoding="utf-8"))
+    assert validate_campaign_pack(doc_arc) == []
+
     # action_ctx normalizer shadow contract.
     nctx = normalize_action_ctx({"domain": "combat", "action_type": "instant", "time_cost_min": 3})
     assert nctx.get("action_type") == "combat"
@@ -4330,9 +4628,22 @@ def _smoke() -> None:
     )
     assert "registry_hint_alignment=mismatch" in _acx_mis and "registry_hint_mismatch=True" in _acx_mis
 
-    _tp = build_turn_package(st_nc2, "test", {"outcome": "Success", "roll": 10, "mods": [], "net_threshold": 50}, {})
+    _tp = build_turn_package(
+        st_nc2,
+        "test",
+        {"outcome": "Success", "roll": 10, "mods": [], "net_threshold": 50},
+        {"action_type": "travel", "domain": "travel"},
+    )
     assert "Skills (engine):" in _tp or "Skill (engine):" in _tp
     assert "Weather (engine)" in _tp or "Cuaca (engine)" in _tp
+    _tp_combat = build_turn_package(
+        st_nc2,
+        "test",
+        {"outcome": "Success", "roll": 10, "mods": [], "net_threshold": 50},
+        {"action_type": "combat", "domain": "combat"},
+    )
+    assert "Weather (engine)" not in _tp_combat and "Cuaca (engine)" not in _tp_combat
+    assert "[REPUTATION]" not in _tp_combat
 
     # Bio: worst infection controls recovery block; shower intent resets hygiene clock; BAL-driven thresholds.
     from engine.player.bio import update_bio, update_hunger, update_mood
@@ -4755,7 +5066,7 @@ def _smoke() -> None:
         st_rep,
         "status",
         {"outcome": "Success", "roll": 55, "mods": [], "net_threshold": 50},
-        {},
+        {"domain": "social", "action_type": "talk"},
     )
     assert "[REPUTATION]" in pkg_rep
     assert "criminal: 78.0" in pkg_rep

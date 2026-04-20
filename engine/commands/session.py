@@ -5,6 +5,8 @@ from typing import Any, Callable
 import json
 import os
 
+from ai.parser import filter_narration_for_player_display
+
 
 def handle_session(
     state: dict[str, Any],
@@ -60,8 +62,10 @@ def handle_session(
         else:
             turn_package = "WORLD_BRIEF: rangkum dunia dari sudut pandang karakter pemain, maksimal ~400 kata, Bahasa Indonesia."
         try:
+            parts: list[str] = []
             for chunk in stream_response(build_system_prompt(state), turn_package):
-                stream_render(chunk)
+                parts.append(chunk)
+            console.print(filter_narration_for_player_display("".join(parts)))
             console.print()
         except Exception as _omni_sw_64:
             log_swallowed_exception('engine/commands/session.py:64', _omni_sw_64)

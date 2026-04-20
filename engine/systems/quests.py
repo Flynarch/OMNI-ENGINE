@@ -209,11 +209,25 @@ def create_black_market_delivery_quest(state: dict[str, Any], *, origin_location
     return quest
 
 
+# Only offer trace_cleanup when identity pressure is meaningfully elevated (avoids day-1 spam from ripples).
+TRACE_CLEANUP_MIN_TRACE_PCT = 20
+
+
 def create_trace_cleanup_quest(state: dict[str, Any], *, origin_location: str, trace_snapshot: int) -> dict[str, Any]:
     """Quest chain: reduce trace pressure (cover tracks + lay low)."""
     meta = state.get("meta", {}) or {}
     day = int(meta.get("day", 1) or 1)
     origin = str(origin_location or "").strip().lower() or str(state.get("player", {}).get("location", "") or "").strip().lower()
+    try:
+        tp_now = int(((state.get("trace", {}) or {}).get("trace_pct", 0) or 0))
+    except Exception:
+        tp_now = 0
+    try:
+        snap = int(trace_snapshot or 0)
+    except Exception:
+        snap = 0
+    if max(tp_now, snap) < TRACE_CLEANUP_MIN_TRACE_PCT:
+        return {}
     if _has_active_quest(state, "trace_cleanup", origin_location=origin):
         return {}
     qid = _new_quest_id(state)

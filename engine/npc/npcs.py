@@ -16,6 +16,7 @@ from engine.npc.memory import (
 from engine.npc.npc_emotions import decay_npc_emotions
 from engine.npc.npc_rumor_system import propagate_reputation
 from engine.npc.relationship import get_relationship
+from engine.social.social_diffusion import record_player_info
 from engine.world.heat import bump_heat, bump_suspicion
 
 
@@ -721,6 +722,32 @@ def apply_beliefs_from_ripple(state: dict[str, Any], rp: dict[str, Any]) -> None
             confidence=confidence,
             bias=bias,
         )
+
+        # Sync into social_memory (NPC-to-NPC diffusion seeds) without double-applying trust deltas.
+        topic_to_cat = {
+            "player_hacking": "hack",
+            "player_trace": "stealth",
+            "world_conflict": "combat",
+            "world_rumor": "social",
+        }
+        icat = topic_to_cat.get(topic, "social")
+        try:
+            mix = float(confidence) + float(bias) * 0.12
+        except Exception as _omni_sw_724b:
+            log_swallowed_exception("engine/npc/npcs.py:724b", _omni_sw_724b)
+            mix = float(confidence)
+        mix = max(0.06, min(0.97, mix))
+        try:
+            record_player_info(
+                state,
+                name,
+                icat,
+                text.replace("\n", " ").strip()[:400],
+                confidence=mix,
+                apply_trust_delta=False,
+            )
+        except Exception as _omni_sw_724c:
+            log_swallowed_exception("engine/npc/npcs.py:724c", _omni_sw_724c)
 
         # Optional: rumor spreading (rate-limited, contact-only).
         if npc.get("is_contact") is True and topic in ("player_hacking", "player_trace") and confidence >= 0.65:

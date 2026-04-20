@@ -137,6 +137,66 @@ def _append_message(
     del msgs[: max(0, len(msgs) - 48)]
 
 
+def _smartphone_status_summary(sp: dict[str, Any]) -> str:
+    """Compact phone status summary shared by HUD and PHONE STATUS."""
+    on = bool(sp.get("phone_on", True))
+    num = str(sp.get("number", "") or "").strip()
+    tail = num[-4:] if len(num) >= 4 else num
+    bits = [f"{'ON' if on else 'OFF'}" + (f" ···{tail}" if tail else "")]
+    msgs = sp.get("messages")
+    if isinstance(msgs, list) and msgs:
+        recent = [m for m in msgs[-8:] if isinstance(m, dict)]
+        incoming = [m for m in recent if str(m.get("dir", "") or "") == "in"]
+        utility_in = [m for m in incoming if str(m.get("kind", "") or "").strip().lower() == "npc_utility_contact"]
+        if utility_in:
+            last_peer = str(utility_in[-1].get("peer", "NPC") or "NPC").strip()[:16]
+            bits.append(f"contact:{last_peer}")
+        elif incoming:
+            bits.append(f"inbox:{len(incoming)}")
+    return " | ".join([b for b in bits if b])
+
+
+def notify_npc_utility_contact_surfaced(state: dict[str, Any], rp: dict[str, Any]) -> None:
+    """Mirror surfaced utility-AI contact ripples into the smartphone inbox (deterministic)."""
+    if not isinstance(rp, dict):
+        return
+    if rp.get("dropped_by_propagation"):
+        return
+    kind = str(rp.get("kind", "") or "").strip().lower()
+    if kind != "npc_utility_contact":
+        return
+    flags = state.get("flags", {}) or {}
+    if not bool(flags.get("npc_utility_contact_notify_enabled", True)):
+        return
+    meta = rp.get("meta") if isinstance(rp.get("meta"), dict) else {}
+    npc_id = str(meta.get("npc", "") or "").strip()
+    display = npc_id
+    npcs = state.get("npcs", {}) or {}
+    if npc_id and isinstance(npcs, dict):
+        row = npcs.get(npc_id)
+        if isinstance(row, dict):
+            display = str(row.get("name", npc_id) or npc_id).strip() or npc_id
+    meta_d = state.get("meta", {}) or {}
+    try:
+        day = int(meta_d.get("day", 1) or 1)
+    except Exception:
+        day = 1
+    sp = ensure_smartphone(state)
+    msgs = sp.get("messages")
+    if isinstance(msgs, list):
+        for m in reversed(msgs[-16:]):
+            if not isinstance(m, dict):
+                continue
+            if (
+                str(m.get("kind", "") or "") == "npc_utility_contact"
+                and str(m.get("peer", "") or "") == display
+                and int(m.get("day", 0) or 0) == day
+            ):
+                return
+    txt = "Menyisakan pesan: butuh kontak. Balas atau TALK jika bisa."
+    _append_message(state, sp, direction="in", peer=display[:64], text=txt, kind="npc_utility_contact")
+
+
 def apply_smartphone_pipeline(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
     """Run deterministic smartphone mechanics once per turn (pre-roll). Mutates state; sets roll hints."""
     op = action_ctx.get("smartphone_op")
@@ -159,8 +219,7 @@ def apply_smartphone_pipeline(state: dict[str, Any], action_ctx: dict[str, Any])
             result["msg"] = "Phone is off."
             im = max(im, 1)
         elif v == "status":
-            on = bool(sp.get("phone_on", True))
-            result["msg"] = f"Phone {'ON' if on else 'OFF'} — {sp.get('number', '')}"
+            result["msg"] = "Phone " + _smartphone_status_summary(sp)
             im = max(im, 0)
         else:
             result = {"ok": False, "reason": "BAD_POWER", "msg": "Unknown power action."}

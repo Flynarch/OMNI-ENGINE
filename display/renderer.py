@@ -18,7 +18,7 @@ from engine.social.suspicion_ui import get_heat_brief, get_suspicion_brief
 from engine.systems.combat import get_active_weapon
 from engine.systems.occupation import career_daily_salary_usd, career_title_for_level, ensure_career
 from engine.systems.property import ensure_player_assets, list_asset_entries
-from engine.systems.smartphone import ensure_smartphone
+from engine.systems.smartphone import _smartphone_status_summary, ensure_smartphone
 from engine.world.atlas import ensure_location_profile, fmt_profile_short
 from engine.world.districts import district_heat_snapshot, district_neighbor_ids, get_current_district, get_district
 from engine.world.faction_report import build_faction_macro_report
@@ -57,6 +57,19 @@ def _fmt_clock(time_min: int) -> str:
     t = int(time_min) % (24 * 60)
     h, m = t // 60, t % 60
     return f"{h:02d}:{m:02d}"
+
+
+def _intel_ripple_label(kind: str) -> str:
+    """Short labels for IntelFeed (utility AI and other high-signal kinds)."""
+    k = str(kind or "").strip().lower()
+    aliases: dict[str, str] = {
+        "npc_utility_seek_job": "NPC_JOB",
+        "npc_utility_relocate": "NPC_MOVE",
+        "npc_utility_contact": "NPC_CONTACT",
+    }
+    if k in aliases:
+        return aliases[k]
+    return k.upper() if k else "RIPPLE"
 
 
 def _weapon_line(inv: dict[str, Any], flags: dict[str, Any]) -> str:
@@ -168,13 +181,13 @@ def _fmt_intel_items(state: dict[str, Any]) -> list[str]:
 
     surf = state.get("surfacing_ripples_this_turn", []) or []
     if isinstance(surf, list) and surf:
-        for rp in surf[:2]:
+        for rp in surf[:3]:
             if not isinstance(rp, dict):
                 continue
             txt = str(rp.get("text", "-"))
             prop = str(rp.get("propagation", "local_witness"))
             kind = str(rp.get("kind", "") or "").strip().lower()
-            label = kind.upper() if kind else "RIPPLE"
+            label = _intel_ripple_label(kind)
             if len(txt) > 90:
                 txt = txt[:87] + "..."
             lines.append(f"({label}:{prop}) {txt}")
@@ -459,10 +472,7 @@ def _build_compact_monitor_vm(state: dict[str, Any]) -> dict[str, Any]:
     smartphone_hud = ""
     try:
         sp = ensure_smartphone(state)
-        on = bool(sp.get("phone_on", True))
-        num = str(sp.get("number", "") or "").strip()
-        tail = num[-4:] if len(num) >= 4 else num
-        smartphone_hud = f"{'ON' if on else 'OFF'}" + (f" ···{tail}" if tail else "")
+        smartphone_hud = _smartphone_status_summary(sp)
     except Exception:
         smartphone_hud = ""
     return {
@@ -1176,7 +1186,12 @@ def _render_monitor_full(state: dict[str, Any]) -> None:
         right_prefix.append(f"AI missing: {', '.join(parse_miss[:6])}\n", style="magenta")
     if notes:
         right_prefix.append("WorldNotes:\n", style="bold")
-        tail = notes[-2:]
+        tail_n = 2
+        if isinstance(notes, list) and notes:
+            recent = notes[-5:]
+            if any("[NPC]" in str(x) for x in recent):
+                tail_n = 3
+        tail = notes[-tail_n:]
         for n in tail:
             s = world_note_plain(n)
             if len(s) > 140:

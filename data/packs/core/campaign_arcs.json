@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "arcs": [
+    {
+      "id": "city_operator_arc",
+      "enabled": true,
+      "milestones": [
+        {
+          "id": "capital_buffer",
+          "when": { "all": [{ "type": "economy_total_gte", "value": 5000 }] },
+          "actions": [
+            {
+              "type": "schedule_event_if_missing",
+              "event_type": "black_market_offer",
+              "title": "Black market contact offers a deal",
+              "due_in_min": 30,
+              "payload": { "bm_power": 66, "bm_stability": 42, "source": "arc_campaign" }
+            },
+            {
+              "type": "enqueue_ripple",
+              "kind": "arc_milestone",
+              "text": "Jaringan bawah tanah mulai menganggapmu punya modal serius.",
+              "propagation": "contacts",
+              "origin_faction": "black_market",
+              "surface_in_min": 20,
+              "tags": ["arc", "economy", "quest_hook"],
+              "meta": { "arc": "city_operator_arc", "milestone": "capital_buffer" }
+            }
+          ]
+        },
+        {
+          "id": "heat_window",
+          "when": {
+            "all": [
+              { "type": "trace_pct_lte", "value": 55 },
+              { "type": "police_attention_not_in", "values": ["manhunt", "lockdown"] },
+              { "type": "ripple_seen", "tag": "economy" }
+            ]
+          },
+          "actions": [
+            {
+              "type": "enqueue_ripple",
+              "kind": "arc_milestone",
+              "text": "Tekanan mereda; jendela operasi yang lebih tenang mulai terbuka.",
+              "propagation": "broadcast",
+              "origin_faction": "civilian",
+              "surface_in_min": 15,
+              "tags": ["arc", "heat"],
+              "meta": { "arc": "city_operator_arc", "milestone": "heat_window" }
+            }
+          ]
+        },
+        {
+          "id": "faction_leverage",
+          "when": {
+            "all": [
+              { "type": "any_faction_power_stability_gte", "power": 60, "stability": 40 },
+              { "type": "reputation_lane_gte", "lane": "underground", "value": 25 },
+              { "type": "trace_pct_gte", "value": 20 }
+            ]
+          },
+          "actions": [
+            {
+              "type": "schedule_event_if_missing",
+              "event_type": "npc_offer",
+              "title": "Broker_Shade wants to reconnect",
+              "due_in_min": 10,
+              "payload": { "npc": "Broker_Shade", "role": "fixer", "service": "intel:arc_network", "source": "arc_campaign" }
+            },
+            { "type": "world_note", "text": "[Arc] Faksi mulai memandangmu sebagai operator yang relevan." },
+            { "type": "activate_quest", "quest_kind": "trace_cleanup" },
+            { "type": "suppress_ripple_tag", "tag": "quest_hook", "cooldown_days": 2 }
+          ]
+        }
+      ],
+      "soft_endings": [
+        {
+          "id": "clean_ascendancy",
+          "when": {
+            "all_milestones_completed": ["capital_buffer", "heat_window", "faction_leverage"],
+            "all": [
+              { "type": "trace_pct_lte", "value": 40 },
+              { "type": "quest_active", "quest_kind": "trace_cleanup" }
+            ]
+          }
+        },
+        {
+          "id": "balanced_operator",
+          "when": {
+            "all_milestones_completed": ["capital_buffer", "heat_window", "faction_leverage"],
+            "all": [{ "type": "trace_pct_lte", "value": 70 }]
+          }
+        },
+        {
+          "id": "hotshot_survivor",
+          "when": {
+            "all_milestones_completed": ["capital_buffer", "heat_window", "faction_leverage"],
+            "all": [{ "type": "reputation_lane_gte", "lane": "street", "threshold": 1 }]
+          }
+        }
+      ]
+    }
+  ]
+}

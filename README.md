@@ -68,6 +68,12 @@ OMNI-ENGINE is a **rules-first** game core: **time, economy, combat, hacking, fa
 - Language learning and communication barriers; **Earth-only** city presets under `data/locations/`.
 - **Content packs** under `data/packs/` (items, roles, services) with validation scripts.
 
+### AI narration (turn package)
+
+**Dynamic context injection** — The narrator XML from `build_turn_package` in [`ai/turn_prompt.py`](ai/turn_prompt.py) is gated by **`TurnContextProfile`**, produced by **`_turn_dynamic_profile(action_ctx)`** from the resolved **`action_ctx`** (`domain`, `action_type`, `intent_note`). **Weather** is included for travel- or stealth-shaped beats; **reputation, faction lines, and key relationships** only for social/faction-relevant turns (for example `talk`, `domain=social`, or notes touching informants, reputation, or underworld); **skills** are emitted as a **domain-scoped** subset instead of the full skill grid; **access gates** (judicial movement, BM catalog depth, informant depth) appear for social, hacking, or black-market–tinted hints. A thin or empty `action_ctx` yields a smaller package on purpose — keep the pipeline filling `domain` / `action_type` when those blocks should inform prose.
+
+**Async CLI loop** — The main play loop runs under **`asyncio`** with **`aioconsole.ainput`** for the `>` prompt (same event loop as httpx narration / intent). While the model is thinking, a small **spinner** can show (`OMNI_LLM_HEARTBEAT`, default on); set to `0` to disable.
+
 ---
 
 ## Quickstart
@@ -117,7 +123,7 @@ GROQ_MODEL=llama-3.3-70b-versatile
 
 Model directories: [OpenRouter models](https://openrouter.ai/models) · [Groq docs](https://console.groq.com/docs/models)
 
-Optional tuning (see `.env.example`): `LLM_MAX_TOKENS`, `LLM_INTENT_MAX_TOKENS`, `LLM_HTTP_RETRIES`, `NARRATION_LANG`, `BAL_*`, bio keys, `STRICT_PACK_VALIDATION`, `OMNI_AUTO_STAY_INTENT`.
+Optional tuning (see `.env.example`): `LLM_MAX_TOKENS`, `LLM_INTENT_MAX_TOKENS`, `LLM_HTTP_RETRIES`, `NARRATION_LANG`, `BAL_*`, bio keys, `STRICT_PACK_VALIDATION`, `OMNI_AUTO_STAY_INTENT`, `OMNI_LLM_HEARTBEAT`.
 
 ### FFCI (free-form custom intent)
 
@@ -229,7 +235,7 @@ See `python scripts/trim_feed_archive.py --help` for `--notes-keep`, `--news-kee
 | ---------- | ---------------------------------------------------------------------------------- |
 | `main.py`  | REPL: intent, pipeline, autosave, AI streaming.                                    |
 | `engine/`  | Simulation: time, world, economy, quests, trace, NPCs, bio, balance, feed prune, … |
-| `ai/`      | LLM client, intent resolver, turn package, system prompts.                         |
+| `ai/`      | LLM client (httpx + asyncio), intent resolver, turn package, system prompts.        |
 | `display/` | Terminal UI (**Rich**).                                                            |
 | `data/`    | Template, seeds, locations, packs.                                                 |
 | `scripts/` | Verify, validate, migrate, trim archive, utilities.                                |

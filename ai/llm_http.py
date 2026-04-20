@@ -1,20 +1,21 @@
 """
 Shared OpenAI-compatible chat completion HTTP layer (OpenRouter / Groq).
 
-Narration (streaming) and intent (JSON) share the same endpoint resolution,
-retries, and env knobs (LLM_HTTP_RETRIES).
+Uses httpx AsyncClient for non-blocking I/O under asyncio. Sync helpers use
+``asyncio.run`` for call sites that are still synchronous (CLI / pipeline).
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import random
-import time
+from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
-import requests
+import httpx
 from dotenv import load_dotenv
-from requests.exceptions import ChunkedEncodingError, ConnectionError, Timeout
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -51,43 +52,60 @@ def default_narration_max_tokens() -> int:
     return 4096 if provider in ("groq", "grok") else 2000
 
 
-def post_chat_completion(
+def _httpx_timeout(*, stream: bool, timeout_sec: float) -> httpx.Timeout:
+    """Bounded timeouts; read timeout covers inter-chunk gaps for SSE."""
+    read = float(timeout_sec) if stream else float(timeout_sec)
+    return httpx.Timeout(connect=30.0, read=read, write=60.0, pool=30.0)
+
+
+async def _async_retry_delay(attempt: int) -> None:
+    delay = min(45.0, (2**attempt) * 0.35 + random.random() * 0.2)
+    await asyncio.sleep(delay)
+
+
+def _http_retryable(code: int) -> bool:
+    return code in (408, 429, 500, 502, 503, 504)
+
+
+async def async_chat_completion_json(
     *,
     messages: list[dict[str, Any]],
     max_tokens: int,
-    stream: bool,
-    timeout: float,
-) -> requests.Response:
+    timeout: float = 60.0,
+) -> dict[str, Any]:
+    """Non-streaming JSON chat completion (intent resolver, tools)."""
     url, headers, model, _prov = resolve_backend()
     payload: dict[str, Any] = {
         "model": model,
         "max_tokens": max_tokens,
-        "stream": stream,
+        "stream": False,
         "messages": messages,
     }
     max_retries = _retry_count()
-    last_exc: Exception | None = None
-    for attempt in range(max_retries):
-        try:
-            response = requests.post(url, headers=headers, json=payload, stream=stream, timeout=timeout)
-            response.raise_for_status()
-            return response
-        except requests.HTTPError as e:
-            last_exc = e
-            code = e.response.status_code if e.response is not None else 0
-            retryable = code in (408, 429, 500, 502, 503, 504)
-            if retryable and attempt < max_retries - 1:
-                delay = min(45.0, (2**attempt) * 0.35 + random.random() * 0.2)
-                time.sleep(delay)
-                continue
-            raise RuntimeError(f"LLM HTTP {code}: {e}") from e
-        except (ConnectionError, Timeout, ChunkedEncodingError) as e:
-            last_exc = e
-            if attempt < max_retries - 1:
-                delay = min(45.0, (2**attempt) * 0.35 + random.random() * 0.2)
-                time.sleep(delay)
-                continue
-            raise RuntimeError(f"LLM connection failed after {max_retries} attempts: {e}") from e
+    timeout_cfg = _httpx_timeout(stream=False, timeout_sec=timeout)
+    last_exc: BaseException | None = None
+    async with httpx.AsyncClient(timeout=timeout_cfg) as client:
+        for attempt in range(max_retries):
+            try:
+                resp = await client.post(url, headers=headers, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+                if not isinstance(data, dict):
+                    raise RuntimeError("LLM returned non-object JSON")
+                return data
+            except httpx.HTTPStatusError as e:
+                last_exc = e
+                code = e.response.status_code if e.response is not None else 0
+                if _http_retryable(code) and attempt < max_retries - 1:
+                    await _async_retry_delay(attempt)
+                    continue
+                raise RuntimeError(f"LLM HTTP {code}: {e}") from e
+            except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.RemoteProtocolError) as e:
+                last_exc = e
+                if attempt < max_retries - 1:
+                    await _async_retry_delay(attempt)
+                    continue
+                raise RuntimeError(f"LLM connection failed after {max_retries} attempts: {e}") from e
     raise RuntimeError(f"LLM request failed: {last_exc!r}")
 
 
@@ -97,8 +115,99 @@ def chat_completion_json(
     max_tokens: int,
     timeout: float = 60.0,
 ) -> dict[str, Any]:
-    resp = post_chat_completion(messages=messages, max_tokens=max_tokens, stream=False, timeout=timeout)
-    data = resp.json()
-    if not isinstance(data, dict):
-        raise RuntimeError("LLM returned non-object JSON")
-    return data
+    """Sync wrapper for parser / pipeline code paths without an event loop."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(async_chat_completion_json(messages=messages, max_tokens=max_tokens, timeout=timeout))
+    raise RuntimeError(
+        "chat_completion_json() cannot be used inside a running event loop; await async_chat_completion_json() instead."
+    )
+
+
+async def aiter_sse_narration_chunks(
+    *,
+    messages: list[dict[str, Any]],
+    max_tokens: int,
+    timeout: float = 120.0,
+) -> AsyncIterator[str]:
+    """Async generator: yield text deltas from an OpenAI-compatible SSE stream."""
+    url, headers, model, _prov = resolve_backend()
+    payload: dict[str, Any] = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "stream": True,
+        "messages": messages,
+    }
+    max_retries = _retry_count()
+    timeout_cfg = _httpx_timeout(stream=True, timeout_sec=timeout)
+    last_exc: BaseException | None = None
+    for attempt in range(max_retries):
+        try:
+            async with httpx.AsyncClient(timeout=timeout_cfg) as client:
+                async with client.stream("POST", url, headers=headers, json=payload) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line or not line.startswith("data: "):
+                            continue
+                        data = line[6:]
+                        if data.strip() == "[DONE]":
+                            return
+                        try:
+                            chunk = json.loads(data)
+                            delta = chunk["choices"][0]["delta"].get("content", "")
+                            if delta:
+                                yield str(delta)
+                        except Exception:
+                            continue
+            return
+        except httpx.HTTPStatusError as e:
+            last_exc = e
+            code = e.response.status_code if e.response is not None else 0
+            if _http_retryable(code) and attempt < max_retries - 1:
+                await _async_retry_delay(attempt)
+                continue
+            raise RuntimeError(f"LLM HTTP {code}: {e}") from e
+        except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.RemoteProtocolError) as e:
+            last_exc = e
+            if attempt < max_retries - 1:
+                await _async_retry_delay(attempt)
+                continue
+            raise RuntimeError(f"LLM connection failed after {max_retries} attempts: {e}") from e
+    raise RuntimeError(f"LLM stream failed: {last_exc!r}")
+
+
+def iter_sse_narration_chunks_sync(
+    *,
+    messages: list[dict[str, Any]],
+    max_tokens: int,
+    timeout: float = 120.0,
+) -> Iterator[str]:
+    """
+    Drive ``aiter_sse_narration_chunks`` from synchronous code (e.g. Rich CLI).
+
+    Uses a dedicated event loop for the lifetime of this iterator so network
+    waits are ``await``-based (async I/O) without blocking other coroutines on
+    a shared loop; the game loop stays sequential and does not touch ``state``
+    until each chunk is yielded.
+    """
+    agen = aiter_sse_narration_chunks(messages=messages, max_tokens=max_tokens, timeout=timeout)
+    ait = agen.__aiter__()
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        while True:
+            try:
+                chunk = loop.run_until_complete(ait.__anext__())
+                yield chunk
+            except StopAsyncIteration:
+                break
+    finally:
+        try:
+            loop.run_until_complete(agen.aclose())
+        except (RuntimeError, GeneratorExit, Exception):
+            pass
+        try:
+            loop.close()
+        except Exception:
+            pass

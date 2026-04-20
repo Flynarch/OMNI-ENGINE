@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "followup_rules": [
+    {
+      "id": "contact_to_offer",
+      "match_tags_any": ["utility_contact", "contact_hook"],
+      "actions": ["event_npc_offer_from_meta_npc"]
+    },
+    {
+      "id": "police_trace_cleanup",
+      "match_tags_any": ["police_pressure", "trace_pressure"],
+      "actions": ["quest_trace_cleanup"]
+    },
+    {
+      "id": "corp_lockdown_infiltration",
+      "match_tags_any": ["corporate_pressure"],
+      "actions": ["quest_corp_infiltration"]
+    },
+    {
+      "id": "black_market_delivery_hook",
+      "match_tags_any": ["black_market", "quest_hook"],
+      "actions": ["quest_bm_delivery"]
+    }
+  ]
+}

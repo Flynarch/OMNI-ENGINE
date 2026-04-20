@@ -12,6 +12,16 @@ from engine.world.timers_bus import enqueue_ripple as _queue_ripple
 from engine.world.timers_bus import push_news as _push_news
 
 
+def _sd_budget_int(sd: dict[str, Any], key: str, default: int) -> int:
+    """Read diffusion budget; **0 is valid** (cannot use ``or default`` — ``0 or 12`` would be wrong)."""
+    if key not in sd:
+        return default
+    try:
+        return int(sd[key])
+    except Exception:
+        return default
+
+
 def handle_social_diffusion_hop(state: dict[str, Any], ev: dict[str, Any], *, day: int, time_min: int) -> bool:
     payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
 
@@ -55,8 +65,8 @@ def handle_social_diffusion_hop(state: dict[str, Any], ev: dict[str, Any], *, da
     if sd_turn != turn2:
         sd["turn"] = int(turn2)
         sd["used_turn"] = 0
-    max_today = int(sd.get("max_hops_per_day", 12) or 12)
-    max_turn = int(sd.get("max_hops_per_turn", 3) or 3)
+    max_today = _sd_budget_int(sd, "max_hops_per_day", 12)
+    max_turn = _sd_budget_int(sd, "max_hops_per_turn", 3)
     used_today = int(sd.get("used_today", 0) or 0)
     used_turn = int(sd.get("used_turn", 0) or 0)
     if used_today >= max_today or used_turn >= max_turn:

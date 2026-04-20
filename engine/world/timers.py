@@ -17,20 +17,24 @@ from engine.core.trace import apply_trace_travel_friction, get_trace_tier
 from engine.npc.dead_npc import cleanup_dead_npcs
 from engine.npc.memory import process_memory_decay
 from engine.npc.npc_agenda import tick_npc_agendas_daily
+from engine.npc.npc_utility_ai import evaluate_npc_goals
 from engine.npc.npcs import apply_beliefs_from_ripple
 from engine.player.medical_bio import tick_medical_daily
 from engine.social.informants import maybe_queue_informant_tip
 from engine.social.investigation_chains import handle_informant_tip as informant_tip_investigation_chain
+from engine.social.ripple_followups import trigger_followups_from_surfaced_ripple
 from engine.social.ripples import apply_ripple_effects
 from engine.social.social_diffusion import propagate_rumor
 from engine.systems.accommodation import apply_accommodation_rest_bonus
 from engine.systems.ammo import item_is_ammo, rounds_per_purchase
+from engine.systems.campaign_arcs import evaluate_arc_campaign_daily, record_surfaced_ripple_tags
 from engine.systems.disguise import tick_disguise_expiry
 from engine.systems.effects import tick_effects_expiry
 from engine.systems.encounter_scheduler import evaluate_security_encounters, schedule_travel_encounters
 from engine.systems.judicial import tick_judicial_daily
 from engine.systems.quests import create_black_market_delivery_quest, tick_quest_chains
 from engine.systems.safehouse import apply_lay_low_bonus
+from engine.systems.smartphone import notify_npc_utility_contact_surfaced
 from engine.systems.scenes import pump_scene_queue, start_drop_pickup_scene
 from engine.systems.shop import _district_police_presence  # type: ignore
 from engine.world.atlas import ensure_country_history_idx, ensure_location_profile
@@ -51,6 +55,7 @@ from engine.world.timers_handlers_security import (
     handle_police_sweep,
 )
 from engine.world.timers_handlers_social import (
+    _sd_budget_int,
     handle_informant_tip as handle_informant_tip_event,
     handle_npc_offer,
     handle_npc_report,
@@ -168,8 +173,8 @@ def _handle_event_legacy_by_type(
         if sd_turn != turn2:
             sd["turn"] = int(turn2)
             sd["used_turn"] = 0
-        max_today = int(sd.get("max_hops_per_day", 12) or 12)
-        max_turn = int(sd.get("max_hops_per_turn", 3) or 3)
+        max_today = _sd_budget_int(sd, "max_hops_per_day", 12)
+        max_turn = _sd_budget_int(sd, "max_hops_per_turn", 3)
         used_today = int(sd.get("used_today", 0) or 0)
         used_turn = int(sd.get("used_turn", 0) or 0)
         if used_today >= max_today or used_turn >= max_turn:
@@ -1137,9 +1142,18 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                     log_swallowed_exception('engine/world/timers.py:1109', _omni_sw_1109)
                 try:
 
+                    evaluate_npc_goals(state)
+                except Exception as _omni_sw_utility_ai:
+                    log_swallowed_exception("engine/world/timers.py:utility_ai", _omni_sw_utility_ai)
+                try:
+
                     tick_medical_daily(state, day=int(cur_day))
                 except Exception as _omni_sw_1115:
                     log_swallowed_exception('engine/world/timers.py:1115', _omni_sw_1115)
+                try:
+                    evaluate_arc_campaign_daily(state, day=int(cur_day))
+                except Exception as _omni_sw_arc:
+                    log_swallowed_exception("engine/world/timers.py:arc_campaign", _omni_sw_arc)
                 # NPC memory decay + consolidation (once per day).
                 try:
 
@@ -1252,6 +1266,12 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
         state.setdefault("world_notes", []).extend([f"Triggered event: {ev.get('title', ev.get('event_type', 'unknown'))}" for ev in triggered])
     state["surfacing_ripples_this_turn"] = surfaced
     if surfaced:
+        try:
+            for _rp in surfaced:
+                if isinstance(_rp, dict):
+                    notify_npc_utility_contact_surfaced(state, _rp)
+        except Exception as _omni_sw_utility_contact_notify:
+            log_swallowed_exception("engine/world/timers.py:utility_contact_notify", _omni_sw_utility_contact_notify)
         state.setdefault("world_notes", []).extend([f"Surfaced ripple: {rp.get('text', 'unknown')}" for rp in surfaced])
         # Apply ripple effects only when they surface and are logically propagated.
         try:
@@ -1279,6 +1299,23 @@ def update_timers(state: dict[str, Any], action_ctx: dict[str, Any]) -> None:
                 record_error(state, "timers.apply_beliefs_from_ripple", e)
             except Exception as _omni_sw_1258:
                 log_swallowed_exception('engine/world/timers.py:1258', _omni_sw_1258)
+        try:
+            for rp in surfaced:
+                if isinstance(rp, dict) and not rp.get("dropped_by_propagation"):
+                    record_surfaced_ripple_tags(state, rp, day=int(cur_day))
+        except Exception as _omni_sw_ripple_tags:
+            log_swallowed_exception("engine/world/timers.py:record_surfaced_ripple_tags", _omni_sw_ripple_tags)
+        # Minimal deterministic bridge: surfaced ripple -> actionable follow-up hooks.
+        try:
+            for rp in surfaced:
+                if isinstance(rp, dict) and not rp.get("dropped_by_propagation"):
+                    trigger_followups_from_surfaced_ripple(state, rp)
+        except Exception as e:
+            log_swallowed_exception("engine/world/timers.py:ripple_followups", e)
+            try:
+                record_error(state, "timers.ripple_followups", e)
+            except Exception as _omni_sw_ripple_followups:
+                log_swallowed_exception("engine/world/timers.py:ripple_followups_record", _omni_sw_ripple_followups)
         # Dead NPC cleanup / non-interactable guardrail.
         try:
 

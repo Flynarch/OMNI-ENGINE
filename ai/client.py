@@ -1,34 +1,40 @@
 from __future__ import annotations
 
-import json
-from typing import Generator
+from collections.abc import AsyncIterator, Iterator
 
-from ai.llm_http import OPENROUTER_URL, GROQ_URL, default_narration_max_tokens, post_chat_completion
+from ai.llm_http import (
+    OPENROUTER_URL,
+    GROQ_URL,
+    aiter_sse_narration_chunks,
+    default_narration_max_tokens,
+    iter_sse_narration_chunks_sync,
+)
 
 # Re-export for callers that imported URLs from ai.client
-__all__ = ["stream_response", "OPENROUTER_URL", "GROQ_URL"]
+__all__ = [
+    "stream_response",
+    "stream_response_async",
+    "OPENROUTER_URL",
+    "GROQ_URL",
+]
 
 
-def stream_response(system_prompt: str, turn_package: str) -> Generator[str, None, None]:
+def stream_response(system_prompt: str, turn_package: str) -> Iterator[str]:
+    """Sync iterator over narration chunks (async httpx SSE under the hood)."""
     max_tokens = default_narration_max_tokens()
-    response = post_chat_completion(
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": turn_package},
-        ],
-        max_tokens=max_tokens,
-        stream=True,
-        timeout=120,
-    )
-    for line in response.iter_lines():
-        if line and line.startswith(b"data: "):
-            data = line[6:]
-            if data == b"[DONE]":
-                break
-            try:
-                chunk = json.loads(data)
-                delta = chunk["choices"][0]["delta"].get("content", "")
-                if delta:
-                    yield delta
-            except Exception:
-                continue
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": turn_package},
+    ]
+    yield from iter_sse_narration_chunks_sync(messages=messages, max_tokens=max_tokens, timeout=120.0)
+
+
+async def stream_response_async(system_prompt: str, turn_package: str) -> AsyncIterator[str]:
+    """Async narration stream for callers that already run on an event loop."""
+    max_tokens = default_narration_max_tokens()
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": turn_package},
+    ]
+    async for chunk in aiter_sse_narration_chunks(messages=messages, max_tokens=max_tokens, timeout=120.0):
+        yield chunk

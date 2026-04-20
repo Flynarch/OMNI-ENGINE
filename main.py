@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from engine.core.error_taxonomy import log_swallowed_exception
 from engine.core.feed_prune import world_note_plain
+import asyncio
 import difflib
 import json
 import os
@@ -9,10 +10,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import aioconsole
+
 from rich.table import Table
 
-from ai.client import stream_response
-from ai.intent_resolver import resolve_intent
+from ai.async_llm_ui import run_narration_stream_with_heartbeat
+from ai.client import stream_response  # sync bridge + session handlers
+from ai.intent_resolver import resolve_intent_async
 from ai.parser import apply_memory_hash_to_state, enforce_stop_sequence_output, parse_memory_hash, record_ai_parse_health
 from ai.turn_prompt import build_system_prompt, build_turn_package, get_narration_lang
 from display.renderer import console, format_data_table, render_monitor, stream_render
@@ -122,6 +126,11 @@ from engine.systems.shop import buy_item, get_capacity_status, list_shop_quotes,
 
 def _ask(prompt: str) -> str:
     return input(prompt).strip()
+
+
+async def _ainput_line(prompt: str) -> str:
+    """Non-blocking-friendly stdin for the asyncio game loop (aioconsole)."""
+    return (await aioconsole.ainput(prompt)).rstrip("\r\n").strip()
 
 
 def _record_soft_error(state: dict[str, Any], scope: str, err: Exception) -> None:
@@ -1974,20 +1983,6 @@ def handle_special(state: dict[str, Any], cmd: str) -> bool:
     if up == "SAVE STATE":
         console.print(json.dumps(state, ensure_ascii=False, indent=2))
         return True
-    if up == "WORLD_BRIEF":
-        lang = get_narration_lang(state)
-        if lang == "en":
-            turn_package = "WORLD_BRIEF: summarize the world from the player character's POV in <=400 words."
-        else:
-            turn_package = "WORLD_BRIEF: rangkum dunia dari sudut pandang karakter pemain, maksimal ~400 kata, Bahasa Indonesia."
-        try:
-            for chunk in stream_response(build_system_prompt(state), turn_package):
-                stream_render(chunk)
-            console.print()
-        except Exception as _omni_sw_1947:
-            log_swallowed_exception('main.py:1947', _omni_sw_1947)
-            console.print("[red]// SIGNAL LOST //[/red]")
-        return True
     if up == "INTENT_DEBUG":
         meta = state.get("meta", {}) or {}
         console.print("[bold cyan]// INTENT DEBUG //[/bold cyan]")
@@ -2563,11 +2558,38 @@ def main() -> None:
         backup_state()
         save_state(state)
 
+    asyncio.run(game_loop_async(state))
+
+
+async def game_loop_async(state: dict[str, Any]) -> None:
     while True:
         render_monitor(state)
-        cmd_raw = _expand_alias(_ask("> "))
+        cmd_raw = _expand_alias(await _ainput_line("> "))
         cmd = sanitize_player_command_text(cmd_raw)
         if not cmd:
+            continue
+        # WORLD_BRIEF: async stream (same heartbeat as turn narration).
+        up_brief = cmd.strip().upper()
+        if up_brief == "WORLD_BRIEF":
+            lang = get_narration_lang(state)
+            if lang == "en":
+                tp = "WORLD_BRIEF: summarize the world from the player character's POV in <=400 words."
+            else:
+                tp = (
+                    "WORLD_BRIEF: rangkum dunia dari sudut pandang karakter pemain, "
+                    "maksimal ~400 kata, Bahasa Indonesia."
+                )
+            try:
+                await run_narration_stream_with_heartbeat(
+                    build_system_prompt(state),
+                    tp,
+                    console=console,
+                    stream_render=stream_render,
+                    label="Ringkasan dunia",
+                )
+            except Exception as _omni_sw_1947:
+                log_swallowed_exception("main.py:world_brief", _omni_sw_1947)
+                console.print("[red]// SIGNAL LOST //[/red]")
             continue
         # Global scene blocker (non-special path).
         up0 = cmd.upper()
@@ -2595,7 +2617,7 @@ def main() -> None:
         if ffci_enabled() and security_flags_for_intent_input(cmd).get("block_resolver"):
             meta["fallback_reason"] = "security_blocked"
         elif ffci_enabled():
-            intent = resolve_intent(state, cmd)
+            intent = await resolve_intent_async(state, cmd)
 
         if intent and ffci_shadow_only():
             meta["last_intent_source"] = "parser_fallback"
@@ -2904,22 +2926,29 @@ def main() -> None:
         package = build_turn_package(state, cmd, roll_pkg, action_ctx)
         system_prompt = build_system_prompt(state)
 
+        # Narration: async httpx stream + heartbeat until first token; state unchanged until chunks arrive.
         text = ""
         try:
-            for chunk in stream_response(system_prompt, package):
-                text += chunk
-                stream_render(chunk)
-            console.print()
+            text = await run_narration_stream_with_heartbeat(
+                system_prompt,
+                package,
+                console=console,
+                stream_render=stream_render,
+                label="Narasi",
+            )
         except Exception as _omni_sw_2897:
-            log_swallowed_exception('main.py:2897', _omni_sw_2897)
+            log_swallowed_exception("main.py:2897", _omni_sw_2897)
             console.print("[red]// SIGNAL LOST //[/red]")
             try:
-                for chunk in stream_response(system_prompt, package):
-                    text += chunk
-                    stream_render(chunk)
-                console.print()
+                text = await run_narration_stream_with_heartbeat(
+                    system_prompt,
+                    package,
+                    console=console,
+                    stream_render=stream_render,
+                    label="Narasi",
+                )
             except Exception as _omni_sw_2904:
-                log_swallowed_exception('main.py:2904', _omni_sw_2904)
+                log_swallowed_exception("main.py:2904", _omni_sw_2904)
                 console.print("[red]Stream gagal, output parsial disimpan.[/red]")
 
         if text:

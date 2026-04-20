@@ -16,6 +16,41 @@ SECTION_TAGS = [
     "MEMORY_HASH",
 ]
 
+# Shown only to the LLM / parser; never echo raw blocks to the player console.
+_PLAYER_HIDDEN_XML_SECTIONS: tuple[str, ...] = (
+    "INTERNAL_LOGIC",
+    "SENSORY_FEED",
+    "INTERACTION_NODE",
+    "EVENT_LOG",
+    "MEMORY_HASH",
+)
+
+
+def filter_narration_for_player_display(text: str) -> str:
+    """Remove internal XML sections and OMNI_MONITOR wrappers for terminal output.
+
+    Callers must keep the **full** model response for ``parse_memory_hash`` and audits;
+    this function is **display-only** (Rich console).
+    """
+    if not text or not str(text).strip():
+        return ""
+    t = str(text)
+    # Opening tags may include attributes (`<INTERNAL_LOGIC tone="cold">`); be strict on tag name only.
+    _open = lambda tag: rf"<{tag}(?:\s[^>]*)?>"
+    for tag in _PLAYER_HIDDEN_XML_SECTIONS:
+        t = re.sub(rf"{_open(tag)}.*?</{tag}\s*>", "", t, flags=re.DOTALL | re.IGNORECASE)
+    # Unclosed / truncated stream: drop from opening tag to end of string.
+    for tag in _PLAYER_HIDDEN_XML_SECTIONS:
+        t = re.sub(rf"{_open(tag)}.*", "", t, flags=re.DOTALL | re.IGNORECASE)
+    # Orphan closers / stray delimiters (model sometimes breaks pairs)
+    for tag in _PLAYER_HIDDEN_XML_SECTIONS:
+        t = re.sub(rf"</{tag}\s*>", "", t, flags=re.IGNORECASE)
+        t = re.sub(_open(tag), "", t, flags=re.IGNORECASE)
+    # Visible "main" narration: prose from OMNI_MONITOR without XML delimiters.
+    t = re.sub(r"</?OMNI_MONITOR(?:\s[^>]*)?>", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"\n{3,}", "\n\n", t.strip())
+    return t
+
 
 def extract_memory_hash_block(text: str) -> str:
     m = MH_BLOCK.search(text)
@@ -278,8 +313,13 @@ def enforce_stop_sequence_output(text: str, stop_sequence_active: bool) -> str:
     if not stop_sequence_active:
         return text
 
-    # Strip INTERACTION_NODE block if present.
-    stripped = re.sub(r"<INTERACTION_NODE>.*?</INTERACTION_NODE>", "", text, flags=re.DOTALL)
+    # Strip INTERACTION_NODE block if present (allow attributes on opening tag).
+    stripped = re.sub(
+        r"<INTERACTION_NODE(?:\s[^>]*)?>.*?</INTERACTION_NODE\s*>",
+        "",
+        text,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
     stripped = stripped.rstrip()
     if not stripped.endswith("Apa rencanamu?"):
         stripped += "\nApa rencanamu?"

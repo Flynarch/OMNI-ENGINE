@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, NamedTuple
 
 from dotenv import load_dotenv
 
@@ -243,14 +243,147 @@ def _fmt_district_line(state: dict[str, Any]) -> str:
     return f"district: id={did}"
 
 
+def _npc_focus_id(state: dict[str, Any], action_ctx: dict[str, Any]) -> str:
+    targs = action_ctx.get("targets")
+    if isinstance(targs, list) and targs and isinstance(targs[0], str):
+        tid = str(targs[0]).strip()
+        if tid:
+            return tid
+    mf = (state.get("meta", {}) or {}).get("npc_focus")
+    if isinstance(mf, str) and mf.strip():
+        return mf.strip()
+    return ""
+
+
+def _npc_dominant_emotion_hint(npc: dict[str, Any]) -> str:
+    es = npc.get("emotion_state")
+    if not isinstance(es, dict):
+        return "steady"
+    best_ch = ""
+    best_sev = 0
+    for ch, slot in list(es.items())[:12]:
+        if not isinstance(slot, dict):
+            continue
+        try:
+            sev = int(slot.get("severity", 0) or 0)
+        except Exception:
+            sev = 0
+        if sev > best_sev:
+            best_sev = sev
+            best_ch = str(ch or "")
+    if best_sev < 22 or not best_ch:
+        return "steady"
+    return f"{best_ch}_charged"
+
+
+def _lane_tone_word(score: int) -> str:
+    if score >= 68:
+        return "high"
+    if score >= 38:
+        return "mid"
+    return "low"
+
+
+def _fmt_reputation_lanes_tone(state: dict[str, Any], lang: str) -> str:
+    """Compact lane standing for narrator tone (no per-lane digits in fiction blocks)."""
+    try:
+        from engine.social.reputation_lanes import LANES, lane_score
+    except Exception:
+        return ""
+    parts: list[str] = []
+    for lane in LANES:
+        try:
+            sc = int(lane_score(state, str(lane)))
+        except Exception:
+            sc = 50
+        parts.append(f"{lane[:4]}={_lane_tone_word(sc)}")
+    if lang == "en":
+        return "[REPUTATION LANES — standing words only in prose]\n" + " ".join(parts)
+    return "[REPUTASI JALUR — gunakan kata tone di prosa, bukan angka]\n" + " ".join(parts)
+
+
+def _fmt_arc_campaign_brief(state: dict[str, Any], lang: str) -> str:
+    ac = (state.get("world", {}) or {}).get("arc_campaign")
+    if not isinstance(ac, dict):
+        return ""
+    if ac.get("enabled") is False:
+        return ""
+    aid = str(ac.get("active_arc", "") or "").strip() or "?"
+    done: list[str] = []
+    ms = ac.get("milestones", {})
+    if isinstance(ms, dict):
+        for mid, row in list(ms.items())[:14]:
+            if isinstance(row, dict) and row.get("completed"):
+                done.append(str(mid))
+    ending = str(ac.get("ending_state", "") or "").strip()
+    tail = ",".join(done[:6]) if done else "-"
+    end_s = ending if ending else "open"
+    if lang == "en":
+        return (
+            "[ARC CAMPAIGN — long-horizon arc (ENGINE); imply career arc / street legend pressure]\n"
+            f"active_arc={aid} | milestones_unlocked={tail} | soft_ending={end_s}"
+        )
+    return (
+        "[ARC KAMPANYE — busur panjang (ENGINE); tekanan kariermu di jalanan]\n"
+        f"arc_aktif={aid} | milestone_selesai={tail} | soft_ending={end_s}"
+    )
+
+
+def _ripple_impact_hint(impact: dict[str, Any] | None) -> str:
+    if not isinstance(impact, dict) or not impact:
+        return "rumor_only"
+    bits: list[str] = []
+    try:
+        td = int(impact.get("trace_delta", 0) or 0)
+        if td > 0:
+            bits.append("heat_trace_rises")
+        elif td < 0:
+            bits.append("heat_trace_eases")
+    except Exception:
+        pass
+    if isinstance(impact.get("factions"), dict) and impact.get("factions"):
+        bits.append("faction_pulse")
+    if isinstance(impact.get("npc_emotions"), dict) and impact.get("npc_emotions"):
+        bits.append("crowd_emotion")
+    return "+".join(bits) if bits else "rumor_only"
+
+
+def _fmt_quest_started_this_turn(state: dict[str, Any], lang: str) -> str:
+    hits: list[str] = []
+    meta = state.get("meta", {}) or {}
+    audit = meta.get("last_turn_audit")
+    added = audit.get("notes_added") if isinstance(audit, dict) else None
+    if isinstance(added, list):
+        for s in added:
+            ss = str(s)
+            if "[Quest]" in ss and "New:" in ss:
+                hits.append(ss[:150])
+    if not hits:
+        try:
+            from engine.core.feed_prune import world_note_plain
+
+            notes = state.get("world_notes", []) or []
+            if isinstance(notes, list):
+                for n in notes[-12:]:
+                    ss = world_note_plain(n)
+                    if "[Quest]" in ss and "New:" in ss:
+                        hits.append(ss[:150])
+                        break
+        except Exception:
+            pass
+    if not hits:
+        return ""
+    title = "[QUESTS NEW THIS TURN — ENGINE]" if lang == "en" else "[QUEST BARU TURN INI — ENGINE]"
+    return title + "\n" + "\n".join(hits[:3])
+
+
 def _fmt_social_rumor_brief(state: dict[str, Any], action_ctx: dict[str, Any]) -> str:
     """Give the LLM specific rumors/beliefs for the target NPC to reference."""
     if str(action_ctx.get("domain", "") or "") != "social":
         return ""
-    targs = action_ctx.get("targets")
-    if not (isinstance(targs, list) and targs and isinstance(targs[0], str)):
+    npc_name = _npc_focus_id(state, action_ctx)
+    if not npc_name:
         return ""
-    npc_name = str(targs[0])
     lines: list[str] = []
     # Belief summary (from ripples/news).
     npc = (state.get("npcs", {}) or {}).get(npc_name)
@@ -281,10 +414,7 @@ def _fmt_social_rumor_brief(state: dict[str, Any], action_ctx: dict[str, Any]) -
 
 def _fmt_npc_memories_brief(state: dict[str, Any], action_ctx: dict[str, Any]) -> str:
     """Inject a small, relevant memory snippet for the target NPC only."""
-    targs = action_ctx.get("targets")
-    if not (isinstance(targs, list) and targs and isinstance(targs[0], str)):
-        return ""
-    npc_id = str(targs[0]).strip()
+    npc_id = _npc_focus_id(state, action_ctx)
     if not npc_id:
         return ""
     npc = (state.get("npcs", {}) or {}).get(npc_id)
@@ -318,19 +448,17 @@ def _fmt_npc_memories_brief(state: dict[str, Any], action_ctx: dict[str, Any]) -
 
 
 def _fmt_npc_beliefs_brief(state: dict[str, Any], action_ctx: dict[str, Any]) -> str:
-    targs = action_ctx.get("targets")
-    if not (isinstance(targs, list) and targs and isinstance(targs[0], str)):
-        return ""
-    npc_id = str(targs[0]).strip()
+    npc_id = _npc_focus_id(state, action_ctx)
     if not npc_id:
         return ""
     npc = (state.get("npcs", {}) or {}).get(npc_id)
     if not isinstance(npc, dict):
         return ""
     tags = npc.get("belief_tags", [])
-    if not isinstance(tags, list) or not tags:
-        return ""
-    preview = ", ".join([str(x) for x in tags[:5]])
+    preview_tags = ", ".join([str(x) for x in tags[:5]]) if isinstance(tags, list) and tags else "(none)"
+    mood = str(npc.get("mood", "calm") or "calm").strip()[:22]
+    emo_h = _npc_dominant_emotion_hint(npc)
+    head = f"mood={mood} | emotion_shape={emo_h}\n"
     # Add a narrative anchor hint for consistent tone.
     try:
         from engine.npc.memory import get_narrative_anchor_context
@@ -339,8 +467,8 @@ def _fmt_npc_beliefs_brief(state: dict[str, Any], action_ctx: dict[str, Any]) ->
     except Exception:
         anchor = ""
     if anchor:
-        return "[NPC_BELIEFS]\n" + preview + "\n" + anchor
-    return "[NPC_BELIEFS]\n" + preview
+        return "[NPC_BELIEFS]\n" + head + preview_tags + "\n" + anchor
+    return "[NPC_BELIEFS]\n" + head + preview_tags
 def _fmt_social_stats(state: dict[str, Any]) -> str:
     stats = state.get("player", {}).get("social_stats", {}) or {}
     if not isinstance(stats, dict):
@@ -568,7 +696,25 @@ def _fmt_beat_this_turn(state: dict[str, Any], lang: str) -> str:
     for e in trig[:6]:
         parts.append(f"- event: {e.get('title', e.get('event_type', '?'))}")
     for r in surf[:6]:
-        parts.append(f"- ripple: {r.get('text', '?')}")
+        if not isinstance(r, dict):
+            continue
+        rt = str(r.get("text", "?") or "?")
+        if len(rt) > 100:
+            rt = rt[:97] + "..."
+        rk = str(r.get("kind", "") or "").strip().lower()
+        raw_tags = r.get("tags") if isinstance(r.get("tags"), list) else []
+        tag_join = ",".join(str(t) for t in raw_tags[:5] if isinstance(t, str) and str(t).strip()) or "-"
+        imp = _ripple_impact_hint(r.get("impact") if isinstance(r.get("impact"), dict) else None)
+        if rk == "npc_utility_contact":
+            util = "NPC_CONTACT"
+        elif rk == "npc_utility_seek_job":
+            util = "NPC_JOB"
+        elif rk == "npc_utility_relocate":
+            util = "NPC_MOVE"
+        else:
+            util = ""
+        util_bit = f"[{util}] " if util else ""
+        parts.append(f"- ripple: {util_bit}k={rk or '?'} tags={tag_join} fx={imp} — {rt}")
     return "\n".join(parts)
 
 
@@ -646,12 +792,115 @@ def _fmt_engine_recent_commerce(state: dict[str, Any], lang: str) -> str:
     return f"Transaksi terkini (engine): {tail}"
 
 
-def _fmt_skills_engine(state: dict[str, Any], lang: str) -> str:
+# Domain → skill rows to expose (token-aware; full grid only when multiple domains apply).
+_DOMAIN_SKILL_KEYS: dict[str, tuple[str, ...]] = {
+    "combat": ("combat",),
+    "social": ("social", "languages"),
+    "hacking": ("hacking",),
+    "medical": ("medical",),
+    "driving": ("driving",),
+    "stealth": ("stealth",),
+    "evasion": ("evasion",),
+    "travel": ("driving", "evasion"),
+}
+
+
+class TurnContextProfile(NamedTuple):
+    """What to inject into the turn XML besides always-on ENGINE facts."""
+
+    weather: bool
+    social_faction: bool
+    access_gates: bool
+    skill_keys: tuple[str, ...]
+    character_stats: bool
+    social_stats: bool
+    language_barrier: bool
+    disguise: bool
+    npc_combat_brief: bool
+
+
+def _turn_dynamic_profile(action_ctx: dict[str, Any]) -> TurnContextProfile:
+    """Heuristic profile from resolved action_ctx (parser / intent). Keeps prompts small by default."""
+    dom = str(action_ctx.get("domain", "") or "").strip().lower() or "other"
+    at = str(action_ctx.get("action_type", "") or "").strip().lower() or "instant"
+    note = str(action_ctx.get("intent_note", "") or "").strip().lower()
+
+    weather = dom in ("travel", "stealth") or at == "travel"
+
+    social_faction = (
+        dom == "social"
+        or at == "talk"
+        or "informant" in note
+        or "faction" in note
+        or "reputation" in note
+        or "underworld" in note
+        or note in ("social_dialogue", "social_scan_crowd", "social_inquiry", "intimacy_private")
+    )
+    access_gates = social_faction or dom == "hacking" or "bm_" in note or "black_market" in note
+
+    keys: list[str] = []
+    if dom in _DOMAIN_SKILL_KEYS:
+        keys.extend(_DOMAIN_SKILL_KEYS[dom])
+    if at == "travel" and dom != "travel":
+        for k in _DOMAIN_SKILL_KEYS["travel"]:
+            if k not in keys:
+                keys.append(k)
+    if not keys and at == "combat":
+        keys.append("combat")
+    if not keys and at in ("talk",):
+        keys.extend(["social", "languages"])
+    if not keys and at in ("sleep", "rest"):
+        keys = []
+    # Dedupe preserving order
+    seen: set[str] = set()
+    skill_keys: list[str] = []
+    for k in keys:
+        if k not in seen:
+            seen.add(k)
+            skill_keys.append(k)
+    sk_t = tuple(skill_keys)
+
+    character_stats = dom in (
+        "combat",
+        "social",
+        "hacking",
+        "medical",
+        "stealth",
+        "evasion",
+        "travel",
+        "driving",
+    ) or at in ("combat", "talk", "travel", "investigate", "use_item")
+    social_stats = social_faction or dom in ("social", "stealth")
+    language_barrier = social_faction or at in ("talk", "investigate")
+    disguise = dom in ("stealth", "social") or at == "travel"
+    npc_combat_brief = dom == "combat" or at == "combat"
+
+    return TurnContextProfile(
+        weather=weather,
+        social_faction=social_faction,
+        access_gates=access_gates,
+        skill_keys=sk_t,
+        character_stats=character_stats,
+        social_stats=social_stats,
+        language_barrier=language_barrier,
+        disguise=disguise,
+        npc_combat_brief=npc_combat_brief,
+    )
+
+
+def _fmt_skills_engine(state: dict[str, Any], lang: str, skill_keys: tuple[str, ...] | None = None) -> str:
     sk = state.get("skills", {}) or {}
     if not isinstance(sk, dict) or not sk:
         return "Skills (engine): (none)" if lang == "en" else "Skill (engine): (belum ada)"
+    order = (
+        list(skill_keys)
+        if skill_keys is not None
+        else ["hacking", "social", "combat", "stealth", "evasion", "medical", "driving", "languages"]
+    )
+    if not order:
+        return ""
     parts: list[str] = []
-    for k in ("hacking", "social", "combat", "stealth", "evasion", "medical", "driving", "languages"):
+    for k in order:
         row = sk.get(k)
         if isinstance(row, dict):
             parts.append(f"{k} L{row.get('level', 1)} cur={row.get('current', row.get('base', 10))}")
@@ -741,17 +990,61 @@ def _fmt_npc_combat_brief(state: dict[str, Any], lang: str) -> str:
     return head + "\n" + "\n".join(lines)
 
 
-def _fmt_narration_sync_hint(lang: str) -> str:
+def _fmt_narration_sync_dynamic(lang: str, profile: TurnContextProfile) -> str:
+    bits_en = [
+        "economy (cash/bank/debt/FICO/AML)",
+        "recent Shop/Bank/Stay notes",
+        "prepaid stay",
+    ]
+    if profile.skill_keys:
+        bits_en.append("domain-scoped skills in this package")
+    if profile.weather:
+        bits_en.append("weather line")
+    if profile.disguise:
+        bits_en.append("disguise")
+    if profile.language_barrier:
+        bits_en.append("language barrier")
+    if profile.access_gates:
+        bits_en.append("access gates (judicial / underground catalog depth)")
+    bits_en.append("reputation lane tone words (criminal/corporate/… as high/mid/low)")
+    bits_en.append("arc campaign milestone / soft-ending line when present")
+    if profile.social_faction:
+        bits_en.append("faction / reputation / relationship lines in this package")
+    if profile.npc_combat_brief:
+        bits_en.append("NPC pursuit/surrender cues")
+    bits_en.append("safehouse when relevant")
     if lang == "en":
         return (
-            "[NARRATION SYNC — use ENGINE facts]\n"
-            "Naturally reflect: economy (cash/bank/debt/FICO/AML), recent Shop/Bank/Stay notes, prepaid stay, "
-            "skills, weather, disguise, language barrier, NPC pursuit/surrender lines, safehouse if relevant."
+            "[NARRATION SYNC — use ENGINE facts]\nNaturally reflect: "
+            + ", ".join(bits_en)
+            + ". Do not contradict CALCULATED STATE or ROLL RESULT."
         )
+    bits_id = [
+        "ekonomi (cash/bank/debt/FICO/AML)",
+        "catatan Shop/Bank/Stay terkini",
+        "menginap prepaid",
+    ]
+    if profile.skill_keys:
+        bits_id.append("skill ter-scope domain di paket ini")
+    if profile.weather:
+        bits_id.append("baris cuaca")
+    if profile.disguise:
+        bits_id.append("disguise")
+    if profile.language_barrier:
+        bits_id.append("hambatan bahasa")
+    if profile.access_gates:
+        bits_id.append("access gates (yudisial / kedalaman katalog underground)")
+    bits_id.append("kata tone reputasi per-jalur (tinggi/sedang/rendah)")
+    bits_id.append("baris arc kampanye bila ada")
+    if profile.social_faction:
+        bits_id.append("faksi / reputasi / relasi di paket ini")
+    if profile.npc_combat_brief:
+        bits_id.append("isyarat NPC kejar/menyerah")
+    bits_id.append("safehouse bila relevan")
     return (
-        "[SINKRON NARASI — pakai fakta ENGINE]\n"
-        "Cerminkan: ekonomi (cash/bank/debt/FICO/AML), catatan Shop/Bank/Stay, menginap prepaid, skill, cuaca, "
-        "disguise, hambatan bahasa, garis NPC kejar/menyerah, safehouse bila relevan."
+        "[SINKRON NARASI — pakai fakta ENGINE]\nCerminkan: "
+        + ", ".join(bits_id)
+        + ". Jangan kontradiksi CALCULATED STATE atau ROLL RESULT."
     )
 
 
@@ -1021,6 +1314,35 @@ def _fmt_actionable_hooks(state: dict[str, Any], lang: str) -> str:
                     lines.append("ripple_now: " + rt)
                 else:
                     lines.append("ripple_sekarang: " + rt)
+        for rp in surf[:3]:
+            if not isinstance(rp, dict):
+                continue
+            rk = str(rp.get("kind", "") or "").strip().lower()
+            meta = rp.get("meta") if isinstance(rp.get("meta"), dict) else {}
+            npc = str(meta.get("npc", "") or "").strip()
+            if rk == "npc_utility_contact":
+                if lang == "en":
+                    lines.append(
+                        "utility_signal: npc contact surfaced"
+                        + (f" ({npc})" if npc else "")
+                        + "; interaction can follow via TALK or PHONE CALL."
+                    )
+                else:
+                    lines.append(
+                        "utility_signal: kontak npc ter-surface"
+                        + (f" ({npc})" if npc else "")
+                        + "; bisa ditindaklanjuti lewat TALK atau PHONE CALL."
+                    )
+            elif rk == "npc_utility_seek_job":
+                if lang == "en":
+                    lines.append("utility_signal: npc job-seeking pressure became visible in local rumor.")
+                else:
+                    lines.append("utility_signal: tekanan cari kerja npc terlihat sebagai rumor lokal.")
+            elif rk == "npc_utility_relocate":
+                if lang == "en":
+                    lines.append("utility_signal: npc relocation surfaced; describe district-shift consequences.")
+                else:
+                    lines.append("utility_signal: perpindahan distrik npc ter-surface; gambarkan dampak wilayah.")
 
     talk_ex: str | None = None
     if isinstance(contacts, dict) and contacts:
@@ -1077,6 +1399,10 @@ def build_turn_package(
     roll_pkg: dict[str, Any],
     action_ctx: dict[str, Any] | None = None,
 ) -> str:
+    """Assemble the narrator XML package. Injects weather, skills, factions, and related
+    blocks **conditionally** from ``action_ctx`` (``TurnContextProfile``) to limit tokens
+    while keeping domain-relevant facts (travel/stealth → weather; social/talk → rep/factions; etc.).
+    """
     action_ctx = action_ctx or {}
     bio = state.get("bio", {})
     eco = state.get("economy", {})
@@ -1116,59 +1442,140 @@ def build_turn_package(
     queue_title = "[WORLD QUEUE — background]" if lang == "en" else "[ANTREAN DUNIA — latar]"
     npc_title = "[NPCs — snapshot]" if lang == "en" else "[NPC — cuplikan]"
 
-    rep_scores = rep.get("scores", {}) if isinstance(rep.get("scores"), dict) else {}
-    label_to_score = {
-        "hostile": 20,
-        "bad": 30,
-        "poor": 35,
-        "neutral": 50,
-        "good": 70,
-        "trusted": 85,
-        "ally": 90,
-    }
-    def _rep_score(raw: Any, label_raw: Any) -> float:
+    prof = _turn_dynamic_profile(action_ctx)
+
+    rep_label = "neutral"
+    rep_global = 50.0
+    rep_criminal = 50.0
+    rep_corporate = 50.0
+    rep_political = 50.0
+    rep_street = 50.0
+    rep_underground = 50.0
+    rel_lines = "-"
+    rep_block = ""
+    key_rel_block = ""
+    factions_block = ""
+    if prof.social_faction:
+        rep_scores = rep.get("scores", {}) if isinstance(rep.get("scores"), dict) else {}
+        label_to_score = {
+            "hostile": 20,
+            "bad": 30,
+            "poor": 35,
+            "neutral": 50,
+            "good": 70,
+            "trusted": 85,
+            "ally": 90,
+        }
+
+        def _rep_score(raw: Any, label_raw: Any) -> float:
+            try:
+                if raw is not None:
+                    return max(0.0, min(100.0, float(raw)))
+            except Exception:
+                pass
+            lab = str(label_raw or "Neutral").strip().lower()
+            return float(label_to_score.get(lab, 50.0))
+
+        rep_criminal = _rep_score(rep_scores.get("criminal"), rep.get("criminal_label"))
+        rep_corporate = _rep_score(rep_scores.get("corporate"), rep.get("corporate_label"))
+        rep_political = _rep_score(rep_scores.get("political"), rep.get("political_label"))
+        rep_street = _rep_score(rep_scores.get("street"), rep.get("civilian_label"))
+        rep_underground = _rep_score(
+            rep_scores.get("underground"), rep.get("underground_label", rep.get("global_label", "Neutral"))
+        )
+        rep_global_raw = rep.get("global_score")
+        rep_global = _rep_score(rep_global_raw, rep.get("global_label"))
+        if rep_global_raw is None:
+            rep_global = round((rep_criminal + rep_corporate + rep_political + rep_street + rep_underground) / 5.0, 1)
+        if rep_global >= 80:
+            rep_label = "legendary"
+        elif rep_global >= 65:
+            rep_label = "respected"
+        elif rep_global >= 45:
+            rep_label = "neutral"
+        elif rep_global >= 30:
+            rep_label = "shaky"
+        else:
+            rep_label = "notorious"
         try:
-            if raw is not None:
-                return max(0.0, min(100.0, float(raw)))
+            from engine.npc.relationship import get_top_relationships
+
+            top_rels = get_top_relationships(state, limit=5)
+            rows: list[str] = []
+            for nm, rel in top_rels:
+                rr = rel if isinstance(rel, dict) else {}
+                rows.append(
+                    f"- {nm}: type={str(rr.get('type', 'neutral'))} strength={int(rr.get('strength', 50) or 50)} "
+                    f"trust={float(rr.get('trust', 50.0) or 50.0):.1f} susp={float(rr.get('suspicion', 0.0) or 0.0):.1f}"
+                )
+            if rows:
+                rel_lines = "\n".join(rows[:5])
         except Exception:
             pass
-        lab = str(label_raw or "Neutral").strip().lower()
-        return float(label_to_score.get(lab, 50.0))
+        rep_block = (
+            "[REPUTATION]\n"
+            f"global: {rep_label} ({rep_global})\n"
+            f"criminal: {rep_criminal}\n"
+            f"corporate: {rep_corporate}\n"
+            f"political: {rep_political}\n"
+            f"street: {rep_street}\n"
+            f"underground: {rep_underground}\n"
+        )
+        key_rel_block = f"[KEY RELATIONSHIPS]\n{rel_lines}\n"
+        factions_block = (
+            "[FACTIONS]\n"
+            f"corp st={state.get('world', {}).get('factions', {}).get('corporate', {}).get('stability', '-')} "
+            f"pw={state.get('world', {}).get('factions', {}).get('corporate', {}).get('power', '-')} "
+            f"att={state.get('world', {}).get('faction_statuses', {}).get('corporate', '-')}\n"
+            f"police st={state.get('world', {}).get('factions', {}).get('police', {}).get('stability', '-')} "
+            f"pw={state.get('world', {}).get('factions', {}).get('police', {}).get('power', '-')} "
+            f"att={state.get('world', {}).get('faction_statuses', {}).get('police', '-')}\n"
+            f"black st={state.get('world', {}).get('factions', {}).get('black_market', {}).get('stability', '-')} "
+            f"pw={state.get('world', {}).get('factions', {}).get('black_market', {}).get('power', '-')} "
+            f"att={state.get('world', {}).get('faction_statuses', {}).get('black_market', '-')}\n"
+        )
 
-    rep_criminal = _rep_score(rep_scores.get("criminal"), rep.get("criminal_label"))
-    rep_corporate = _rep_score(rep_scores.get("corporate"), rep.get("corporate_label"))
-    rep_political = _rep_score(rep_scores.get("political"), rep.get("political_label"))
-    rep_street = _rep_score(rep_scores.get("street"), rep.get("civilian_label"))
-    rep_underground = _rep_score(rep_scores.get("underground"), rep.get("underground_label", rep.get("global_label", "Neutral")))
-    rep_global_raw = rep.get("global_score")
-    rep_global = _rep_score(rep_global_raw, rep.get("global_label"))
-    if rep_global_raw is None:
-        rep_global = round((rep_criminal + rep_corporate + rep_political + rep_street + rep_underground) / 5.0, 1)
-    if rep_global >= 80:
-        rep_label = "legendary"
-    elif rep_global >= 65:
-        rep_label = "respected"
-    elif rep_global >= 45:
-        rep_label = "neutral"
-    elif rep_global >= 30:
-        rep_label = "shaky"
-    else:
-        rep_label = "notorious"
-    rel_lines = "-"
-    try:
-        from engine.npc.relationship import get_top_relationships
+    access_gates_block = ""
+    if prof.access_gates:
+        access_gates_block = (
+            "[ACCESS GATES — qualitative; narrator avoids repeating as raw stats in fiction]\n"
+            + _fmt_access_gates_qual(state)
+            + "\n"
+        )
 
-        top_rels = get_top_relationships(state, limit=5)
-        rows: list[str] = []
-        for nm, rel in top_rels:
-            rr = rel if isinstance(rel, dict) else {}
-            rows.append(
-                f"- {nm}: type={str(rr.get('type', 'neutral'))} strength={int(rr.get('strength', 50) or 50)} trust={float(rr.get('trust', 50.0) or 50.0):.1f} susp={float(rr.get('suspicion', 0.0) or 0.0):.1f}"
-            )
-        if rows:
-            rel_lines = "\n".join(rows[:5])
-    except Exception:
-        pass
+    dyn_lines: list[str] = []
+    if prof.skill_keys:
+        sk_line = _fmt_skills_engine(state, lang, prof.skill_keys)
+        if sk_line:
+            dyn_lines.append(sk_line)
+    if prof.weather:
+        dyn_lines.append(_fmt_weather_engine(state, lang))
+    if prof.disguise:
+        dyn_lines.append(_fmt_disguise_engine(state, lang))
+    sh_line = _fmt_safehouse_engine(state, lang)
+    if sh_line:
+        dyn_lines.append(sh_line)
+    dyn_lines.append(_fmt_vehicle_line(state))
+    dyn_lines.append(_fmt_cyber_alert_line(state))
+    if prof.language_barrier:
+        lb = _fmt_language_engine(state, lang)
+        if lb:
+            dyn_lines.append(lb)
+    intsum = _fmt_intimacy_summary(state, lang)
+    if intsum:
+        dyn_lines.append(intsum)
+    if prof.npc_combat_brief:
+        ncb = _fmt_npc_combat_brief(state, lang)
+        if ncb:
+            dyn_lines.append(ncb)
+    dynamic_engine_inject = "\n".join(dyn_lines)
+
+    post_weapon_lines: list[str] = []
+    if prof.social_stats:
+        post_weapon_lines.append(_fmt_social_stats(state))
+    if prof.character_stats:
+        post_weapon_lines.append(_fmt_character_stats(state))
+    post_weapon = "\n".join(post_weapon_lines)
 
     career_engine = "-"
     try:
@@ -1202,26 +1609,20 @@ def build_turn_package(
 {_fmt_district_line(state)}
 {_fmt_accommodation_state(state, lang)}
 {_fmt_turn_facts_delta(state, lang)}
+{_fmt_reputation_lanes_tone(state, lang)}
 {_fmt_economy_detail(state, lang)}
 {_fmt_engine_recent_commerce(state, lang)}
-{_fmt_skills_engine(state, lang)}
-{_fmt_weather_engine(state, lang)}
-{_fmt_disguise_engine(state, lang)}
-{_fmt_safehouse_engine(state, lang)}
-{_fmt_vehicle_line(state)}
-{_fmt_cyber_alert_line(state)}
-{_fmt_language_engine(state, lang)}
-{_fmt_intimacy_summary(state, lang)}
-{_fmt_npc_combat_brief(state, lang)}
+{dynamic_engine_inject}
 {_fmt_action_ctx(action_ctx)}
 {_fmt_accommodation_policy(action_ctx, lang)}
-{_fmt_narration_sync_hint(lang)}
+{_fmt_narration_sync_dynamic(lang, prof)}
 {_fmt_weapon_line(state)}
-{_fmt_social_stats(state)}
-{_fmt_character_stats(state)}
+{post_weapon}
 flags: weapon_jammed={flags.get('weapon_jammed')} stop_seq={flags.get('stop_sequence_active')}
 {beat_title}
 {_fmt_beat_this_turn(state, lang)}
+{_fmt_arc_campaign_brief(state, lang)}
+{_fmt_quest_started_this_turn(state, lang)}
 {queue_title}
 {_fmt_queues(state, lang)}
 {npc_title}
@@ -1241,21 +1642,11 @@ spiral: {bio.get('mental_spiral', False)}
 hunger: {bio.get('hunger_label', 'full')} ({bio.get('hunger', 0.0)})
 sleep_duration: {action_ctx.get('sleep_duration_h', 0)} jam
 sleep_quality: {action_ctx.get('sleep_quality', 'okay')}
-[REPUTATION]
-global: {rep_label} ({rep_global})
-criminal: {rep_criminal}
-corporate: {rep_corporate}
-political: {rep_political}
-street: {rep_street}
-underground: {rep_underground}
-[ACCESS GATES — qualitative; narrator avoids repeating as raw stats in fiction]
-{_fmt_access_gates_qual(state)}
-[CAREER / W2-9 — per-track progression; narrator: no digits in fiction]
+{rep_block}{access_gates_block}[CAREER / W2-9 — per-track progression; narrator: no digits in fiction]
 {career_engine}
 [PROPERTY / W2-10 — assets & quotes; narrator: no digits in fiction]
 {property_engine}
-[KEY RELATIONSHIPS]
-{rel_lines}
+{key_rel_block}
 Cash: {eco.get('cash', 0)} | Bank: {eco.get('bank', 0)} | Debt: {eco.get('debt', 0)} | Daily Burn: {eco.get('daily_burn', 0)}
 FICO: {eco.get('fico', 600)} | AML: {eco.get('aml_status', 'CLEAR')}
 Trace: {trace_display} (tier={trace_tier_id})
@@ -1264,11 +1655,7 @@ Acute Stress: {bio.get('acute_stress', False)} | Stop Sequence: {flags.get('stop
 Hallucination: {bio.get('hallucination_type', 'none')} | Narrator Drift: {bio.get('narrator_drift_state', 'stable')}
 Permanent Damage: {state.get('permanent_damage_summary', '-')}
 NearbyItems: {nearby_str}
-[FACTIONS]
-corp st={state.get('world', {}).get('factions', {}).get('corporate', {}).get('stability', '-')} pw={state.get('world', {}).get('factions', {}).get('corporate', {}).get('power', '-')} att={state.get('world', {}).get('faction_statuses', {}).get('corporate', '-')}
-police st={state.get('world', {}).get('factions', {}).get('police', {}).get('stability', '-')} pw={state.get('world', {}).get('factions', {}).get('police', {}).get('power', '-')} att={state.get('world', {}).get('faction_statuses', {}).get('police', '-')}
-black st={state.get('world', {}).get('factions', {}).get('black_market', {}).get('stability', '-')} pw={state.get('world', {}).get('factions', {}).get('black_market', {}).get('power', '-')} att={state.get('world', {}).get('faction_statuses', {}).get('black_market', '-')}
-[MODIFIER STACK]
+{factions_block}[MODIFIER STACK]
 {_fmt_mods(roll_pkg.get('mods', []))}
 NET THRESHOLD: {roll_pkg.get('net_threshold', 0)}%
 [ROLL RESULT]

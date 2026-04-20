@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import os
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from ai.llm_http import chat_completion_json
+from ai.async_llm_ui import await_with_heartbeat
+from ai.llm_http import async_chat_completion_json, chat_completion_json
 
 from engine.core.action_registry import (
     allowed_registry_action_ids,
@@ -942,6 +944,25 @@ def _invoke_llm_for_intent(payload: Dict[str, Any]) -> str:
     return str(content)
 
 
+async def _invoke_llm_for_intent_async(payload: Dict[str, Any]) -> str:
+    _mt = os.getenv("LLM_INTENT_MAX_TOKENS", "").strip()
+    if _mt.isdigit():
+        max_tokens = int(_mt)
+    else:
+        max_tokens = 512
+
+    data = await async_chat_completion_json(
+        messages=[
+            {"role": "system", "content": INTENT_SYSTEM_PROMPT},
+            {"role": "user", "content": payload["user"]},
+        ],
+        max_tokens=max_tokens,
+        timeout=_intent_llm_timeout_sec(),
+    )
+    content = data["choices"][0]["message"]["content"]
+    return str(content)
+
+
 def _safe_parse_json_blob(text: str) -> Optional[Dict[str, Any]]:
     """Try to extract a single JSON object from raw LLM text (robust to ``` fences)."""
     text = text.strip()
@@ -1022,8 +1043,8 @@ def _intent_lru_cache_key(state: Dict[str, Any], player_input: str) -> Tuple[Any
     )
 
 
-def resolve_intent(state: Dict[str, Any], player_input: str) -> Optional[Dict[str, Any]]:
-    """Best-effort LLM intent resolution. Returns dict or None if unusable."""
+async def resolve_intent_async(state: Dict[str, Any], player_input: str) -> Optional[Dict[str, Any]]:
+    """Best-effort LLM intent resolution (awaitable; use from asyncio game loop)."""
     meta = state.get("meta", {}) or {}
     player = state.get("player", {}) or {}
     inv = state.get("inventory", {}) or {}
@@ -1064,7 +1085,10 @@ def resolve_intent(state: Dict[str, Any], player_input: str) -> Optional[Dict[st
         reg_block = ""
     user = f"[ENGINE_SNAPSHOT]\n{summary}{reg_block}\n[PLAYER_INPUT]\n{player_input}\n"
     try:
-        raw = _invoke_llm_for_intent({"user": user})
+        raw = await await_with_heartbeat(
+            _invoke_llm_for_intent_async({"user": user}),
+            label="Intent",
+        )
     except Exception:
         record_intent_budget_rollback(state)
         return None
@@ -1085,3 +1109,12 @@ def resolve_intent(state: Dict[str, Any], player_input: str) -> Optional[Dict[st
     if os.getenv("OMNI_INTENT_LRU", "1").strip().lower() not in ("0", "false", "no", "off"):
         intent_cache_set(_intent_lru_cache_key(state, player_input), obj)
     return obj
+
+
+def resolve_intent(state: Dict[str, Any], player_input: str) -> Optional[Dict[str, Any]]:
+    """Sync entry point for scripts/tests (spawns an event loop). Not for use inside ``asyncio.run``."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(resolve_intent_async(state, player_input))
+    raise RuntimeError("resolve_intent() cannot be called from an active event loop; use await resolve_intent_async()")
